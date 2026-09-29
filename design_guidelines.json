@@ -1,0 +1,160 @@
+{
+  "app_name": "Nain Photo State — Hisab",
+  "personality": "3 Editorial Mobile LIGHT fused with functional ledger utility",
+  "personality_one_liner": "A warm, paper-toned, Indian-vernacular digital bahi-khata that feels traditional but acts modern.",
+  "color": {
+    "surface": "#FDFBF7",
+    "onSurface": "#1A1A1A",
+    "surfaceSecondary": "#F4EFE6",
+    "onSurfaceSecondary": "#2D2D2D",
+    "surfaceTertiary": "#EBE4D5",
+    "onSurfaceTertiary": "#2D2D2D",
+    "surfaceInverse": "#2D2D2D",
+    "onSurfaceInverse": "#FDFBF7",
+    "brand": "#00796B",
+    "brandPrimary": "#00796B",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#004D40",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#E0F2F1",
+    "onBrandTertiary": "#004D40",
+    "success": "#2E7D32",
+    "onSuccess": "#FFFFFF",
+    "warning": "#C62828",
+    "onWarning": "#FFFFFF",
+    "error": "#C62828",
+    "onError": "#FFFFFF",
+    "border": "#EBE4D5",
+    "borderStrong": "#D6CDB8",
+    "divider": "#EBE4D5",
+    "muted": "#737373"
+  },
+  "typography": {
+    "displayFontFamily": "Noto Serif Devanagari",
+    "textFontFamily": "Hind",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room for reading entries clearly, but functional grid padding for quick actions.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "bottom_tabs",
+  "icon_set": "MaterialCommunityIcons",
+  "glassmorphism": {
+    "enabled": false,
+    "do's": [],
+    "dont's": ["Avoid glassmorphism to preserve the traditional flat paper bahi-khata aesthetic"]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-blur",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Login",
+      "purpose": "Google Sign-In screen introducing the shop's brand.",
+      "states": {
+        "loading": "Centered spinner on paper background.",
+        "empty": "N/A",
+        "error": "Standard error toast."
+      },
+      "layout": "Centered layout with app logo/title in Noto Serif Devanagari. A large Google Sign-In button near the bottom third. Paper texture background."
+    },
+    {
+      "name": "Home",
+      "purpose": "Dashboard to instantly view today's financial summary and pending jobs.",
+      "states": {
+        "loading": "Skeleton blocks for the stat cards.",
+        "empty": "No data yet illustration, prompt to add first customer.",
+        "error": "Error card with a retry button."
+      },
+      "layout": "Vertical scroll. Top section: 2x2 grid of stat cards (Total Due in Brick Red, Today's Udhaar, Today's Jama in Forest Green, Pending Jobs). Middle: 'Top 5 Due Customers' list (flat rows with trailing balances). Bottom: 'Recent Entries' list. Floating Action Button (FAB) hidden here to avoid clutter; use tabs."
+    },
+    {
+      "name": "Customers",
+      "purpose": "Directory of all customers with their running balances.",
+      "states": {
+        "loading": "List skeleton.",
+        "empty": "Open notebook illustration (empty state), 'कोई ग्राहक नहीं' (No customers) message.",
+        "error": "Textual error with retry CTA."
+      },
+      "layout": "Sticky top search bar. A scrollable horizontal row of filter chips (All, Due, Clear). FlatList of customers: Each row shows Avatar (initials), Name, Phone, and right-aligned Balance (Colored Red or Green). Fixed FAB at bottom right to 'Add Customer'."
+    },
+    {
+      "name": "CustomerDetail",
+      "purpose": "View a single customer's ledger timeline and add new entries.",
+      "states": {
+        "loading": "Spinner in the center.",
+        "empty": "Empty timeline message: 'कोई लेन-देन नहीं'.",
+        "error": "Error fetching ledger."
+      },
+      "layout": "Top sticky header with Name and Phone. A large hero card showing current balance ('कुल बकाया' or 'जमा') prominently. Below hero card, a 3-button horizontal split for quick actions: 'उधार' (Red), 'जमा' (Green), 'काम' (Teal) triggering bottom sheets. The rest of the screen is a vertical timeline of transactions (running ledger). Delete button hidden in header options."
+    },
+    {
+      "name": "WorkList",
+      "purpose": "Manage pending print/photo state jobs.",
+      "states": {
+        "loading": "List skeleton.",
+        "empty": "Empty notebook illustration.",
+        "error": "Error loading jobs."
+      },
+      "layout": "Filter chips at the top (Pending, Done, All). List of job cards showing job description, date, status, and associated customer. FAB at bottom right to 'Add Job'."
+    },
+    {
+      "name": "Profile",
+      "purpose": "User account, sync status, and logout.",
+      "states": {
+        "loading": "Spinner.",
+        "empty": "N/A",
+        "error": "Error loading user profile."
+      },
+      "layout": "Simple list of settings: User profile info from Google, Sync Status indicator, and a Logout button."
+    }
+  ],
+  "images": {
+    "login_background": {
+      "url": "https://images.unsplash.com/photo-1616410731303-6affae095a0a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAxODF8MHwxfHNlYXJjaHwxfHx2aW50YWdlJTIwdGV4dHVyZWQlMjBjcmVhbSUyMHBhcGVyJTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3OTA2NTYyNjl8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "vintage textured cream paper background"
+    },
+    "empty_ledger": {
+      "url": "https://images.unsplash.com/photo-1598620617137-2ab990aadd37?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDF8MHwxfHNlYXJjaHwxfHxlbXB0eSUyMG9wZW4lMjBub3RlYm9vayUyMGlsbHVzdHJhdGlvbnxlbnwwfHx8fDE3OTA2NTYyNjl8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "empty open notebook illustration"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the color palette to maintain the traditional 'bahi-khata' aesthetic: Brick Red (#C62828) for Udhaar/Dues/Given and Forest Green (#2E7D32) for Jama/Payments/Taken. These are functional status colors, DO NOT use blue.",
+    "Use 'Noto Serif Devanagari' for all display headings (titles, balance amounts, key labels) and 'Hind' for all other text. This pairing creates the authentic traditional-yet-modern feel.",
+    "Data entry must be fast. Keep 'Add Udhaar' and 'Add Jama' forms simple and within a bottom sheet (`@gorhom/bottom-sheet`) to avoid context switching.",
+    "Ensure all text is mapped correctly to Hindi (Devanagari). Example: घर, ग्राहक, काम, खाता for bottom tabs.",
+    "Do not use glassmorphism effects. The aesthetic is paper-like (Editorial Mobile LIGHT), so rely on subtle surface color shifts (surface to surfaceSecondary) and border dividers.",
+    "Implement Google Sign-In on the Login screen and ensure state persists online as requested by the user.",
+    "For avatars of customers, use initials (e.g., 'र.क.' for Ravi Kumar) inside a brandTertiary circle as the default fallback."
+  ]
+}

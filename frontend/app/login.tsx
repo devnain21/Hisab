@@ -10,13 +10,17 @@ export default function Login() {
   const { status, signIn } = useAuth();
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (status === "authenticated") return <Redirect href="/(tabs)" />;
 
   const handleSignIn = async () => {
+    setError(null);
     setLoading(true);
     try {
       await signIn();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Sign-in fail ho gaya");
     } finally {
       setLoading(false);
     }
@@ -52,6 +56,7 @@ export default function Login() {
             </>
           )}
         </Pressable>
+        {error ? <Text style={styles.error}>{error}</Text> : null}
         <Text style={styles.footer}>साइन इन करके आप डेटा को क्लाउड में सेव करने की सहमति देते हैं।</Text>
       </View>
     </View>
@@ -80,5 +85,6 @@ const styles = StyleSheet.create({
     width: "100%", minHeight: 56,
   },
   googleText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "600" },
+  error: { fontSize: 13, color: colors.error, textAlign: "center" },
   footer: { fontSize: 11, color: colors.muted, textAlign: "center", marginTop: spacing.sm },
 });

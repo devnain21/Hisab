@@ -1,45 +1,22 @@
-import * as SecureStore from "expo-secure-store";
-import { Platform } from "react-native";
+const BASE = (process.env.EXPO_PUBLIC_BACKEND_URL as string | undefined)?.replace(/\/$/, "") || "";
 
-const KEY = "nain_session_token";
+type TokenProvider = () => Promise<string | null>;
 
-export async function saveToken(token: string) {
-  if (Platform.OS === "web") {
-    try { window.localStorage.setItem(KEY, token); } catch {}
-  } else {
-    await SecureStore.setItemAsync(KEY, token);
-  }
-}
+let tokenProvider: TokenProvider | null = null;
 
-export async function getToken(): Promise<string | null> {
-  if (Platform.OS === "web") {
-    try { return window.localStorage.getItem(KEY); } catch { return null; }
-  }
-  return SecureStore.getItemAsync(KEY);
-}
-
-export async function clearToken() {
-  if (Platform.OS === "web") {
-    try { window.localStorage.removeItem(KEY); } catch {}
-  } else {
-    await SecureStore.deleteItemAsync(KEY);
-  }
-}
-
-const BASE = process.env.EXPO_PUBLIC_BACKEND_URL as string;
-
-let inMemoryToken: string | null = null;
-
-export function setInMemoryToken(t: string | null) {
-  inMemoryToken = t;
+export function setTokenProvider(fn: TokenProvider | null) {
+  tokenProvider = fn;
 }
 
 async function authHeaders(): Promise<Record<string, string>> {
-  const t = inMemoryToken ?? (await getToken());
+  const t = tokenProvider ? await tokenProvider() : null;
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
 async function req(path: string, opts: RequestInit = {}) {
+  if (!BASE) {
+    throw new Error("EXPO_PUBLIC_BACKEND_URL set nahi hai");
+  }
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(await authHeaders()),
@@ -47,9 +24,7 @@ async function req(path: string, opts: RequestInit = {}) {
   };
   const res = await fetch(`${BASE}/api${path}`, { ...opts, headers });
   if (res.status === 401) {
-    inMemoryToken = null;
-    await clearToken();
-    const err: any = new Error("Unauthorized");
+    const err: Error & { status?: number } = new Error("Unauthorized");
     err.status = 401;
     throw err;
   }
@@ -63,22 +38,19 @@ async function req(path: string, opts: RequestInit = {}) {
 }
 
 export const api = {
-  exchangeSession: (session_id: string) =>
-    req("/auth/session", { method: "POST", body: JSON.stringify({ session_id }) }),
+  login: (id_token: string) =>
+    req("/auth/login", { method: "POST", body: JSON.stringify({ id_token }) }),
   me: () => req("/auth/me"),
   logout: () => req("/auth/logout", { method: "POST" }),
-  // Customers
   listCustomers: () => req("/customers"),
-  createCustomer: (b: any) => req("/customers", { method: "POST", body: JSON.stringify(b) }),
-  updateCustomer: (id: string, b: any) => req(`/customers/${id}`, { method: "PUT", body: JSON.stringify(b) }),
+  createCustomer: (b: unknown) => req("/customers", { method: "POST", body: JSON.stringify(b) }),
+  updateCustomer: (id: string, b: unknown) => req(`/customers/${id}`, { method: "PUT", body: JSON.stringify(b) }),
   deleteCustomer: (id: string) => req(`/customers/${id}`, { method: "DELETE" }),
-  // Entries
   listEntries: () => req("/entries"),
-  createEntry: (b: any) => req("/entries", { method: "POST", body: JSON.stringify(b) }),
+  createEntry: (b: unknown) => req("/entries", { method: "POST", body: JSON.stringify(b) }),
   deleteEntry: (id: string) => req(`/entries/${id}`, { method: "DELETE" }),
-  // Jobs
   listJobs: () => req("/jobs"),
-  createJob: (b: any) => req("/jobs", { method: "POST", body: JSON.stringify(b) }),
-  updateJob: (id: string, b: any) => req(`/jobs/${id}`, { method: "PUT", body: JSON.stringify(b) }),
+  createJob: (b: unknown) => req("/jobs", { method: "POST", body: JSON.stringify(b) }),
+  updateJob: (id: string, b: unknown) => req(`/jobs/${id}`, { method: "PUT", body: JSON.stringify(b) }),
   deleteJob: (id: string) => req(`/jobs/${id}`, { method: "DELETE" }),
 };

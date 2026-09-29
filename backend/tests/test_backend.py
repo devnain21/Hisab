@@ -4,16 +4,16 @@ import pytest
 
 # --- Auth Endpoints -----------------------------------------------------
 class TestAuthEndpoints:
-    def test_session_missing_session_id_returns_401(self, anon_session, api_url):
-        r = anon_session.post(f"{api_url}/auth/session", json={"session_id": ""})
-        assert r.status_code == 401
+    def test_login_missing_id_token_returns_401(self, anon_session, api_url):
+        r = anon_session.post(f"{api_url}/auth/login", json={"id_token": ""})
+        assert r.status_code in (401, 503)
 
-    def test_session_invalid_session_id_returns_401(self, anon_session, api_url):
+    def test_login_invalid_id_token_returns_error(self, anon_session, api_url):
         r = anon_session.post(
-            f"{api_url}/auth/session",
-            json={"session_id": "definitely_not_a_valid_session_id_xxx"},
+            f"{api_url}/auth/login",
+            json={"id_token": "definitely_not_a_valid_firebase_id_token_xxx"},
         )
-        assert r.status_code == 401
+        assert r.status_code in (401, 503)
 
     def test_me_without_token_returns_401(self, anon_session, api_url):
         r = anon_session.get(f"{api_url}/auth/me")
@@ -33,13 +33,13 @@ class TestAuthEndpoints:
         )
         assert r.status_code == 401
 
-    def test_me_with_valid_token_returns_user(self, session_a, api_url):
+    def test_me_with_valid_token_returns_user(self, session_a, api_url, user_a):
         r = session_a.get(f"{api_url}/auth/me")
         assert r.status_code == 200
         data = r.json()
-        assert data["user_id"] == "user_test123"
-        assert data["email"] == "test@example.com"
-        assert data["name"] == "Test User"
+        assert data["user_id"].startswith("user_")
+        assert data["email"] == user_a["email"]
+        assert data["name"] == user_a["name"]
         assert "_id" not in data
 
     def test_logout_without_token_returns_ok(self, anon_session, api_url):
@@ -319,14 +319,11 @@ class TestUserIsolation:
         )
         assert r.status_code == 404
 
-    def test_user_b_cannot_delete_user_a_customer(self, session_b, api_url):
+    def test_user_b_cannot_delete_user_a_customer(self, session_a, session_b, api_url):
         # Delete responds ok even on missing (idempotent), but must NOT affect user A's data
         session_b.delete(f"{api_url}/customers/{TestUserIsolation.a_customer_id}")
         # Verify user A still has it
-        rows = __import__("requests").get(
-            f"{api_url}/customers",
-            headers={"Authorization": "Bearer testtoken123"},
-        ).json()
+        rows = session_a.get(f"{api_url}/customers").json()
         assert any(c["id"] == TestUserIsolation.a_customer_id for c in rows), \
             "User B's delete must not affect user A's customer"
 

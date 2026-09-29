@@ -2,14 +2,18 @@ from fastapi import FastAPI, APIRouter, Header, HTTPException, Depends
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+import json
 import os
 import logging
 import uuid
-import httpx
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+from firebase_admin import credentials as firebase_credentials
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -18,16 +22,47 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-app = FastAPI()
+app = FastAPI(title="Nain Hisab API")
 api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def init_firebase() -> bool:
+    if firebase_admin._apps:
+        return True
+    raw = (os.environ.get("FIREBASE_CREDENTIALS_JSON") or "").strip()
+    path = (os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+    try:
+        if raw:
+            info = json.loads(raw)
+            cred = firebase_credentials.Certificate(info)
+        elif path:
+            cred_path = Path(path)
+            if not cred_path.is_absolute():
+                cred_path = ROOT_DIR / cred_path
+            if not cred_path.is_file():
+                logger.warning("Firebase credentials file not found: %s", cred_path)
+                return False
+            cred = firebase_credentials.Certificate(str(cred_path))
+        else:
+            logger.warning("Firebase credentials not set — Google ID tokens will not verify")
+            return False
+        firebase_admin.initialize_app(cred)
+        logger.info("Firebase Admin initialized")
+        return True
+    except Exception:
+        logger.exception("Firebase Admin failed to initialize")
+        return False
+
+
+FIREBASE_READY = init_firebase()
+
+
 # --- Models ---
-class SessionExchangeRequest(BaseModel):
-    session_id: str
+class LoginRequest(BaseModel):
+    id_token: str
 
 
 class UserOut(BaseModel):
@@ -38,7 +73,6 @@ class UserOut(BaseModel):
 
 
 class AuthResponse(BaseModel):
-    session_token: str
     user: UserOut
 
 
@@ -107,72 +141,85 @@ class JobUpdate(BaseModel):
 
 
 # --- Auth Helpers ---
-async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
+def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+        return None
     token = authorization.split(" ", 1)[1].strip()
-    session = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
-    if not session:
-        raise HTTPException(status_code=401, detail="Invalid session")
-    expires_at = session.get("expires_at")
-    if isinstance(expires_at, datetime):
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        if expires_at < datetime.now(timezone.utc):
-            raise HTTPException(status_code=401, detail="Session expired")
-    user = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    return user
+    return token or None
+
+
+async def upsert_user_from_claims(claims: dict) -> dict:
+    firebase_uid = claims.get("uid") or claims.get("sub")
+    email = (claims.get("email") or "").strip().lower()
+    name = claims.get("name") or email or "User"
+    picture = claims.get("picture")
+    if not firebase_uid and not email:
+        raise HTTPException(status_code=401, detail="Token missing user identity")
+
+    existing = None
+    if firebase_uid:
+        existing = await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
+    if not existing and email:
+        existing = await db.users.find_one({"email": email}, {"_id": 0})
+
+    now = datetime.now(timezone.utc).isoformat()
+    if existing:
+        user_id = existing["user_id"]
+        patch = {"name": name, "picture": picture, "email": email or existing.get("email")}
+        if firebase_uid:
+            patch["firebase_uid"] = firebase_uid
+        await db.users.update_one({"user_id": user_id}, {"$set": patch})
+        existing.update(patch)
+        return existing
+
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    doc = {
+        "user_id": user_id,
+        "firebase_uid": firebase_uid,
+        "email": email,
+        "name": name,
+        "picture": picture,
+        "createdAt": now,
+    }
+    await db.users.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
+    token = _extract_bearer(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    if not FIREBASE_READY:
+        raise HTTPException(status_code=503, detail="Firebase is not configured on the server")
+    try:
+        claims = firebase_auth.verify_id_token(token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return await upsert_user_from_claims(claims)
 
 
 # --- Auth Endpoints ---
-@api_router.post("/auth/session", response_model=AuthResponse)
-async def exchange_session(payload: SessionExchangeRequest):
-    session_id = payload.session_id.strip()
-    if not session_id:
-        raise HTTPException(status_code=401, detail="Missing session_id")
-    async with httpx.AsyncClient(timeout=15.0) as hx:
-        r = await hx.get(
-            "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-            headers={"X-Session-ID": session_id},
+@api_router.post("/auth/login", response_model=AuthResponse)
+async def login_with_firebase(payload: LoginRequest):
+    id_token = (payload.id_token or "").strip()
+    if not id_token:
+        raise HTTPException(status_code=401, detail="Missing id_token")
+    if not FIREBASE_READY:
+        raise HTTPException(status_code=503, detail="Firebase is not configured on the server")
+    try:
+        claims = firebase_auth.verify_id_token(id_token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid id_token")
+    user = await upsert_user_from_claims(claims)
+    return AuthResponse(
+        user=UserOut(
+            user_id=user["user_id"],
+            email=user.get("email", ""),
+            name=user.get("name", ""),
+            picture=user.get("picture"),
         )
-    if r.status_code != 200:
-        raise HTTPException(status_code=401, detail="Invalid session_id")
-    data = r.json()
-    email = data.get("email")
-    name = data.get("name") or email or "User"
-    picture = data.get("picture")
-    session_token = data.get("session_token")
-    if not email or not session_token:
-        raise HTTPException(status_code=401, detail="Malformed session data")
-
-    existing = await db.users.find_one({"email": email}, {"_id": 0})
-    if existing:
-        user_id = existing["user_id"]
-        await db.users.update_one(
-            {"user_id": user_id},
-            {"$set": {"name": name, "picture": picture}},
-        )
-    else:
-        user_id = f"user_{uuid.uuid4().hex[:12]}"
-        await db.users.insert_one({
-            "user_id": user_id,
-            "email": email,
-            "name": name,
-            "picture": picture,
-            "createdAt": datetime.now(timezone.utc).isoformat(),
-        })
-
-    await db.user_sessions.insert_one({
-        "session_token": session_token,
-        "user_id": user_id,
-        "created_at": datetime.now(timezone.utc),
-        "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
-    })
-
-    user_out = UserOut(user_id=user_id, email=email, name=name, picture=picture)
-    return AuthResponse(session_token=session_token, user=user_out)
+    )
 
 
 @api_router.get("/auth/me", response_model=UserOut)
@@ -186,10 +233,8 @@ async def me(user: dict = Depends(get_current_user)):
 
 
 @api_router.post("/auth/logout")
-async def logout(authorization: Optional[str] = Header(None)):
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.split(" ", 1)[1].strip()
-        await db.user_sessions.delete_one({"session_token": token})
+async def logout():
+    # Firebase ID tokens are stateless; the client drops its own session.
     return {"ok": True}
 
 
@@ -303,9 +348,7 @@ app.add_middleware(
 async def startup():
     await db.users.create_index("email", unique=True)
     await db.users.create_index("user_id", unique=True)
-    await db.user_sessions.create_index("session_token", unique=True)
-    await db.user_sessions.create_index("user_id")
-    await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
+    await db.users.create_index("firebase_uid", unique=True, sparse=True)
     await db.customers.create_index([("user_id", 1), ("id", 1)])
     await db.entries.create_index([("user_id", 1), ("id", 1)])
     await db.jobs.create_index([("user_id", 1), ("id", 1)])

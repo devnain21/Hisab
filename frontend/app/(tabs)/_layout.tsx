@@ -2,7 +2,8 @@ import { Tabs, Redirect } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useAuth } from "@/src/context/AuthContext";
 import { colors } from "@/src/theme";
-import { View, ActivityIndicator } from "react-native";
+import { View, ActivityIndicator, Platform } from "react-native";
+import * as Haptics from "expo-haptics";
 
 export default function TabsLayout() {
   const { status } = useAuth();
@@ -17,8 +18,14 @@ export default function TabsLayout() {
 
   return (
     <Tabs
+      screenListeners={{
+        tabPress: () => {
+          if (Platform.OS !== "web") Haptics.selectionAsync().catch(() => {});
+        },
+      }}
       screenOptions={{
         headerShown: false,
+        animation: "shift",
         tabBarActiveTintColor: colors.brandSecondary,
         tabBarInactiveTintColor: colors.muted,
         tabBarStyle: {

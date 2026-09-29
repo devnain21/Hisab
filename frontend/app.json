@@ -15,7 +15,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#FDFBF7"
+        "backgroundColor": "#00796B"
       },
       "package": "com.nainphotostate.hisab",
       "googleServicesFile": "./google-services.json",
@@ -45,8 +45,8 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-image.png",
-          "imageWidth": 200,
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 160,
           "resizeMode": "contain",
           "backgroundColor": "#FDFBF7"
         }
@@ -61,6 +61,13 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "bc4207c9-dc20-4088-a255-a5d628468a62"
+      }
+    },
+    "owner": "devnain21"
   }
 }

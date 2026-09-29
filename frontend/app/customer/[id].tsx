@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { View, Text, StyleSheet, Pressable, FlatList, Alert, ScrollView } from "react-native";
+import { View, Text, StyleSheet, ScrollView } from "react-native";
+import Animated, { FadeInDown } from "react-native-reanimated";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
@@ -8,7 +9,9 @@ import { colors, spacing, radius } from "@/src/theme";
 import { computeBalance, useCustomers, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
 import { formatDate, formatINR, formatPhone, initials } from "@/src/lib/format";
 import { api } from "@/src/lib/api";
-import { AddEntrySheet, AddJobSheet, AddCustomerSheet } from "@/src/components/sheets";
+import { AddEntrySheet, AddJobSheet, AddCustomerSheet, CompleteJobSheet } from "@/src/components/sheets";
+import { Pressable } from "@/src/components/tap";
+import { confirmAction } from "@/src/lib/confirm";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -21,6 +24,7 @@ export default function CustomerDetail() {
   const [entrySheet, setEntrySheet] = useState<"work" | "payment" | null>(null);
   const [jobSheet, setJobSheet] = useState(false);
   const [editSheet, setEditSheet] = useState(false);
+  const [completing, setCompleting] = useState<Job | null>(null);
 
   const customer = (customersQ.data ?? []).find((c) => c.id === id);
   const entries = useMemo(() => (entriesQ.data ?? []).filter((e) => e.customerId === id), [entriesQ.data, id]);
@@ -47,33 +51,21 @@ export default function CustomerDetail() {
     );
   }
 
-  const removeEntry = async (eid: string) => {
-    await api.deleteEntry(eid);
-    qc.invalidateQueries({ queryKey: ["entries"] });
-  };
-
-  const completeJob = async (j: Job) => {
-    await api.updateJob(j.id, { status: "done" });
-    if (j.estimatedAmount > 0) {
-      await api.createEntry({
-        customerId: j.customerId, type: "work", date: j.dueDate, description: j.title, amount: j.estimatedAmount, notes: "काम पूरा — उधार में जोड़ा",
-      });
-    }
-    qc.invalidateQueries({ queryKey: ["jobs"] });
-    qc.invalidateQueries({ queryKey: ["entries"] });
+  const removeEntry = (e: Entry) => {
+    confirmAction("एंट्री हटाएँ?", `${e.description} · ${formatINR(e.amount)}`, "हटा दें", async () => {
+      await api.deleteEntry(e.id);
+      qc.invalidateQueries({ queryKey: ["entries"] });
+    });
   };
 
   const deleteCustomer = () => {
-    Alert.alert(`${customer.name} को हटाएँ?`, "इनका पूरा खाता मिट जाएगा।", [
-      { text: "रद्द", style: "cancel" },
-      { text: "हटा दें", style: "destructive", onPress: async () => {
-        await api.deleteCustomer(customer.id);
-        qc.invalidateQueries({ queryKey: ["customers"] });
-        qc.invalidateQueries({ queryKey: ["entries"] });
-        qc.invalidateQueries({ queryKey: ["jobs"] });
-        router.back();
-      }},
-    ]);
+    confirmAction(`${customer.name} को हटाएँ?`, "इनका पूरा खाता मिट जाएगा।", "हटा दें", async () => {
+      await api.deleteCustomer(customer.id);
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      qc.invalidateQueries({ queryKey: ["entries"] });
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      router.back();
+    });
   };
 
   return (
@@ -122,15 +114,17 @@ export default function CustomerDetail() {
 
         {openJobs.length > 0 && (
           <>
-            <Text style={styles.sectionHead}>पेंडिंग काम</Text>
+            <Text style={styles.sectionHead}>आगे का काम / रिमार्क</Text>
             <View style={{ gap: spacing.sm }}>
               {openJobs.map((j) => (
                 <View key={j.id} style={styles.jobRow} testID={`cust-job-${j.id}`}>
+                  <MaterialIcon name="calendar-clock" size={20} color={colors.brandPrimary} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.jobTitle}>{j.title}</Text>
                     <Text style={styles.sub}>{formatDate(j.dueDate)}{j.estimatedAmount > 0 ? ` · ${formatINR(j.estimatedAmount)}` : ""}</Text>
+                    {j.notes ? <Text style={styles.sub}>{j.notes}</Text> : null}
                   </View>
-                  <Pressable style={styles.pillBtn} onPress={() => completeJob(j)} testID={`cust-complete-${j.id}`}>
+                  <Pressable style={styles.pillBtn} onPress={() => setCompleting(j)} testID={`cust-complete-${j.id}`}>
                     <Text style={styles.pillBtnText}>पूरा</Text>
                   </Pressable>
                 </View>
@@ -147,8 +141,10 @@ export default function CustomerDetail() {
           </View>
         ) : (
           <View style={{ gap: spacing.sm }}>
-            {timeline.map(({ e, running }) => (
-              <TimelineRow key={e.id} entry={e} running={running} onDelete={() => removeEntry(e.id)} />
+            {timeline.map(({ e, running }, i) => (
+              <Animated.View key={e.id} entering={FadeInDown.delay(Math.min(i, 8) * 40).duration(250)}>
+                <TimelineRow entry={e} running={running} onDelete={() => removeEntry(e)} />
+              </Animated.View>
             ))}
           </View>
         )}
@@ -157,6 +153,7 @@ export default function CustomerDetail() {
       <AddEntrySheet visible={entrySheet !== null} type={entrySheet ?? "work"} onClose={() => setEntrySheet(null)} customerId={customer.id} />
       <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} customerId={customer.id} />
       <AddCustomerSheet visible={editSheet} onClose={() => setEditSheet(false)} initial={customer} />
+      <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
     </View>
   );
 }

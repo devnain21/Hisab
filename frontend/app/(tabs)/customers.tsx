@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
-import { View, Text, StyleSheet, Pressable, TextInput, FlatList, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, TextInput, FlatList, ScrollView, ActivityIndicator } from "react-native";
+import { Pressable } from "@/src/components/tap";
+import { SlowServerHint } from "@/src/components/slow-server-hint";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
@@ -59,7 +61,7 @@ export default function CustomersScreen() {
       </View>
 
       {loading ? (
-        <View style={{ marginTop: spacing.xxl, alignItems: "center" }}><ActivityIndicator color={colors.brandPrimary} /></View>
+        <View style={{ marginTop: spacing.xxl, alignItems: "center" }}><ActivityIndicator color={colors.brandPrimary} /><SlowServerHint /></View>
       ) : (
         <FlatList
           data={rows}

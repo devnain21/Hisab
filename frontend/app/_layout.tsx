@@ -7,8 +7,10 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { queryClient } from "@/src/query-client";
 import { AuthProvider } from "@/src/context/AuthContext";
+import { wakeBackend } from "@/src/lib/api";
 
 LogBox.ignoreAllLogs(true);
+wakeBackend();
 
 export default function RootLayout() {
   return (

@@ -1,4 +1,7 @@
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
+import Animated, { FadeInDown } from "react-native-reanimated";
+import { Pressable } from "@/src/components/tap";
+import { SlowServerHint } from "@/src/components/slow-server-hint";
 import { useState, useMemo } from "react";
 import { useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
@@ -6,7 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { useCustomers, useEntries, useJobs, computeBalance } from "@/src/lib/data";
 import { formatDate, formatDateShort, formatINR, formatWeekdayDate, initials, todayISO } from "@/src/lib/format";
-import { AddEntrySheet, AddCustomerSheet } from "@/src/components/sheets";
+import { AddEntrySheet, AddCustomerSheet, AddJobSheet } from "@/src/components/sheets";
 
 export default function Home() {
   const insets = useSafeAreaInsets();
@@ -16,6 +19,7 @@ export default function Home() {
   const jobsQ = useJobs();
   const [entrySheet, setEntrySheet] = useState<"work" | "payment" | null>(null);
   const [custSheet, setCustSheet] = useState(false);
+  const [jobSheet, setJobSheet] = useState(false);
 
   const today = todayISO();
   const customers = customersQ.data ?? [];
@@ -61,18 +65,19 @@ export default function Home() {
         {loading ? (
           <View style={{ marginTop: spacing.xxl, alignItems: "center" }}>
             <ActivityIndicator color={colors.brandPrimary} />
+            <SlowServerHint />
           </View>
         ) : (
-          <>
+          <Animated.View entering={FadeInDown.duration(300)}>
             <View style={styles.statsGrid}>
               <StatCard label="कुल बकाया" value={formatINR(Math.max(stats.totalDue, 0))} tone="due" testID="stat-total-due" />
               <StatCard label="पेंडिंग काम" value={String(stats.openJobs)} tone="neutral" testID="stat-pending-jobs" />
-              <StatCard label="आज का उधार" value={formatINR(stats.todayWork)} tone="neutral" testID="stat-today-work" />
+              <StatCard label="आज का काम" value={formatINR(stats.todayWork)} tone="neutral" testID="stat-today-work" />
               <StatCard label="आज की जमा" value={formatINR(stats.todayPay)} tone="ok" testID="stat-today-pay" />
             </View>
 
             <View style={styles.actionsRow}>
-              <ActionBtn label="उधार काम" icon="arrow-up-right" tone="due" onPress={() => setEntrySheet("work")} testID="quick-udhaar" />
+              <ActionBtn label="काम लिखें" icon="briefcase-plus-outline" tone="brand" onPress={() => setJobSheet(true)} testID="quick-work" />
               <ActionBtn label="जमा" icon="arrow-down-left" tone="ok" onPress={() => setEntrySheet("payment")} testID="quick-jama" />
               <ActionBtn label="ग्राहक" icon="account-plus-outline" tone="neutral" onPress={() => setCustSheet(true)} testID="quick-customer" />
             </View>
@@ -135,12 +140,13 @@ export default function Home() {
                 ))}
               </View>
             )}
-          </>
+          </Animated.View>
         )}
       </ScrollView>
 
       <AddEntrySheet visible={entrySheet !== null} type={entrySheet ?? "work"} onClose={() => setEntrySheet(null)} />
       <AddCustomerSheet visible={custSheet} onClose={() => setCustSheet(false)} />
+      <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />
     </View>
   );
 }
@@ -156,10 +162,10 @@ function StatCard({ label, value, tone, testID }: { label: string; value: string
 }
 
 function ActionBtn({ label, icon, tone, onPress, testID }: any) {
-  const bg = tone === "due" ? colors.error : tone === "ok" ? colors.success : colors.surfaceSecondary;
+  const bg = tone === "brand" ? colors.brandPrimary : tone === "due" ? colors.error : tone === "ok" ? colors.success : colors.surfaceSecondary;
   const fg = tone === "neutral" ? colors.onSurface : "#fff";
   return (
-    <Pressable onPress={onPress} testID={testID} style={({ pressed }) => [styles.actionBtn, { backgroundColor: bg, opacity: pressed ? 0.85 : 1 }]}>
+    <Pressable onPress={onPress} testID={testID} style={[styles.actionBtn, { backgroundColor: bg }]}>
       <MaterialIcon name={icon} size={18} color={fg} />
       <Text style={[styles.actionText, { color: fg }]}>{label}</Text>
     </Pressable>

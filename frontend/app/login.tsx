@@ -1,4 +1,5 @@
-import { View, Text, Pressable, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ActivityIndicator, Image } from "react-native";
+import { Pressable } from "@/src/components/tap";
 import { useState } from "react";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -29,9 +30,7 @@ export default function Login() {
   return (
     <View style={[styles.container, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.xl }]} testID="login-screen">
       <View style={styles.brandArea}>
-        <View style={styles.logoBadge}>
-          <MaterialIcon name="notebook-outline" size={56} color={colors.brandSecondary} />
-        </View>
+        <Image source={require("@/assets/images/splash-icon.png")} style={styles.logo} />
         <Text style={styles.tag}>NAIN PHOTO STATE</Text>
         <Text style={styles.title}>हिसाब</Text>
         <Text style={styles.subtitle}>
@@ -45,7 +44,7 @@ export default function Login() {
           testID="google-signin-button"
           onPress={handleSignIn}
           disabled={loading}
-          style={({ pressed }) => [styles.googleBtn, pressed && { opacity: 0.85 }]}
+          style={styles.googleBtn}
         >
           {loading ? (
             <ActivityIndicator color={colors.onBrandPrimary} />
@@ -66,13 +65,7 @@ export default function Login() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.surface, paddingHorizontal: spacing.xl, justifyContent: "space-between" },
   brandArea: { alignItems: "center", marginTop: spacing.xxxl },
-  logoBadge: {
-    width: 104, height: 104, borderRadius: radius.pill,
-    backgroundColor: colors.brandTertiary,
-    alignItems: "center", justifyContent: "center",
-    marginBottom: spacing.xl,
-    borderWidth: 1, borderColor: colors.border,
-  },
+  logo: { width: 112, height: 112, marginBottom: spacing.xl },
   tag: { fontSize: 11, letterSpacing: 3, color: colors.brandSecondary, marginBottom: spacing.sm, fontWeight: "700" },
   title: { fontSize: 48, color: colors.onSurface, fontWeight: "700", marginBottom: spacing.md },
   subtitle: { fontSize: 15, color: colors.muted, textAlign: "center", lineHeight: 24 },

@@ -37,6 +37,10 @@ async function req(path: string, opts: RequestInit = {}) {
   return null;
 }
 
+export function wakeBackend() {
+  if (BASE) fetch(`${BASE}/api/`).catch(() => {});
+}
+
 export const api = {
   login: (id_token: string) =>
     req("/auth/login", { method: "POST", body: JSON.stringify({ id_token }) }),

@@ -1,0 +1,20 @@
+[build]
+  base = "frontend"
+  command = "npx expo export --platform web"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+  EXPO_PUBLIC_BACKEND_URL = "https://hisab-api-4i09.onrender.com"
+  EXPO_PUBLIC_FIREBASE_API_KEY = "AIzaSyD_l5it1cjOwmkxUxA64FEztV3Z_JGdNWo"
+  EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN = "hisab-kitab-c777e.firebaseapp.com"
+  EXPO_PUBLIC_FIREBASE_PROJECT_ID = "hisab-kitab-c777e"
+  EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET = "hisab-kitab-c777e.firebasestorage.app"
+  EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID = "623533267328"
+  EXPO_PUBLIC_FIREBASE_APP_ID = "1:623533267328:android:13c6e100ab2035c0b40965"
+  EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID = "623533267328-bfjl8qbevkl3om46v9s6scocmmv6977h.apps.googleusercontent.com"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

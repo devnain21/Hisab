@@ -57,18 +57,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setState({ status: "unauthenticated", user: null });
         return;
       }
+      // The free backend can take up to a minute to wake up, so don't block navigation on it.
+      setState({ status: "authenticated", user: mapFirebaseUser(fbUser) });
       try {
         const token = await fbUser.getIdToken();
         const me = await api.login(token);
-        setState({ status: "authenticated", user: me.user ?? mapFirebaseUser(fbUser) });
-      } catch {
-        try {
-          const me = await api.me();
-          setState({ status: "authenticated", user: me });
-        } catch {
-          setState({ status: "authenticated", user: mapFirebaseUser(fbUser) });
+        if (me.user && auth.currentUser?.uid === fbUser.uid) {
+          setState({ status: "authenticated", user: me.user });
         }
-      }
+      } catch {}
     });
 
     return () => {

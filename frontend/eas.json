@@ -6,7 +6,7 @@
   "build": {
     "base": {
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://hisab-api.onrender.com",
+        "EXPO_PUBLIC_BACKEND_URL": "https://hisab-api-4i09.onrender.com",
         "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyD_l5it1cjOwmkxUxA64FEztV3Z_JGdNWo",
         "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "hisab-kitab-c777e.firebaseapp.com",
         "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "hisab-kitab-c777e",

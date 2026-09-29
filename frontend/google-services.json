@@ -15,6 +15,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "623533267328-825mr2a0sluq8i4ofi2stj5c6lgovss1.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.nainphotostate.hisab",
+            "certificate_hash": "37307070bc5ea00636cd169c76c46237f8a2ec6c"
+          }
+        },
+        {
           "client_id": "623533267328-bfjl8qbevkl3om46v9s6scocmmv6977h.apps.googleusercontent.com",
           "client_type": 3
         }

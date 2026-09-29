@@ -7,8 +7,6 @@
 
 # Firebase private keys
 **/firebase-service-account.json
-google-services.json
-GoogleService-Info.plist
 
 # IDE and editors
 .idea/

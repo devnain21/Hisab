@@ -1,11 +1,20 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import * as Google from "expo-auth-session/providers/google";
-import * as WebBrowser from "expo-web-browser";
-import { GoogleAuthProvider, onAuthStateChanged, signInWithCredential, signOut as firebaseSignOut } from "firebase/auth";
+import { Platform } from "react-native";
+import { GoogleSignin, isErrorWithCode, statusCodes } from "@react-native-google-signin/google-signin";
+import {
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithCredential,
+  signInWithPopup,
+  signOut as firebaseSignOut,
+} from "firebase/auth";
 import { api, setTokenProvider } from "@/src/lib/api";
 import { getFirebaseAuth, getGoogleClientIds, isFirebaseConfigured } from "@/src/lib/firebase";
 
-WebBrowser.maybeCompleteAuthSession();
+if (Platform.OS !== "web") {
+  const { webClientId } = getGoogleClientIds();
+  if (webClientId) GoogleSignin.configure({ webClientId });
+}
 
 type User = { user_id: string; email: string; name: string; picture?: string | null };
 type AuthState = { status: "loading" | "authenticated" | "unauthenticated"; user: User | null };
@@ -28,14 +37,6 @@ function mapFirebaseUser(u: { uid: string; email: string | null; displayName: st
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading", user: null });
-  const ids = getGoogleClientIds();
-
-  const [request, , promptAsync] = Google.useIdTokenAuthRequest({
-    clientId: ids.webClientId || undefined,
-    iosClientId: ids.iosClientId || undefined,
-    androidClientId: ids.androidClientId || undefined,
-    webClientId: ids.webClientId || undefined,
-  });
 
   useEffect(() => {
     if (!isFirebaseConfigured()) {
@@ -77,29 +78,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = useCallback(async () => {
-    if (!isFirebaseConfigured() || !ids.webClientId) {
+    if (Platform.OS === "web") {
+      if (!isFirebaseConfigured()) {
+        throw new Error("Firebase config set nahi hai. frontend/.env dekho.");
+      }
+      const provider = new GoogleAuthProvider();
+      try {
+        await signInWithPopup(getFirebaseAuth(), provider);
+      } catch (e: unknown) {
+        const code = (e as { code?: string })?.code;
+        if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") return;
+        if (code === "auth/popup-blocked") {
+          throw new Error("Browser ne login popup block kar diya. Is site ke liye popups allow karo aur dobara try karo.");
+        }
+        throw e;
+      }
+      return;
+    }
+    if (!isFirebaseConfigured() || !getGoogleClientIds().webClientId) {
       throw new Error("Firebase / Google Client ID set nahi hai. frontend/.env dekho.");
     }
-    if (!request) {
-      throw new Error("Google Sign-In ready nahi hai. App dubara start karo.");
+    let idToken: string | null = null;
+    try {
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      const result = await GoogleSignin.signIn();
+      if (result.type !== "success") return;
+      idToken = result.data.idToken;
+    } catch (e: unknown) {
+      if (isErrorWithCode(e) && e.code === statusCodes.IN_PROGRESS) return;
+      if (isErrorWithCode(e) && e.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+        throw new Error("Is phone me Google Play Services nahi hai ya purana hai.");
+      }
+      throw e;
     }
-    const result = await promptAsync();
-    if (result.type !== "success") {
-      if (result.type === "dismiss" || result.type === "cancel") return;
-      throw new Error("Google sign-in cancel ya fail ho gaya");
-    }
-    const idToken = result.params.id_token;
     if (!idToken) {
       throw new Error("Google se ID token nahi mila");
     }
-    const credential = GoogleAuthProvider.credential(idToken);
-    await signInWithCredential(getFirebaseAuth(), credential);
-  }, [ids.webClientId, promptAsync, request]);
+    await signInWithCredential(getFirebaseAuth(), GoogleAuthProvider.credential(idToken));
+  }, []);
 
   const signOut = useCallback(async () => {
     try {
       await api.logout();
     } catch {}
+    if (Platform.OS !== "web") {
+      try {
+        await GoogleSignin.signOut();
+      } catch {}
+    }
     try {
       if (isFirebaseConfigured()) {
         await firebaseSignOut(getFirebaseAuth());

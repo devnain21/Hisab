@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "623533267328",
+    "firebase_url": "https://hisab-kitab-c777e-default-rtdb.firebaseio.com",
+    "project_id": "hisab-kitab-c777e",
+    "storage_bucket": "hisab-kitab-c777e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:623533267328:android:13c6e100ab2035c0b40965",
+        "android_client_info": {
+          "package_name": "com.nainphotostate.hisab"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "623533267328-bfjl8qbevkl3om46v9s6scocmmv6977h.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD_l5it1cjOwmkxUxA64FEztV3Z_JGdNWo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "623533267328-bfjl8qbevkl3om46v9s6scocmmv6977h.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

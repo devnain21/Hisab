@@ -1,19 +1,36 @@
 {
   "cli": {
-    "version": ">= 16.0.0"
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
   },
   "build": {
+    "base": {
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://hisab-api.onrender.com",
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyD_l5it1cjOwmkxUxA64FEztV3Z_JGdNWo",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "hisab-kitab-c777e.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "hisab-kitab-c777e",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "hisab-kitab-c777e.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "623533267328",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:623533267328:android:13c6e100ab2035c0b40965",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "623533267328-bfjl8qbevkl3om46v9s6scocmmv6977h.apps.googleusercontent.com"
+      }
+    },
     "development": {
+      "extends": "base",
       "developmentClient": true,
       "distribution": "internal"
     },
     "preview": {
+      "extends": "base",
       "distribution": "internal",
       "android": {
         "buildType": "apk"
       }
     },
     "production": {
+      "extends": "base",
+      "autoIncrement": true,
       "android": {
         "buildType": "app-bundle"
       }

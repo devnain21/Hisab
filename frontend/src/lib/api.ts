@@ -30,7 +30,9 @@ async function req(path: string, opts: RequestInit = {}) {
   }
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+    const err: Error & { status?: number } = new Error(text || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
   }
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) return res.json();
@@ -45,6 +47,7 @@ export const api = {
   login: (id_token: string) =>
     req("/auth/login", { method: "POST", body: JSON.stringify({ id_token }) }),
   me: () => req("/auth/me"),
+  updateMe: (b: { shop_name: string }) => req("/auth/me", { method: "PUT", body: JSON.stringify(b) }),
   logout: () => req("/auth/logout", { method: "POST" }),
   listCustomers: () => req("/customers"),
   createCustomer: (b: unknown) => req("/customers", { method: "POST", body: JSON.stringify(b) }),

@@ -2,13 +2,12 @@ import { useMemo, useState } from "react";
 import { View, Text, StyleSheet, ScrollView } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useQueryClient } from "@tanstack/react-query";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { computeBalance, useCustomers, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
 import { formatDate, formatINR, formatPhone, initials } from "@/src/lib/format";
-import { api } from "@/src/lib/api";
+import { store } from "@/src/lib/store";
 import { AddEntrySheet, AddJobSheet, AddCustomerSheet, CompleteJobSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
 import { confirmAction } from "@/src/lib/confirm";
@@ -17,7 +16,6 @@ export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const qc = useQueryClient();
   const customersQ = useCustomers();
   const entriesQ = useEntries();
   const jobsQ = useJobs();
@@ -53,17 +51,13 @@ export default function CustomerDetail() {
 
   const removeEntry = (e: Entry) => {
     confirmAction("एंट्री हटाएँ?", `${e.description} · ${formatINR(e.amount)}`, "हटा दें", async () => {
-      await api.deleteEntry(e.id);
-      qc.invalidateQueries({ queryKey: ["entries"] });
+      store.deleteEntry(e.id);
     });
   };
 
   const deleteCustomer = () => {
     confirmAction(`${customer.name} को हटाएँ?`, "इनका पूरा खाता मिट जाएगा।", "हटा दें", async () => {
-      await api.deleteCustomer(customer.id);
-      qc.invalidateQueries({ queryKey: ["customers"] });
-      qc.invalidateQueries({ queryKey: ["entries"] });
-      qc.invalidateQueries({ queryKey: ["jobs"] });
+      store.deleteCustomer(customer.id);
       router.back();
     });
   };
@@ -189,7 +183,7 @@ const styles = StyleSheet.create({
   sub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   subFaint: { fontSize: 11, color: colors.muted },
   balanceCard: { padding: spacing.xl, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  balanceLabel: { fontSize: 12, color: colors.muted, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5 },
+  balanceLabel: { fontSize: 12, color: colors.muted, fontWeight: "700", textTransform: "uppercase" },
   balanceValue: { fontSize: 36, fontWeight: "800", marginTop: spacing.xs },
   notes: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: spacing.sm },
   actionsRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },

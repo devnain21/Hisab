@@ -1,4 +1,6 @@
 """Backend API tests for Nain Photo State — Hisab (Hindi khata) app."""
+import uuid
+
 import pytest
 
 
@@ -41,6 +43,16 @@ class TestAuthEndpoints:
         assert data["email"] == user_a["email"]
         assert data["name"] == user_a["name"]
         assert "_id" not in data
+
+    def test_update_shop_name_persists(self, session_a, api_url):
+        r = session_a.put(f"{api_url}/auth/me", json={"shop_name": "  TEST Shop  "})
+        assert r.status_code == 200
+        assert r.json()["shop_name"] == "TEST Shop"
+        assert session_a.get(f"{api_url}/auth/me").json()["shop_name"] == "TEST Shop"
+
+    def test_update_shop_name_requires_auth(self, anon_session, api_url):
+        r = anon_session.put(f"{api_url}/auth/me", json={"shop_name": "x"})
+        assert r.status_code == 401
 
     def test_logout_without_token_returns_ok(self, anon_session, api_url):
         r = anon_session.post(f"{api_url}/auth/logout")
@@ -253,6 +265,30 @@ class TestJobsCRUD:
 
 
 # --- Cascade delete ------------------------------------------------------
+class TestOfflineIdempotency:
+    def test_client_id_create_is_idempotent(self, session_a, api_url):
+        cid = f"offline-{uuid.uuid4()}"
+        body = {"id": cid, "name": "TEST_Offline"}
+        first = session_a.post(f"{api_url}/customers", json=body)
+        second = session_a.post(f"{api_url}/customers", json=body)
+        assert first.status_code == 200 and second.status_code == 200
+        assert first.json()["id"] == cid and second.json()["id"] == cid
+        rows = [c for c in session_a.get(f"{api_url}/customers").json() if c["id"] == cid]
+        assert len(rows) == 1
+        session_a.delete(f"{api_url}/customers/{cid}")
+
+    def test_client_id_is_scoped_per_user(self, session_a, session_b, api_url):
+        cid = f"offline-{uuid.uuid4()}"
+        session_a.post(f"{api_url}/customers", json={"id": cid, "name": "TEST_A_Owned"})
+        r = session_b.post(f"{api_url}/customers", json={"id": cid, "name": "TEST_B_Owned"})
+        assert r.status_code == 200
+        assert r.json()["name"] == "TEST_B_Owned"
+        a_rows = [c for c in session_a.get(f"{api_url}/customers").json() if c["id"] == cid]
+        assert a_rows[0]["name"] == "TEST_A_Owned"
+        session_a.delete(f"{api_url}/customers/{cid}")
+        session_b.delete(f"{api_url}/customers/{cid}")
+
+
 class TestCascadeDelete:
     def test_delete_customer_cascades_entries_and_jobs(self, session_a, api_url):
         # Create customer

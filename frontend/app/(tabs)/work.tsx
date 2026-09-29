@@ -1,12 +1,11 @@
 import { useMemo, useState } from "react";
 import { View, Text, StyleSheet, FlatList, ScrollView, ActivityIndicator } from "react-native";
-import { useQueryClient } from "@tanstack/react-query";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { useCustomers, useJobs, useEntries, type Job } from "@/src/lib/data";
-import { api } from "@/src/lib/api";
+import { store } from "@/src/lib/store";
 import { formatDate, formatINR, todayISO } from "@/src/lib/format";
 import { AddJobSheet, CompleteJobSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
@@ -16,7 +15,6 @@ type Filter = "open" | "done" | "all";
 
 export default function WorkScreen() {
   const insets = useSafeAreaInsets();
-  const qc = useQueryClient();
   const customersQ = useCustomers();
   const jobsQ = useJobs();
   useEntries();
@@ -40,14 +38,12 @@ export default function WorkScreen() {
   }, [jobs, filter]);
 
   const start = async (j: Job) => {
-    await api.updateJob(j.id, { status: "doing" });
-    qc.invalidateQueries({ queryKey: ["jobs"] });
+    store.updateJob(j.id, { status: "doing" });
   };
 
   const del = (j: Job) => {
     confirmAction("काम हटाएँ?", j.title, "हटा दें", async () => {
-      await api.deleteJob(j.id);
-      qc.invalidateQueries({ queryKey: ["jobs"] });
+      store.deleteJob(j.id);
     });
   };
 

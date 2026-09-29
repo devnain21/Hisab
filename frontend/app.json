@@ -57,7 +57,8 @@
       "expo-web-browser",
       "expo-status-bar",
       "@react-native-vector-icons/material-design-icons",
-      "@react-native-google-signin/google-signin"
+      "@react-native-google-signin/google-signin",
+      "expo-local-authentication"
     ],
     "experiments": {
       "typedRoutes": true

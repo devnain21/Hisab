@@ -70,6 +70,11 @@ class UserOut(BaseModel):
     email: str
     name: str
     picture: Optional[str] = None
+    shop_name: str = ""
+
+
+class ProfileUpdate(BaseModel):
+    shop_name: str = Field(max_length=60)
 
 
 class AuthResponse(BaseModel):
@@ -86,6 +91,7 @@ class Customer(BaseModel):
 
 
 class CustomerCreate(BaseModel):
+    id: Optional[str] = None
     name: str
     phone: str = ""
     address: str = ""
@@ -104,6 +110,7 @@ class Entry(BaseModel):
 
 
 class EntryCreate(BaseModel):
+    id: Optional[str] = None
     customerId: str
     type: Literal["work", "payment"]
     date: str
@@ -124,6 +131,7 @@ class Job(BaseModel):
 
 
 class JobCreate(BaseModel):
+    id: Optional[str] = None
     customerId: str
     title: str
     dueDate: str
@@ -199,6 +207,20 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     return await upsert_user_from_claims(claims)
 
 
+# Offline clients generate the id and may resend the same create after a dropped response.
+async def _create_idempotent(collection, model, payload: BaseModel, user: dict):
+    data = payload.dict(exclude_none=True)
+    if data.get("id"):
+        existing = await collection.find_one({"id": data["id"], "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+        if existing:
+            return model(**existing)
+    obj = model(**data)
+    doc = obj.dict()
+    doc["user_id"] = user["user_id"]
+    await collection.insert_one(doc)
+    return obj
+
+
 # --- Auth Endpoints ---
 @api_router.post("/auth/login", response_model=AuthResponse)
 async def login_with_firebase(payload: LoginRequest):
@@ -212,24 +234,30 @@ async def login_with_firebase(payload: LoginRequest):
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid id_token")
     user = await upsert_user_from_claims(claims)
-    return AuthResponse(
-        user=UserOut(
-            user_id=user["user_id"],
-            email=user.get("email", ""),
-            name=user.get("name", ""),
-            picture=user.get("picture"),
-        )
+    return AuthResponse(user=_user_out(user))
+
+
+def _user_out(user: dict) -> UserOut:
+    return UserOut(
+        user_id=user["user_id"],
+        email=user.get("email", ""),
+        name=user.get("name", ""),
+        picture=user.get("picture"),
+        shop_name=user.get("shop_name", ""),
     )
 
 
 @api_router.get("/auth/me", response_model=UserOut)
 async def me(user: dict = Depends(get_current_user)):
-    return UserOut(
-        user_id=user["user_id"],
-        email=user["email"],
-        name=user.get("name", ""),
-        picture=user.get("picture"),
-    )
+    return _user_out(user)
+
+
+@api_router.put("/auth/me", response_model=UserOut)
+async def update_me(payload: ProfileUpdate, user: dict = Depends(get_current_user)):
+    shop_name = payload.shop_name.strip()
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"shop_name": shop_name}})
+    user["shop_name"] = shop_name
+    return _user_out(user)
 
 
 @api_router.post("/auth/logout")
@@ -247,11 +275,7 @@ async def list_customers(user: dict = Depends(get_current_user)):
 
 @api_router.post("/customers", response_model=Customer)
 async def create_customer(payload: CustomerCreate, user: dict = Depends(get_current_user)):
-    c = Customer(**payload.dict())
-    doc = c.dict()
-    doc["user_id"] = user["user_id"]
-    await db.customers.insert_one(doc)
-    return c
+    return await _create_idempotent(db.customers, Customer, payload, user)
 
 
 @api_router.put("/customers/{customer_id}", response_model=Customer)
@@ -259,9 +283,9 @@ async def update_customer(customer_id: str, payload: CustomerCreate, user: dict 
     existing = await db.customers.find_one({"id": customer_id, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not existing:
         raise HTTPException(404, "Not found")
-    updated = {**existing, **payload.dict()}
-    await db.customers.update_one({"id": customer_id, "user_id": user["user_id"]}, {"$set": payload.dict()})
-    return Customer(**updated)
+    patch = payload.dict(exclude={"id"})
+    await db.customers.update_one({"id": customer_id, "user_id": user["user_id"]}, {"$set": patch})
+    return Customer(**{**existing, **patch})
 
 
 @api_router.delete("/customers/{customer_id}")
@@ -281,11 +305,7 @@ async def list_entries(user: dict = Depends(get_current_user)):
 
 @api_router.post("/entries", response_model=Entry)
 async def create_entry(payload: EntryCreate, user: dict = Depends(get_current_user)):
-    e = Entry(**payload.dict())
-    doc = e.dict()
-    doc["user_id"] = user["user_id"]
-    await db.entries.insert_one(doc)
-    return e
+    return await _create_idempotent(db.entries, Entry, payload, user)
 
 
 @api_router.delete("/entries/{entry_id}")
@@ -303,11 +323,7 @@ async def list_jobs(user: dict = Depends(get_current_user)):
 
 @api_router.post("/jobs", response_model=Job)
 async def create_job(payload: JobCreate, user: dict = Depends(get_current_user)):
-    j = Job(**payload.dict())
-    doc = j.dict()
-    doc["user_id"] = user["user_id"]
-    await db.jobs.insert_one(doc)
-    return j
+    return await _create_idempotent(db.jobs, Job, payload, user)
 
 
 @api_router.put("/jobs/{job_id}", response_model=Job)

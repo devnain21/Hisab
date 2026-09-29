@@ -10,6 +10,8 @@ import { colors, spacing, radius } from "@/src/theme";
 import { useCustomers, useEntries, useJobs, computeBalance } from "@/src/lib/data";
 import { formatDate, formatDateShort, formatINR, formatWeekdayDate, initials, todayISO } from "@/src/lib/format";
 import { AddEntrySheet, AddCustomerSheet, AddJobSheet } from "@/src/components/sheets";
+import { useAuth } from "@/src/context/AuthContext";
+import { usePendingCount } from "@/src/lib/store";
 
 export default function Home() {
   const insets = useSafeAreaInsets();
@@ -20,6 +22,8 @@ export default function Home() {
   const [entrySheet, setEntrySheet] = useState<"work" | "payment" | null>(null);
   const [custSheet, setCustSheet] = useState(false);
   const [jobSheet, setJobSheet] = useState(false);
+  const { user } = useAuth();
+  const pending = usePendingCount();
 
   const today = todayISO();
   const customers = customersQ.data ?? [];
@@ -59,8 +63,14 @@ export default function Home() {
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.eyebrow}>{formatWeekdayDate(today)}</Text>
-        <Text style={styles.h1}>आज का खाता</Text>
-        <Text style={styles.sub}>Nain Photo State — उधार, जमा और काम</Text>
+        <Text style={styles.h1} numberOfLines={2} testID="shop-name">{user?.shop_name || "आज का खाता"}</Text>
+        <Text style={styles.sub}>बही खाता — उधार, जमा और काम</Text>
+        {pending > 0 ? (
+          <View style={styles.pendingPill} testID="home-sync-pending">
+            <MaterialIcon name="cloud-upload-outline" size={14} color={colors.warning} />
+            <Text style={styles.pendingText}>{pending} बदलाव फ़ोन में सेव, इंटरनेट आने पर सिंक होंगे</Text>
+          </View>
+        ) : null}
 
         {loading ? (
           <View style={{ marginTop: spacing.xxl, alignItems: "center" }}>
@@ -146,8 +156,7 @@ export default function Home() {
 
       <AddEntrySheet visible={entrySheet !== null} type={entrySheet ?? "work"} onClose={() => setEntrySheet(null)} />
       <AddCustomerSheet visible={custSheet} onClose={() => setCustSheet(false)} />
-      <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />
-    </View>
+      <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />    </View>
   );
 }
 
@@ -194,9 +203,11 @@ export function Avatar({ name }: { name: string }) {
 }
 
 const styles = StyleSheet.create({
-  eyebrow: { fontSize: 11, letterSpacing: 2, color: colors.brandSecondary, fontWeight: "700", textTransform: "uppercase" },
+  eyebrow: { fontSize: 11, color: colors.brandSecondary, fontWeight: "700", textTransform: "uppercase" },
   h1: { fontSize: 30, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xs },
   sub: { fontSize: 13, color: colors.muted, marginTop: spacing.xs },
+  pendingPill: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", marginTop: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.errorSoft },
+  pendingText: { fontSize: 12, fontWeight: "600", color: colors.warning },
   statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.xl },
   statCard: { flexBasis: "48%", flexGrow: 1, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
   statLabel: { fontSize: 12, color: colors.muted, fontWeight: "500" },

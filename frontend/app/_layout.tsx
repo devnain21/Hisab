@@ -1,11 +1,12 @@
-import { QueryClientProvider } from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { Stack } from "expo-router";
 import { LogBox } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/src/components/error-boundary";
-import { queryClient } from "@/src/query-client";
+import { AppLockGate } from "@/src/components/app-lock";
+import { CACHE_MAX_AGE, queryClient, queryPersister } from "@/src/query-client";
 import { AuthProvider } from "@/src/context/AuthContext";
 import { wakeBackend } from "@/src/lib/api";
 
@@ -15,15 +16,17 @@ wakeBackend();
 export default function RootLayout() {
   return (
     <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
+      <PersistQueryClientProvider client={queryClient} persistOptions={{ persister: queryPersister, maxAge: CACHE_MAX_AGE }}>
         <SafeAreaProvider>
           <KeyboardProvider>
             <AuthProvider>
-              <Stack screenOptions={{ headerShown: false }} />
+              <AppLockGate>
+                <Stack screenOptions={{ headerShown: false }} />
+              </AppLockGate>
             </AuthProvider>
           </KeyboardProvider>
         </SafeAreaProvider>
-      </QueryClientProvider>
+      </PersistQueryClientProvider>
     </ErrorBoundary>
   );
 }

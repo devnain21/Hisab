@@ -13,12 +13,12 @@ import {
 } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useQueryClient } from "@tanstack/react-query";
-import { api } from "@/src/lib/api";
+import { store } from "@/src/lib/store";
 import { useCustomers, type Job } from "@/src/lib/data";
 import { colors, spacing, radius } from "@/src/theme";
 import { formatINR, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
+import { useAuth } from "@/src/context/AuthContext";
 
 // Android modals don't resize for the keyboard under edge-to-edge, so pad by the measured overlap instead.
 function useKeyboardOverlap(ref: React.RefObject<View | null>) {
@@ -130,17 +130,53 @@ function DateField({ label, value, onChange, future, testID }: { label: string; 
   );
 }
 
-function CustomerPicker({ value, onChange, testPrefix }: { value: string; onChange: (id: string) => void; testPrefix: string }) {
+const NEW_CUSTOMER = "__new__";
+
+// Lets a sheet either pick an existing customer or create one inline before saving.
+function useCustomerChoice(visible: boolean, fixedCustomerId?: string) {
   const customers = useCustomers().data ?? [];
-  if (customers.length === 0) {
-    return <Text style={styles.hint}>पहले एक ग्राहक जोड़ें।</Text>;
-  }
+  const [customerId, setCustomerId] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+
+  useEffect(() => {
+    if (visible) {
+      setCustomerId(fixedCustomerId ?? customers[0]?.id ?? NEW_CUSTOMER);
+      setNewName("");
+      setNewPhone("");
+    }
+  }, [visible, fixedCustomerId, customers.length]);
+
+  const isNew = customerId === NEW_CUSTOMER;
+  const ready = isNew ? !!newName.trim() : !!customerId;
+
+  const resolve = async (): Promise<string> => {
+    if (!isNew) return customerId;
+    const c = await store.createCustomer({ name: newName.trim(), phone: newPhone.trim(), address: "", notes: "" });
+    setCustomerId(c.id);
+    return c.id;
+  };
+
+  return { customers, customerId, setCustomerId, isNew, newName, setNewName, newPhone, setNewPhone, ready, resolve };
+}
+
+function CustomerPicker({ choice, testPrefix }: { choice: ReturnType<typeof useCustomerChoice>; testPrefix: string }) {
+  const { customers, customerId, setCustomerId, isNew } = choice;
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.sm, paddingRight: spacing.md }}>
-      {customers.map((c) => (
-        <Chip key={c.id} label={c.name} active={value === c.id} onPress={() => onChange(c.id)} testID={`${testPrefix}-${c.id}`} />
-      ))}
-    </ScrollView>
+    <Field label="ग्राहक">
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.sm, paddingRight: spacing.md }}>
+        <Chip label="नया ग्राहक" icon="account-plus-outline" active={isNew} onPress={() => setCustomerId(NEW_CUSTOMER)} testID={`${testPrefix}-new`} />
+        {customers.map((c) => (
+          <Chip key={c.id} label={c.name} active={customerId === c.id} onPress={() => setCustomerId(c.id)} testID={`${testPrefix}-${c.id}`} />
+        ))}
+      </ScrollView>
+      {isNew && (
+        <View style={styles.newCustomerBox}>
+          <TextInput style={inputStyle} value={choice.newName} onChangeText={choice.setNewName} placeholder="नए ग्राहक का नाम" placeholderTextColor={colors.muted} testID="input-new-cust-name" />
+          <TextInput style={[inputStyle, { marginTop: spacing.sm }]} value={choice.newPhone} onChangeText={choice.setNewPhone} placeholder="फ़ोन (वैकल्पिक)" placeholderTextColor={colors.muted} keyboardType="phone-pad" testID="input-new-cust-phone" />
+        </View>
+      )}
+    </Field>
   );
 }
 
@@ -170,10 +206,10 @@ function PaymentPicker({ mode, onMode, paid, onPaid, total }: { mode: PayMode; o
 // Work is always booked as udhaar; whatever was paid now is booked as jama so the khata stays balanced.
 async function recordWork({ customerId, title, amount, mode, paid, date, notes }: { customerId: string; title: string; amount: number; mode: PayMode; paid: number; date: string; notes: string }) {
   if (amount <= 0) return;
-  await api.createEntry({ customerId, type: "work", date, description: title, amount, notes });
+  await store.createEntry({ customerId, type: "work", date, description: title, amount, notes });
   const paidNow = mode === "cash" ? amount : mode === "partial" ? Math.min(Math.max(paid, 0), amount) : 0;
   if (paidNow > 0) {
-    await api.createEntry({ customerId, type: "payment", date, description: `${title} — ${mode === "cash" ? "नकद" : "आंशिक जमा"}`, amount: paidNow, notes: "" });
+    await store.createEntry({ customerId, type: "payment", date, description: `${title} — ${mode === "cash" ? "नकद" : "आंशिक जमा"}`, amount: paidNow, notes: "" });
   }
 }
 
@@ -199,7 +235,6 @@ function PrimaryButton({ label, onPress, disabled, saving, color, testID }: { la
 }
 
 export function AddCustomerSheet({ visible, onClose, initial }: { visible: boolean; onClose: () => void; initial?: any }) {
-  const qc = useQueryClient();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
@@ -220,9 +255,8 @@ export function AddCustomerSheet({ visible, onClose, initial }: { visible: boole
     setSaving(true);
     try {
       const body = { name: name.trim(), phone: phone.trim(), address: address.trim(), notes: notes.trim() };
-      if (initial?.id) await api.updateCustomer(initial.id, body);
-      else await api.createCustomer(body);
-      qc.invalidateQueries({ queryKey: ["customers"] });
+      if (initial?.id) await store.updateCustomer(initial.id, body);
+      else await store.createCustomer(body);
       onClose();
     } finally { setSaving(false); }
   };
@@ -247,9 +281,7 @@ export function AddCustomerSheet({ visible, onClose, initial }: { visible: boole
 }
 
 export function AddEntrySheet({ visible, type, onClose, customerId: fixedCustomerId }: { visible: boolean; type: "work" | "payment"; onClose: () => void; customerId?: string }) {
-  const qc = useQueryClient();
-  const customers = useCustomers().data ?? [];
-  const [customerId, setCustomerId] = useState<string>("");
+  const choice = useCustomerChoice(visible, fixedCustomerId);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(todayISO());
@@ -258,34 +290,29 @@ export function AddEntrySheet({ visible, type, onClose, customerId: fixedCustome
 
   useEffect(() => {
     if (visible) {
-      setCustomerId(fixedCustomerId ?? customers[0]?.id ?? "");
       setDescription("");
       setAmount("");
       setDate(todayISO());
       setNotes("");
     }
-  }, [visible, fixedCustomerId, customers.length]);
+  }, [visible]);
 
   const amt = parseFloat(amount);
-  const valid = !!customerId && !!description.trim() && isFinite(amt) && amt > 0;
+  const valid = choice.ready && !!description.trim() && isFinite(amt) && amt > 0;
 
   const save = async () => {
     if (!valid) return;
     setSaving(true);
     try {
-      await api.createEntry({ customerId, type, date, description: description.trim(), amount: amt, notes: notes.trim() });
-      qc.invalidateQueries({ queryKey: ["entries"] });
+      const customerId = await choice.resolve();
+      await store.createEntry({ customerId, type, date, description: description.trim(), amount: amt, notes: notes.trim() });
       onClose();
     } finally { setSaving(false); }
   };
 
   return (
     <SheetShell visible={visible} onClose={onClose} title={type === "work" ? "उधार काम जोड़ें" : "जमा लिखें"} testID={`sheet-entry-${type}`}>
-      {!fixedCustomerId && (
-        <Field label="ग्राहक">
-          <CustomerPicker value={customerId} onChange={setCustomerId} testPrefix="chip-cust" />
-        </Field>
-      )}
+      {!fixedCustomerId && <CustomerPicker choice={choice} testPrefix="chip-cust" />}
       <Field label="विवरण">
         <TextInput style={inputStyle} value={description} onChangeText={setDescription} placeholder={type === "work" ? "जैसे पासपोर्ट फोटो 8 प्रति" : "आंशिक जमा"} placeholderTextColor={colors.muted} testID="input-entry-desc" />
       </Field>
@@ -311,10 +338,8 @@ export function AddEntrySheet({ visible, type, onClose, customerId: fixedCustome
 type JobMode = "now" | "later";
 
 export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, initialMode = "now" }: { visible: boolean; onClose: () => void; customerId?: string; initialMode?: JobMode }) {
-  const qc = useQueryClient();
-  const customers = useCustomers().data ?? [];
+  const choice = useCustomerChoice(visible, fixedCustomerId);
   const [mode, setMode] = useState<JobMode>(initialMode);
-  const [customerId, setCustomerId] = useState("");
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
   const [pay, setPay] = useState<PayMode>("cash");
@@ -327,7 +352,6 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   useEffect(() => {
     if (visible) {
       setMode(initialMode);
-      setCustomerId(fixedCustomerId ?? customers[0]?.id ?? "");
       setTitle("");
       setAmount("");
       setPay("cash");
@@ -336,7 +360,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       setRemark("");
       setRemarkDate(todayISO(1));
     }
-  }, [visible, fixedCustomerId, customers.length, initialMode]);
+  }, [visible, initialMode]);
 
   const switchMode = (m: JobMode) => {
     setMode(m);
@@ -344,26 +368,25 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   };
 
   const amt = parseFloat(amount) || 0;
-  const valid = !!customerId && !!title.trim() && (mode === "later" || amt > 0);
+  const valid = choice.ready && !!title.trim() && (mode === "later" || amt > 0);
 
   const save = async () => {
     if (!valid) return;
     setSaving(true);
     try {
+      const customerId = await choice.resolve();
       const t = title.trim();
       if (mode === "now") {
         const paidNum = parseFloat(paid) || 0;
         const note = payNote(pay, amt, paidNum);
         await recordWork({ customerId, title: t, amount: amt, mode: pay, paid: paidNum, date, notes: remark.trim() });
-        await api.createJob({ customerId, title: t, dueDate: date, status: "done", estimatedAmount: amt, notes: [note, remark.trim()].filter(Boolean).join(" · ") });
+        await store.createJob({ customerId, title: t, dueDate: date, status: "done", estimatedAmount: amt, notes: [note, remark.trim()].filter(Boolean).join(" · ") });
         if (remark.trim()) {
-          await api.createJob({ customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
+          await store.createJob({ customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
         }
-        qc.invalidateQueries({ queryKey: ["entries"] });
       } else {
-        await api.createJob({ customerId, title: t, dueDate: date, estimatedAmount: amt, notes: remark.trim() });
+        await store.createJob({ customerId, title: t, dueDate: date, estimatedAmount: amt, notes: remark.trim() });
       }
-      qc.invalidateQueries({ queryKey: ["jobs"] });
       onClose();
     } finally { setSaving(false); }
   };
@@ -379,11 +402,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
         ))}
       </View>
 
-      {!fixedCustomerId && (
-        <Field label="ग्राहक">
-          <CustomerPicker value={customerId} onChange={setCustomerId} testPrefix="chip-job-cust" />
-        </Field>
-      )}
+      {!fixedCustomerId && <CustomerPicker choice={choice} testPrefix="chip-job-cust" />}
       <Field label="क्या काम">
         <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholder={mode === "now" ? "जैसे पासपोर्ट फोटो, फोटोकॉपी 20 पेज" : "जैसे शादी एलबम"} placeholderTextColor={colors.muted} testID="input-job-title" />
       </Field>
@@ -414,8 +433,42 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   );
 }
 
+export function ShopNameSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const { user, setShopName } = useAuth();
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (visible) {
+      setName(user?.shop_name ?? "");
+      setError(null);
+    }
+  }, [visible, user?.shop_name]);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await setShopName(name.trim());
+      onClose();
+    } catch {
+      setError("सेव नहीं हुआ, दोबारा कोशिश करें।");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <SheetShell visible={visible} onClose={onClose} title="दुकान का नाम" testID="sheet-shop-name">
+      <Field label="आपकी दुकान / बिज़नेस का नाम">
+        <TextInput style={inputStyle} value={name} onChangeText={setName} placeholder="जैसे नैन फोटो स्टेट" placeholderTextColor={colors.muted} maxLength={60} autoFocus testID="input-shop-name" />
+      </Field>
+      {error ? <Text style={[styles.hint, { color: colors.error }]}>{error}</Text> : null}
+      <PrimaryButton label="सेव करें" onPress={save} disabled={!name.trim()} saving={saving} testID="save-shop-name-btn" />
+    </SheetShell>
+  );
+}
+
 export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: () => void }) {
-  const qc = useQueryClient();
   const [amount, setAmount] = useState("");
   const [pay, setPay] = useState<PayMode>("cash");
   const [paid, setPaid] = useState("");
@@ -439,9 +492,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
       const date = todayISO();
       await recordWork({ customerId: job.customerId, title: job.title, amount: amt, mode: pay, paid: paidNum, date, notes: "काम पूरा" });
       const note = payNote(pay, amt, paidNum);
-      await api.updateJob(job.id, { status: "done", estimatedAmount: amt, notes: [job.notes, note].filter(Boolean).join(" · ") });
-      qc.invalidateQueries({ queryKey: ["jobs"] });
-      qc.invalidateQueries({ queryKey: ["entries"] });
+      await store.updateJob(job.id, { status: "done", estimatedAmount: amt, notes: [job.notes, note].filter(Boolean).join(" · ") });
       onClose();
     } finally { setSaving(false); }
   };
@@ -464,12 +515,13 @@ const styles = StyleSheet.create({
   grabber: { width: 40, height: 4, backgroundColor: colors.borderStrong, borderRadius: 2, alignSelf: "center", marginBottom: spacing.md },
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.lg },
   title: { fontSize: 20, fontWeight: "700", color: colors.onSurface },
-  label: { fontSize: 12, color: colors.muted, fontWeight: "600", marginBottom: spacing.xs, textTransform: "uppercase", letterSpacing: 0.5 },
+  label: { fontSize: 12, color: colors.muted, fontWeight: "600", marginBottom: spacing.xs, textTransform: "uppercase" },
   hint: { fontSize: 12, color: colors.muted, marginTop: spacing.xs },
   jobName: { fontSize: 16, fontWeight: "700", color: colors.onSurface, marginBottom: spacing.md },
   primaryBtn: { backgroundColor: colors.brandPrimary, borderRadius: radius.md, paddingVertical: 15, alignItems: "center", marginTop: spacing.md, minHeight: 52, justifyContent: "center" },
   primaryText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "700" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  newCustomerBox: { marginTop: spacing.sm, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.border },
   chip: { flexDirection: "row", gap: 6, paddingHorizontal: spacing.md, height: 36, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   chipText: { fontSize: 13, color: colors.onSurface, fontWeight: "600" },
   segment: { flexDirection: "row", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: 4, marginBottom: spacing.lg, borderWidth: 1, borderColor: colors.border },

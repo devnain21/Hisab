@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { Platform } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GoogleSignin, isErrorWithCode, statusCodes } from "@react-native-google-signin/google-signin";
 import {
   GoogleAuthProvider,
@@ -10,21 +11,41 @@ import {
 } from "firebase/auth";
 import { api, setTokenProvider } from "@/src/lib/api";
 import { getFirebaseAuth, getGoogleClientIds, isFirebaseConfigured } from "@/src/lib/firebase";
+import { clearOutbox, flush } from "@/src/lib/store";
+import { disableLock } from "@/src/lib/app-lock";
+import { queryClient } from "@/src/query-client";
 
 if (Platform.OS !== "web") {
   const { webClientId } = getGoogleClientIds();
   if (webClientId) GoogleSignin.configure({ webClientId });
 }
 
-type User = { user_id: string; email: string; name: string; picture?: string | null };
+type User = { user_id: string; email: string; name: string; picture?: string | null; shop_name?: string };
 type AuthState = { status: "loading" | "authenticated" | "unauthenticated"; user: User | null };
 
 type Ctx = AuthState & {
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
+  setShopName: (name: string) => Promise<void>;
 };
 
 const AuthContext = createContext<Ctx | null>(null);
+
+const PROFILE_KEY = "hisab_profile_v1";
+
+async function readCachedProfile(uid: string): Promise<User | null> {
+  try {
+    const raw = await AsyncStorage.getItem(PROFILE_KEY);
+    const saved = raw ? (JSON.parse(raw) as { uid: string; user: User }) : null;
+    return saved?.uid === uid ? saved.user : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedProfile(uid: string, user: User) {
+  AsyncStorage.setItem(PROFILE_KEY, JSON.stringify({ uid, user })).catch(() => {});
+}
 
 function mapFirebaseUser(u: { uid: string; email: string | null; displayName: string | null; photoURL: string | null }): User {
   return {
@@ -57,13 +78,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setState({ status: "unauthenticated", user: null });
         return;
       }
-      // The free backend can take up to a minute to wake up, so don't block navigation on it.
-      setState({ status: "authenticated", user: mapFirebaseUser(fbUser) });
+      // The free backend can take up to a minute to wake up (or we may be offline), so don't block on it.
+      const cached = await readCachedProfile(fbUser.uid);
+      setState({ status: "authenticated", user: cached ?? mapFirebaseUser(fbUser) });
+      void flush();
       try {
         const token = await fbUser.getIdToken();
         const me = await api.login(token);
         if (me.user && auth.currentUser?.uid === fbUser.uid) {
           setState({ status: "authenticated", user: me.user });
+          writeCachedProfile(fbUser.uid, me.user);
         }
       } catch {}
     });
@@ -128,11 +152,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await firebaseSignOut(getFirebaseAuth());
       }
     } catch {}
+    // The next person to sign in on this device must not see this khata or inherit its PIN.
+    await clearOutbox();
+    queryClient.clear();
+    await AsyncStorage.removeItem(PROFILE_KEY).catch(() => {});
+    await disableLock().catch(() => {});
     setState({ status: "unauthenticated", user: null });
   }, []);
 
+  const setShopName = useCallback(async (name: string) => {
+    const me = await api.updateMe({ shop_name: name });
+    setState((s) => (s.user ? { ...s, user: { ...s.user, shop_name: me.shop_name } } : s));
+    const uid = getFirebaseAuth().currentUser?.uid;
+    if (uid) writeCachedProfile(uid, me);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ ...state, signIn, signOut }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ ...state, signIn, signOut, setShopName }}>{children}</AuthContext.Provider>
   );
 }
 

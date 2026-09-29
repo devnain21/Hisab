@@ -1,11 +1,12 @@
-import { View, Text, StyleSheet, ActivityIndicator, Image } from "react-native";
-import { Pressable } from "@/src/components/tap";
+import { View, Text, StyleSheet, ActivityIndicator, Image, Platform, Pressable as RNPressable } from "react-native";
 import { useState } from "react";
+import { Redirect } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
+import * as Haptics from "expo-haptics";
+import Animated, { FadeIn, FadeInDown, interpolate, interpolateColor, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/context/AuthContext";
 import { colors, spacing, radius } from "@/src/theme";
-import { Redirect } from "expo-router";
 
 export default function Login() {
   const { status, signIn } = useAuth();
@@ -21,63 +22,80 @@ export default function Login() {
     try {
       await signIn();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Sign-in fail ho gaya");
+      setError(e instanceof Error ? e.message : "साइन इन नहीं हो पाया, दोबारा कोशिश करें");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.xl }]} testID="login-screen">
-      <View style={styles.brandArea}>
+    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom + spacing.xxl }]} testID="login-screen">
+      <Animated.View entering={FadeIn.duration(500)} style={styles.brandArea}>
         <Image source={require("@/assets/images/splash-icon.png")} style={styles.logo} />
-        <Text style={styles.tag}>NAIN PHOTO STATE</Text>
         <Text style={styles.title}>हिसाब</Text>
-        <Text style={styles.subtitle}>
-          उधार, जमा और आने वाला काम —{"\n"}सब कुछ एक जगह, ऑनलाइन सुरक्षित।
-        </Text>
-      </View>
+        <Text style={styles.tagline}>बही खाता</Text>
+      </Animated.View>
 
-      <View style={styles.bottomArea}>
-        <Text style={styles.hint}>अपना Google खाता जोड़ें ताकि सारा डेटा सुरक्षित रहे</Text>
-        <Pressable
-          testID="google-signin-button"
-          onPress={handleSignIn}
-          disabled={loading}
-          style={styles.googleBtn}
-        >
-          {loading ? (
-            <ActivityIndicator color={colors.onBrandPrimary} />
-          ) : (
-            <>
-              <MaterialIcon name="google" size={22} color={colors.onBrandPrimary} />
-              <Text style={styles.googleText}>Google से साइन इन करें</Text>
-            </>
-          )}
-        </Pressable>
+      <Animated.View entering={FadeInDown.delay(200).duration(400)} style={styles.bottomArea}>
+        <GoogleButton loading={loading} onPress={handleSignIn} />
         {error ? <Text style={styles.error}>{error}</Text> : null}
-        <Text style={styles.footer}>साइन इन करके आप डेटा को क्लाउड में सेव करने की सहमति देते हैं।</Text>
-      </View>
+      </Animated.View>
     </View>
   );
 }
 
+function GoogleButton({ loading, onPress }: { loading: boolean; onPress: () => void }) {
+  const pressed = useSharedValue(0);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: interpolate(pressed.value, [0, 1], [1, 0.96]) }],
+    backgroundColor: interpolateColor(pressed.value, [0, 1], [colors.brandPrimary, colors.brandSecondary]),
+    shadowOpacity: interpolate(pressed.value, [0, 1], [0.25, 0.08]),
+    elevation: interpolate(pressed.value, [0, 1], [6, 1]),
+  }));
+
+  return (
+    <RNPressable
+      testID="google-signin-button"
+      disabled={loading}
+      onPressIn={() => {
+        pressed.value = withSpring(1, { damping: 15, stiffness: 400 });
+        if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      }}
+      onPressOut={() => {
+        pressed.value = withSpring(0, { damping: 12, stiffness: 300 });
+      }}
+      onPress={onPress}
+      style={{ width: "100%", maxWidth: 420 }}
+    >
+      <Animated.View style={[styles.googleBtn, animatedStyle, loading && { opacity: 0.85 }]}>
+        <View style={styles.googleBadge}>
+          <MaterialIcon name="google" size={20} color={colors.brandPrimary} />
+        </View>
+        {loading ? (
+          <ActivityIndicator color={colors.onBrandPrimary} style={{ flex: 1 }} />
+        ) : (
+          <Text style={styles.googleText}>Google से जारी रखें</Text>
+        )}
+        <MaterialIcon name="arrow-right" size={20} color="rgba(255,255,255,0.85)" style={{ marginRight: spacing.md }} />
+      </Animated.View>
+    </RNPressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.surface, paddingHorizontal: spacing.xl, justifyContent: "space-between" },
-  brandArea: { alignItems: "center", marginTop: spacing.xxxl },
-  logo: { width: 112, height: 112, marginBottom: spacing.xl },
-  tag: { fontSize: 11, letterSpacing: 3, color: colors.brandSecondary, marginBottom: spacing.sm, fontWeight: "700" },
-  title: { fontSize: 48, color: colors.onSurface, fontWeight: "700", marginBottom: spacing.md },
-  subtitle: { fontSize: 15, color: colors.muted, textAlign: "center", lineHeight: 24 },
+  container: { flex: 1, backgroundColor: colors.surface, paddingHorizontal: spacing.xl },
+  brandArea: { flex: 1, alignItems: "center", justifyContent: "center" },
+  logo: { width: 96, height: 96, marginBottom: spacing.lg },
+  title: { fontSize: 40, color: colors.onSurface, fontWeight: "700" },
+  tagline: { fontSize: 15, color: colors.muted, marginTop: spacing.xs },
   bottomArea: { alignItems: "center", gap: spacing.md },
-  hint: { fontSize: 13, color: colors.muted, textAlign: "center", marginBottom: spacing.xs },
   googleBtn: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.md,
-    backgroundColor: colors.brandPrimary,
-    paddingVertical: 16, paddingHorizontal: spacing.xl, borderRadius: radius.md,
-    width: "100%", minHeight: 56,
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: colors.brandPrimary, borderRadius: radius.pill,
+    minHeight: 58, padding: 6,
+    shadowColor: colors.brandSecondary, shadowRadius: 12, shadowOffset: { width: 0, height: 6 },
   },
-  googleText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "600" },
+  googleBadge: { width: 46, height: 46, borderRadius: 23, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
+  googleText: { flex: 1, textAlign: "center", color: colors.onBrandPrimary, fontSize: 17, fontWeight: "700" },
   error: { fontSize: 13, color: colors.error, textAlign: "center" },
-  footer: { fontSize: 11, color: colors.muted, textAlign: "center", marginTop: spacing.sm },
 });

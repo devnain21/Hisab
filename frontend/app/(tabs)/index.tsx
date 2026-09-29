@@ -156,7 +156,8 @@ export default function Home() {
 
       <AddEntrySheet visible={entrySheet !== null} type={entrySheet ?? "work"} onClose={() => setEntrySheet(null)} />
       <AddCustomerSheet visible={custSheet} onClose={() => setCustSheet(false)} />
-      <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />    </View>
+      <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />
+    </View>
   );
 }
 

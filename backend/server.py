@@ -106,6 +106,7 @@ class Entry(BaseModel):
     description: str
     amount: float
     notes: str = ""
+    linkId: str = ""
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -117,6 +118,16 @@ class EntryCreate(BaseModel):
     description: str
     amount: float
     notes: str = ""
+    linkId: str = ""
+
+
+class EntryUpdate(BaseModel):
+    type: Literal["work", "payment"]
+    date: str
+    description: str
+    amount: float
+    notes: str = ""
+    linkId: Optional[str] = None
 
 
 class Job(BaseModel):
@@ -127,6 +138,7 @@ class Job(BaseModel):
     status: Literal["pending", "doing", "done"] = "pending"
     estimatedAmount: float = 0
     notes: str = ""
+    entryId: str = ""
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -138,6 +150,7 @@ class JobCreate(BaseModel):
     status: Literal["pending", "doing", "done"] = "pending"
     estimatedAmount: float = 0
     notes: str = ""
+    entryId: str = ""
 
 
 class JobUpdate(BaseModel):
@@ -146,6 +159,42 @@ class JobUpdate(BaseModel):
     status: Optional[Literal["pending", "doing", "done"]] = None
     estimatedAmount: Optional[float] = None
     notes: Optional[str] = None
+    entryId: Optional[str] = None
+
+
+AepsType = Literal["withdrawal", "deposit", "transfer", "balance", "recharge", "bill", "other"]
+
+
+class AepsFields(BaseModel):
+    type: AepsType
+    date: str
+    time: str = ""
+    customerName: str = Field(min_length=1, max_length=80)
+    mobile: str = Field("", max_length=15)
+    # UIDAI rules forbid keeping full Aadhaar numbers; only the last four digits are accepted.
+    aadhaarLast4: str = Field("", pattern=r"^\d{0,4}$")
+    bankName: str = ""
+    amount: float = Field(0, ge=0)
+    commission: float = Field(0, ge=0)
+    status: Literal["success", "pending", "failed"] = "success"
+    reference: str = ""
+    operator: str = ""
+    rechargeNumber: str = ""
+    billerName: str = ""
+    billAccount: str = ""
+    beneficiaryName: str = ""
+    accountNumber: str = ""
+    ifsc: str = ""
+    notes: str = ""
+
+
+class AepsTxn(AepsFields):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class AepsCreate(AepsFields):
+    id: Optional[str] = None
 
 
 # --- Auth Helpers ---
@@ -308,6 +357,18 @@ async def create_entry(payload: EntryCreate, user: dict = Depends(get_current_us
     return await _create_idempotent(db.entries, Entry, payload, user)
 
 
+@api_router.put("/entries/{entry_id}", response_model=Entry)
+async def update_entry(entry_id: str, payload: EntryUpdate, user: dict = Depends(get_current_user)):
+    existing = await db.entries.find_one({"id": entry_id, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    if not existing:
+        raise HTTPException(404, "Not found")
+    if payload.amount <= 0:
+        raise HTTPException(422, "Amount must be greater than 0")
+    patch = payload.dict(exclude_none=True)
+    await db.entries.update_one({"id": entry_id, "user_id": user["user_id"]}, {"$set": patch})
+    return Entry(**{**existing, **patch})
+
+
 @api_router.delete("/entries/{entry_id}")
 async def delete_entry(entry_id: str, user: dict = Depends(get_current_user)):
     await db.entries.delete_one({"id": entry_id, "user_id": user["user_id"]})
@@ -344,6 +405,34 @@ async def delete_job(job_id: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
+# --- AEPS / money services ---
+@api_router.get("/aeps", response_model=List[AepsTxn])
+async def list_aeps(user: dict = Depends(get_current_user)):
+    rows = await db.aeps.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(10000)
+    return [AepsTxn(**r) for r in rows]
+
+
+@api_router.post("/aeps", response_model=AepsTxn)
+async def create_aeps(payload: AepsCreate, user: dict = Depends(get_current_user)):
+    return await _create_idempotent(db.aeps, AepsTxn, payload, user)
+
+
+@api_router.put("/aeps/{txn_id}", response_model=AepsTxn)
+async def update_aeps(txn_id: str, payload: AepsFields, user: dict = Depends(get_current_user)):
+    existing = await db.aeps.find_one({"id": txn_id, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    if not existing:
+        raise HTTPException(404, "Not found")
+    patch = payload.dict()
+    await db.aeps.update_one({"id": txn_id, "user_id": user["user_id"]}, {"$set": patch})
+    return AepsTxn(**{**existing, **patch})
+
+
+@api_router.delete("/aeps/{txn_id}")
+async def delete_aeps(txn_id: str, user: dict = Depends(get_current_user)):
+    await db.aeps.delete_one({"id": txn_id, "user_id": user["user_id"]})
+    return {"ok": True}
+
+
 @api_router.get("/")
 async def root():
     return {"message": "Nain Hisab API"}
@@ -368,6 +457,7 @@ async def startup():
     await db.customers.create_index([("user_id", 1), ("id", 1)])
     await db.entries.create_index([("user_id", 1), ("id", 1)])
     await db.jobs.create_index([("user_id", 1), ("id", 1)])
+    await db.aeps.create_index([("user_id", 1), ("id", 1)])
 
 
 @app.on_event("shutdown")

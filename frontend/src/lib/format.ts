@@ -63,6 +63,19 @@ export function formatPhone(p: string): string {
   return s || "";
 }
 
+/** Indian mobile number in the international form wa.me expects, or "" if it can't be used. */
+export function waNumber(phone: string): string {
+  const d = (phone || "").replace(/\D/g, "");
+  if (d.length === 10) return `91${d}`;
+  if (d.length === 11 && d.startsWith("0")) return `91${d.slice(1)}`;
+  return d.length >= 12 ? d : "";
+}
+
+export function nowHM(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 export function initials(name: string): string {
   if (!name) return "?";
   const parts = name.trim().split(/\s+/);

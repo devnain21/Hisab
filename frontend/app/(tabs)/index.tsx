@@ -7,9 +7,10 @@ import { useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { useCustomers, useEntries, useJobs, computeBalance } from "@/src/lib/data";
-import { formatDate, formatDateShort, formatINR, formatWeekdayDate, initials, todayISO } from "@/src/lib/format";
-import { AddEntrySheet, AddCustomerSheet, AddJobSheet } from "@/src/components/sheets";
+import { useAeps, useCustomers, useEntries, useJobs, computeBalance, type Job } from "@/src/lib/data";
+import { aepsTotals } from "@/src/lib/aeps";
+import { formatDateShort, formatINR, formatWeekdayDate, todayISO } from "@/src/lib/format";
+import { AddEntrySheet, AddCustomerSheet, AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
 import { useAuth } from "@/src/context/AuthContext";
 import { usePendingCount } from "@/src/lib/store";
 
@@ -19,9 +20,11 @@ export default function Home() {
   const customersQ = useCustomers();
   const entriesQ = useEntries();
   const jobsQ = useJobs();
+  const aeps = useAeps().data ?? [];
   const [entrySheet, setEntrySheet] = useState<"work" | "payment" | null>(null);
   const [custSheet, setCustSheet] = useState(false);
   const [jobSheet, setJobSheet] = useState(false);
+  const [editingJob, setEditingJob] = useState<Job | null>(null);
   const { user } = useAuth();
   const pending = usePendingCount();
 
@@ -31,30 +34,35 @@ export default function Home() {
   const jobs = jobsQ.data ?? [];
 
   const stats = useMemo(() => {
+    const dueCustomers = customers.filter((c) => computeBalance(entries, c.id) > 0).length;
     const totalDue = computeBalance(entries);
-    const todayWork = entries.filter((e) => e.date === today && e.type === "work").reduce((n, e) => n + e.amount, 0);
-    const todayPay = entries.filter((e) => e.date === today && e.type === "payment").reduce((n, e) => n + e.amount, 0);
-    const openJobs = jobs.filter((j) => j.status !== "done").length;
-    return { totalDue, todayWork, todayPay, openJobs };
-  }, [entries, jobs, today]);
+    const todayWork = entries.filter((e) => e.date === today && e.type === "work");
+    const todayPay = entries.filter((e) => e.date === today && e.type === "payment");
+    const open = jobs.filter((j) => j.status !== "done");
+    return {
+      totalDue,
+      dueCustomers,
+      todayWork: todayWork.reduce((n, e) => n + e.amount, 0),
+      todayWorkCount: todayWork.length,
+      todayPay: todayPay.reduce((n, e) => n + e.amount, 0),
+      todayPayCount: todayPay.length,
+      openJobs: open.length,
+      overdue: open.filter((j) => j.dueDate < today).length,
+    };
+  }, [customers, entries, jobs, today]);
 
-  const topDue = useMemo(
-    () => customers
-      .map((c) => ({ c, due: computeBalance(entries, c.id) }))
-      .filter((x) => x.due > 0).sort((a, b) => b.due - a.due).slice(0, 5),
-    [customers, entries]
-  );
-  const recent = useMemo(
-    () => [...entries].sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : (a.createdAt < b.createdAt ? 1 : -1))).slice(0, 6),
-    [entries]
-  );
+  const aepsToday = useMemo(() => aepsTotals(aeps.filter((t) => t.date === today)), [aeps, today]);
+
   const upcoming = useMemo(
-    () => jobs.filter((j) => j.status !== "done").sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 3),
+    () => jobs.filter((j) => j.status !== "done").sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 4),
     [jobs]
   );
 
   const loading = customersQ.isLoading || entriesQ.isLoading || jobsQ.isLoading;
   const nameOf = (id: string) => customers.find((c) => c.id === id)?.name ?? "ग्राहक";
+  // The nonce makes the target tab re-apply the filter even if it was already open with it.
+  const go = (pathname: string, params: Record<string, string>) =>
+    router.navigate({ pathname: pathname as any, params: { ...params, t: String(Date.now()) } });
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -65,6 +73,11 @@ export default function Home() {
         <Text style={styles.eyebrow}>{formatWeekdayDate(today)}</Text>
         <Text style={styles.h1} numberOfLines={2} testID="shop-name">{user?.shop_name || "आज का खाता"}</Text>
         <Text style={styles.sub}>बही खाता — उधार, जमा और काम</Text>
+        {!user?.shop_name ? (
+          <Pressable onPress={() => router.push("/(tabs)/profile")} testID="set-shop-name-hint">
+            <Text style={styles.sub}>खाता पेज पर अपनी दुकान का नाम लिखें। हर Google खाते का हिसाब अलग रहता है।</Text>
+          </Pressable>
+        ) : null}
         {pending > 0 ? (
           <View style={styles.pendingPill} testID="home-sync-pending">
             <MaterialIcon name="cloud-upload-outline" size={14} color={colors.warning} />
@@ -80,10 +93,42 @@ export default function Home() {
         ) : (
           <Animated.View entering={FadeInDown.duration(300)}>
             <View style={styles.statsGrid}>
-              <StatCard label="कुल बकाया" value={formatINR(Math.max(stats.totalDue, 0))} tone="due" testID="stat-total-due" />
-              <StatCard label="पेंडिंग काम" value={String(stats.openJobs)} tone="neutral" testID="stat-pending-jobs" />
-              <StatCard label="आज का काम" value={formatINR(stats.todayWork)} tone="neutral" testID="stat-today-work" />
-              <StatCard label="आज की जमा" value={formatINR(stats.todayPay)} tone="ok" testID="stat-today-pay" />
+              <StatCard
+                label="कुल बकाया"
+                value={formatINR(Math.max(stats.totalDue, 0))}
+                hint={`${stats.dueCustomers} ग्राहक`}
+                icon="account-cash-outline"
+                tone="due"
+                onPress={() => go("/(tabs)/customers", { filter: "due" })}
+                testID="stat-total-due"
+              />
+              <StatCard
+                label="पेंडिंग काम"
+                value={String(stats.openJobs)}
+                hint={stats.overdue > 0 ? `${stats.overdue} देर से` : "सब समय पर"}
+                icon="briefcase-clock-outline"
+                tone={stats.overdue > 0 ? "warn" : "neutral"}
+                onPress={() => go("/(tabs)/work", { filter: stats.overdue > 0 ? "late" : "open" })}
+                testID="stat-pending-jobs"
+              />
+              <StatCard
+                label="आज का काम"
+                value={formatINR(stats.todayWork)}
+                hint={`${stats.todayWorkCount} एंट्री`}
+                icon="clipboard-text-outline"
+                tone="neutral"
+                onPress={() => router.push({ pathname: "/day", params: { type: "work" } })}
+                testID="stat-today-work"
+              />
+              <StatCard
+                label="आज की जमा"
+                value={formatINR(stats.todayPay)}
+                hint={`${stats.todayPayCount} एंट्री`}
+                icon="cash-check"
+                tone="ok"
+                onPress={() => router.push({ pathname: "/day", params: { type: "payment" } })}
+                testID="stat-today-pay"
+              />
             </View>
 
             <View style={styles.actionsRow}>
@@ -92,62 +137,52 @@ export default function Home() {
               <ActionBtn label="ग्राहक" icon="account-plus-outline" tone="neutral" onPress={() => setCustSheet(true)} testID="quick-customer" />
             </View>
 
-            <SectionHead title="जिनका पैसा बाकी है" />
-            {topDue.length === 0 ? (
-              <EmptyRow icon="wallet-outline" text="कोई बकाया नहीं" />
-            ) : (
-              <View style={styles.card}>
-                {topDue.map(({ c, due }, i) => (
-                  <Pressable
-                    key={c.id}
-                    onPress={() => router.push(`/customer/${c.id}`)}
-                    style={[styles.row, i > 0 && styles.rowBorder]}
-                    testID={`due-row-${c.id}`}
-                  >
-                    <Avatar name={c.name} />
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.rowTitle} numberOfLines={1}>{c.name}</Text>
-                      <Text style={styles.rowSub} numberOfLines={1}>{c.phone || c.address || "—"}</Text>
-                    </View>
-                    <Text style={styles.dueAmt}>{formatINR(due)}</Text>
-                  </Pressable>
-                ))}
+            <Pressable style={styles.aepsCard} onPress={() => go("/(tabs)/aeps", { range: "today" })} testID="home-aeps-card">
+              <View style={styles.aepsIcon}><MaterialIcon name="fingerprint" size={22} color={colors.brandPrimary} /></View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.rowTitle}>आज AEPS / मनी सर्विस</Text>
+                <Text style={styles.rowSub} numberOfLines={1}>
+                  {aepsToday.count === 0
+                    ? "आज कोई लेन-देन नहीं"
+                    : `${aepsToday.count} लेन-देन · कैश दिया ${formatINR(aepsToday.cashOut)} · लिया ${formatINR(aepsToday.cashIn)}`}
+                </Text>
               </View>
-            )}
+              {aepsToday.commission > 0 ? <Text style={styles.commission}>+{formatINR(aepsToday.commission)}</Text> : null}
+              <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
+            </Pressable>
 
-            <SectionHead title="आने वाला काम" />
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionHead}>आने वाला काम</Text>
+              {stats.openJobs > upcoming.length ? (
+                <Pressable onPress={() => go("/(tabs)/work", { filter: "open" })} hitSlop={8}>
+                  <Text style={styles.link}>सभी देखें</Text>
+                </Pressable>
+              ) : null}
+            </View>
             {upcoming.length === 0 ? (
-              <EmptyRow icon="briefcase-outline" text="कोई पेंडिंग काम नहीं" />
+              <View style={styles.emptyRow}>
+                <MaterialIcon name="briefcase-outline" size={20} color={colors.muted} />
+                <Text style={{ color: colors.muted, fontSize: 14 }}>कोई पेंडिंग काम नहीं</Text>
+              </View>
             ) : (
               <View style={{ gap: spacing.sm }}>
-                {upcoming.map((j) => (
-                  <View key={j.id} style={styles.jobCard}>
-                    <Text style={styles.rowTitle}>{j.title}</Text>
-                    <Text style={styles.rowSub}>{nameOf(j.customerId)} · {formatDateShort(j.dueDate)}{j.estimatedAmount > 0 ? ` · ${formatINR(j.estimatedAmount)}` : ""}</Text>
-                  </View>
-                ))}
-              </View>
-            )}
-
-            <SectionHead title="हाल की एंट्री" />
-            {recent.length === 0 ? (
-              <EmptyRow icon="notebook-outline" text="अभी खाता खाली है" />
-            ) : (
-              <View style={styles.card}>
-                {recent.map((e, i) => (
-                  <View key={e.id} style={[styles.row, i > 0 && styles.rowBorder]}>
-                    <View style={[styles.iconBadge, { backgroundColor: e.type === "work" ? colors.errorSoft : colors.successSoft }]}>
-                      <MaterialIcon name={e.type === "work" ? "arrow-top-right" : "arrow-bottom-left"} size={16} color={e.type === "work" ? colors.error : colors.success} />
-                    </View>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.rowTitle} numberOfLines={1}>{e.description}</Text>
-                      <Text style={styles.rowSub} numberOfLines={1}>{nameOf(e.customerId)} · {formatDate(e.date)}</Text>
-                    </View>
-                    <Text style={[styles.dueAmt, { color: e.type === "work" ? colors.error : colors.success }]}>
-                      {e.type === "work" ? "+" : "−"}{formatINR(e.amount)}
-                    </Text>
-                  </View>
-                ))}
+                {upcoming.map((j) => {
+                  const late = j.dueDate < today;
+                  return (
+                    <Pressable key={j.id} style={styles.jobCard} onPress={() => setEditingJob(j)} testID={`home-job-${j.id}`}>
+                      <View style={[styles.dateBadge, late && { backgroundColor: colors.errorSoft }]}>
+                        <Text style={[styles.dateBadgeText, late && { color: colors.error }]}>{j.dueDate === today ? "आज" : formatDateShort(j.dueDate)}</Text>
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.rowTitle} numberOfLines={1}>{j.title}</Text>
+                        <Text style={styles.rowSub} numberOfLines={1}>
+                          {nameOf(j.customerId)}{j.estimatedAmount > 0 ? ` · ${formatINR(j.estimatedAmount)}` : ""}{late ? " · देर" : ""}
+                        </Text>
+                      </View>
+                      <MaterialIcon name="pencil-outline" size={18} color={colors.muted} />
+                    </Pressable>
+                  );
+                })}
               </View>
             )}
           </Animated.View>
@@ -157,17 +192,27 @@ export default function Home() {
       <AddEntrySheet visible={entrySheet !== null} type={entrySheet ?? "work"} onClose={() => setEntrySheet(null)} />
       <AddCustomerSheet visible={custSheet} onClose={() => setCustSheet(false)} />
       <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />
+      <EditRecordSheet job={editingJob} onClose={() => setEditingJob(null)} />
     </View>
   );
 }
 
-function StatCard({ label, value, tone, testID }: { label: string; value: string; tone: "due" | "ok" | "neutral"; testID: string }) {
-  const c = tone === "due" ? colors.error : tone === "ok" ? colors.success : colors.onSurface;
+type Tone = "due" | "ok" | "neutral" | "warn";
+
+function StatCard({ label, value, hint, icon, tone, onPress, testID }: { label: string; value: string; hint: string; icon: string; tone: Tone; onPress: () => void; testID: string }) {
+  const c = tone === "due" ? colors.error : tone === "ok" ? colors.success : tone === "warn" ? colors.warning : colors.onSurface;
   return (
-    <View style={styles.statCard} testID={testID}>
-      <Text style={styles.statLabel}>{label}</Text>
-      <Text style={[styles.statValue, { color: c }]}>{value}</Text>
-    </View>
+    <Pressable style={styles.statCard} onPress={onPress} testID={testID}>
+      <View style={styles.statTop}>
+        <Text style={styles.statLabel}>{label}</Text>
+        <MaterialIcon name={icon as any} size={18} color={c} />
+      </View>
+      <Text style={[styles.statValue, { color: c }]} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
+      <View style={styles.statBottom}>
+        <Text style={styles.statHint} numberOfLines={1}>{hint}</Text>
+        <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
+      </View>
+    </Pressable>
   );
 }
 
@@ -182,27 +227,6 @@ function ActionBtn({ label, icon, tone, onPress, testID }: any) {
   );
 }
 
-function SectionHead({ title }: { title: string }) {
-  return <Text style={styles.sectionHead}>{title}</Text>;
-}
-
-function EmptyRow({ icon, text }: { icon: string; text: string }) {
-  return (
-    <View style={styles.emptyRow}>
-      <MaterialIcon name={icon as any} size={20} color={colors.muted} />
-      <Text style={{ color: colors.muted, fontSize: 14 }}>{text}</Text>
-    </View>
-  );
-}
-
-export function Avatar({ name }: { name: string }) {
-  return (
-    <View style={styles.avatar}>
-      <Text style={styles.avatarText}>{initials(name)}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   eyebrow: { fontSize: 11, color: colors.brandSecondary, fontWeight: "700", textTransform: "uppercase" },
   h1: { fontSize: 30, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xs },
@@ -211,21 +235,24 @@ const styles = StyleSheet.create({
   pendingText: { fontSize: 12, fontWeight: "600", color: colors.warning },
   statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.xl },
   statCard: { flexBasis: "48%", flexGrow: 1, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
-  statLabel: { fontSize: 12, color: colors.muted, fontWeight: "500" },
+  statTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  statLabel: { fontSize: 12, color: colors.muted, fontWeight: "600" },
   statValue: { fontSize: 22, fontWeight: "700", marginTop: spacing.xs },
+  statBottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xs },
+  statHint: { fontSize: 12, color: colors.muted, flexShrink: 1 },
   actionsRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },
   actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   actionText: { fontSize: 13, fontWeight: "600" },
-  sectionHead: { fontSize: 18, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xl, marginBottom: spacing.md },
-  card: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, overflow: "hidden" },
-  row: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md },
-  rowBorder: { borderTopWidth: 1, borderTopColor: colors.border },
+  aepsCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginTop: spacing.lg, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.border },
+  aepsIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
+  commission: { fontSize: 14, fontWeight: "700", color: colors.success },
+  sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xl, marginBottom: spacing.md },
+  sectionHead: { fontSize: 18, fontWeight: "700", color: colors.onSurface },
+  link: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
   rowTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   rowSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
-  dueAmt: { fontSize: 15, fontWeight: "700", color: colors.error },
-  iconBadge: { width: 34, height: 34, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
-  avatar: { width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
-  avatarText: { color: colors.onBrandTertiary, fontWeight: "700", fontSize: 14 },
   emptyRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.lg, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
-  jobCard: { padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
+  jobCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
+  dateBadge: { minWidth: 56, paddingVertical: 6, paddingHorizontal: spacing.sm, borderRadius: radius.sm, backgroundColor: colors.brandTertiary, alignItems: "center" },
+  dateBadgeText: { fontSize: 12, fontWeight: "700", color: colors.brandSecondary },
 });

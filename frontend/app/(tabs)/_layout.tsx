@@ -58,6 +58,13 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="aeps"
+        options={{
+          title: "AEPS",
+          tabBarIcon: ({ color, size }) => <MaterialIcon name="fingerprint" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
           title: "खाता",

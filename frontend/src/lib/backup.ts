@@ -1,7 +1,8 @@
 import { Platform } from "react-native";
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
-import { computeBalance, type Customer, type Entry, type Job } from "@/src/lib/data";
+import { computeBalance, type AepsTxn, type Customer, type Entry, type Job } from "@/src/lib/data";
+import { AEPS_META, STATUS_META } from "@/src/lib/aeps";
 import { todayISO } from "@/src/lib/format";
 
 const cell = (v: unknown) => {
@@ -10,7 +11,7 @@ const cell = (v: unknown) => {
 };
 const row = (cols: unknown[]) => cols.map(cell).join(",");
 
-export function buildBackupCsv(customers: Customer[], entries: Entry[], jobs: Job[]): string {
+export function buildBackupCsv(customers: Customer[], entries: Entry[], jobs: Job[], aeps: AepsTxn[] = []): string {
   const byId = new Map(customers.map((c) => [c.id, c]));
   const lines: string[] = [];
 
@@ -35,6 +36,21 @@ export function buildBackupCsv(customers: Customer[], entries: Entry[], jobs: Jo
   [...jobs]
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
     .forEach((j) => lines.push(row([j.dueDate, byId.get(j.customerId)?.name ?? "", j.title, status[j.status], j.estimatedAmount, j.notes])));
+
+  if (aeps.length) {
+    lines.push("");
+    lines.push(row(["AEPS / सेवाएँ"]));
+    lines.push(row(["तारीख", "समय", "सेवा", "स्थिति", "ग्राहक", "मोबाइल", "आधार (आख़िरी 4)", "बैंक", "पाने वाला", "खाता", "IFSC", "ऑपरेटर", "नंबर", "बिल", "कंज़्यूमर नं.", "रकम", "कमीशन", "Txn ID", "नोट"]));
+    [...aeps]
+      .sort((a, b) => (a.date !== b.date ? a.date.localeCompare(b.date) : a.time.localeCompare(b.time)))
+      .forEach((t) =>
+        lines.push(row([
+          t.date, t.time, AEPS_META[t.type]?.short ?? t.type, STATUS_META[t.status]?.label ?? t.status, t.customerName, t.mobile,
+          t.aadhaarLast4, t.bankName, t.beneficiaryName, t.accountNumber, t.ifsc, t.operator, t.rechargeNumber, t.billerName,
+          t.billAccount, t.amount, t.commission, t.reference, t.notes,
+        ])),
+      );
+  }
 
   // BOM so Excel reads the Hindi text as UTF-8.
   return "\uFEFF" + lines.join("\r\n");

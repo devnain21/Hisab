@@ -4,7 +4,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/context/AuthContext";
 import { colors, spacing, radius } from "@/src/theme";
-import { useCustomers, useEntries, useJobs, computeBalance } from "@/src/lib/data";
+import { useAeps, useCustomers, useEntries, useJobs, computeBalance } from "@/src/lib/data";
 import { formatINR } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { ShopNameSheet } from "@/src/components/sheets";
@@ -21,6 +21,7 @@ export default function Profile() {
   const customers = useCustomers().data ?? [];
   const entries = useEntries().data ?? [];
   const jobs = useJobs().data ?? [];
+  const aeps = useAeps().data ?? [];
   const totalDue = computeBalance(entries);
   const pending = usePendingCount();
 
@@ -61,7 +62,7 @@ export default function Profile() {
     setBackupError(null);
     setBackingUp(true);
     try {
-      await shareBackup(buildBackupCsv(customers, entries, jobs));
+      await shareBackup(buildBackupCsv(customers, entries, jobs, aeps));
     } catch {
       setBackupError("बैकअप नहीं बन पाया, दोबारा कोशिश करें।");
     } finally {

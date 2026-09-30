@@ -6,16 +6,16 @@ import { useSyncExternalStore } from "react";
 import { AppState } from "react-native";
 import { api } from "@/src/lib/api";
 import { queryClient } from "@/src/query-client";
-import type { Customer, Entry, Job } from "@/src/lib/data";
+import type { AepsTxn, Customer, Entry, Job } from "@/src/lib/data";
 
-type Coll = "customers" | "entries" | "jobs";
+type Coll = "customers" | "entries" | "jobs" | "aeps";
 type Op =
   | { kind: "create"; coll: Coll; item: { id: string } & Record<string, unknown> }
-  | { kind: "update"; coll: "customers" | "jobs"; itemId: string; patch: Record<string, unknown> }
+  | { kind: "update"; coll: Coll; itemId: string; patch: Record<string, unknown> }
   | { kind: "delete"; coll: Coll; itemId: string };
 
 const KEY = "hisab_outbox_v1";
-const COLLS: Coll[] = ["customers", "entries", "jobs"];
+const COLLS: Coll[] = ["customers", "entries", "jobs", "aeps"];
 const RETRY_MS = 15_000;
 
 let ops: Op[] = [];
@@ -80,13 +80,18 @@ function send(op: Op): Promise<unknown> {
   if (op.kind === "create") {
     if (op.coll === "customers") return api.createCustomer(op.item);
     if (op.coll === "entries") return api.createEntry(op.item);
+    if (op.coll === "aeps") return api.createAeps(op.item);
     return api.createJob(op.item);
   }
   if (op.kind === "update") {
-    return op.coll === "customers" ? api.updateCustomer(op.itemId, op.patch) : api.updateJob(op.itemId, op.patch);
+    if (op.coll === "customers") return api.updateCustomer(op.itemId, op.patch);
+    if (op.coll === "entries") return api.updateEntry(op.itemId, op.patch);
+    if (op.coll === "aeps") return api.updateAeps(op.itemId, op.patch);
+    return api.updateJob(op.itemId, op.patch);
   }
   if (op.coll === "customers") return api.deleteCustomer(op.itemId);
   if (op.coll === "entries") return api.deleteEntry(op.itemId);
+  if (op.coll === "aeps") return api.deleteAeps(op.itemId);
   return api.deleteJob(op.itemId);
 }
 
@@ -174,6 +179,9 @@ export const store = {
     enqueue({ kind: "create", coll: "entries", item });
     return item;
   },
+  updateEntry(id: string, patch: Pick<Entry, "type" | "date" | "description" | "amount" | "notes"> & { linkId?: string }) {
+    enqueue({ kind: "update", coll: "entries", itemId: id, patch });
+  },
   deleteEntry(id: string) {
     enqueue({ kind: "delete", coll: "entries", itemId: id });
   },
@@ -187,5 +195,16 @@ export const store = {
   },
   deleteJob(id: string) {
     enqueue({ kind: "delete", coll: "jobs", itemId: id });
+  },
+  createAeps(b: Omit<AepsTxn, "id" | "createdAt">): AepsTxn {
+    const item: AepsTxn = { id: Crypto.randomUUID(), createdAt: now(), ...b };
+    enqueue({ kind: "create", coll: "aeps", item });
+    return item;
+  },
+  updateAeps(id: string, b: Omit<AepsTxn, "id" | "createdAt">) {
+    enqueue({ kind: "update", coll: "aeps", itemId: id, patch: b });
+  },
+  deleteAeps(id: string) {
+    enqueue({ kind: "delete", coll: "aeps", itemId: id });
   },
 };

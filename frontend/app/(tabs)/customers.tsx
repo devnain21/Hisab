@@ -1,20 +1,23 @@
-import { useMemo, useState } from "react";
-import { View, Text, StyleSheet, TextInput, FlatList, ScrollView, ActivityIndicator } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { View, Text, StyleSheet, TextInput, FlatList, ScrollView, ActivityIndicator, Linking } from "react-native";
 import { Pressable } from "@/src/components/tap";
 import { SlowServerHint } from "@/src/components/slow-server-hint";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
-import { computeBalance, useCustomers, useEntries } from "@/src/lib/data";
-import { formatINR, formatPhone, initials } from "@/src/lib/format";
+import { useCustomers, useEntries } from "@/src/lib/data";
+import { formatDateShort, formatINR, formatPhone, initials, todayISO } from "@/src/lib/format";
 import { AddCustomerSheet } from "@/src/components/sheets";
 
 type Filter = "due" | "all" | "clear";
+const FILTERS: Filter[] = ["due", "all", "clear"];
+const FILTER_LABEL: Record<Filter, string> = { due: "बकाया", all: "सभी", clear: "क्लियर" };
 
 export default function CustomersScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const params = useLocalSearchParams<{ filter?: Filter; t?: string }>();
   const customersQ = useCustomers();
   const entriesQ = useEntries();
   const customers = customersQ.data ?? [];
@@ -22,15 +25,39 @@ export default function CustomersScreen() {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("due");
   const [open, setOpen] = useState(false);
+  const today = todayISO();
+
+  useEffect(() => {
+    if (params.filter && FILTERS.includes(params.filter)) {
+      setFilter(params.filter);
+      setQ("");
+    }
+  }, [params.filter, params.t]);
+
+  const all = useMemo(() => {
+    const stats = new Map<string, { due: number; last: string }>();
+    for (const e of entries) {
+      const s = stats.get(e.customerId) ?? { due: 0, last: "" };
+      s.due += e.type === "work" ? e.amount : -e.amount;
+      if (e.date > s.last) s.last = e.date;
+      stats.set(e.customerId, s);
+    }
+    return customers.map((c) => ({ c, due: stats.get(c.id)?.due ?? 0, last: stats.get(c.id)?.last ?? "" }));
+  }, [customers, entries]);
+
+  const counts = useMemo(
+    () => ({ due: all.filter((r) => r.due > 0).length, all: all.length, clear: all.filter((r) => r.due <= 0).length }),
+    [all],
+  );
+  const totalDue = useMemo(() => all.reduce((s, r) => s + (r.due > 0 ? r.due : 0), 0), [all]);
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return customers
-      .map((c) => ({ c, due: computeBalance(entries, c.id) }))
+    return all
       .filter(({ c }) => !needle || c.name.toLowerCase().includes(needle) || c.phone.includes(needle) || c.address.toLowerCase().includes(needle))
       .filter(({ due }) => (filter === "due" ? due > 0 : filter === "clear" ? due <= 0 : true))
       .sort((a, b) => (filter === "due" ? b.due - a.due : a.c.name.localeCompare(b.c.name, "hi")));
-  }, [customers, entries, q, filter]);
+  }, [all, q, filter]);
 
   const loading = customersQ.isLoading || entriesQ.isLoading;
 
@@ -48,16 +75,24 @@ export default function CustomersScreen() {
             placeholderTextColor={colors.muted}
             testID="customer-search"
           />
+          {q ? (
+            <Pressable onPress={() => setQ("")} hitSlop={8}><MaterialIcon name="close-circle" size={18} color={colors.muted} /></Pressable>
+          ) : null}
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.md }}>
-          {(["due", "all", "clear"] as Filter[]).map((f) => (
+          {FILTERS.map((f) => (
             <Pressable key={f} onPress={() => setFilter(f)} style={[styles.chip, filter === f && styles.chipActive]} testID={`filter-${f}`}>
               <Text style={[styles.chipText, filter === f && { color: colors.onBrandPrimary }]}>
-                {f === "due" ? "बकाया" : f === "all" ? "सभी" : "क्लियर"}
+                {FILTER_LABEL[f]} ({counts[f]})
               </Text>
             </Pressable>
           ))}
         </ScrollView>
+        {!loading && filter === "due" && totalDue > 0 ? (
+          <Text style={styles.summary} testID="customers-summary">
+            कुल बकाया <Text style={{ color: colors.error, fontWeight: "800" }}>{formatINR(totalDue)}</Text> · {counts.due} ग्राहकों से लेना है
+          </Text>
+        ) : null}
       </View>
 
       {loading ? (
@@ -66,12 +101,15 @@ export default function CustomersScreen() {
         <FlatList
           data={rows}
           keyExtractor={(item) => item.c.id}
-          contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl * 2 }}
           ListEmptyComponent={
             <View style={styles.empty} testID="customers-empty">
               <MaterialIcon name="account-group-outline" size={32} color={colors.muted} />
-              <Text style={styles.emptyTitle}>{q ? "कोई ग्राहक नहीं मिला" : "अभी कोई ग्राहक नहीं"}</Text>
-              {!q && <Text style={styles.emptySub}>पहला ग्राहक जोड़कर शुरू करें</Text>}
+              <Text style={styles.emptyTitle}>
+                {q ? "कोई ग्राहक नहीं मिला" : customers.length === 0 ? "अभी कोई ग्राहक नहीं" : filter === "due" ? "किसी का पैसा बाकी नहीं" : "इस सूची में कोई नहीं"}
+              </Text>
+              {!q && customers.length === 0 && <Text style={styles.emptySub}>पहला ग्राहक जोड़कर शुरू करें</Text>}
             </View>
           }
           renderItem={({ item, index }) => (
@@ -86,10 +124,18 @@ export default function CustomersScreen() {
                 <Text style={styles.sub} numberOfLines={1}>
                   {item.c.phone ? formatPhone(item.c.phone) : "फ़ोन नहीं"}{item.c.address ? ` · ${item.c.address}` : ""}
                 </Text>
+                {item.last ? (
+                  <Text style={styles.last} numberOfLines={1}>आख़िरी एंट्री: {item.last === today ? "आज" : formatDateShort(item.last)}</Text>
+                ) : null}
               </View>
               <Text style={[styles.dueAmt, { color: item.due > 0 ? colors.error : item.due < 0 ? colors.success : colors.muted }]}>
-                {item.due === 0 ? "क्लियर" : formatINR(Math.abs(item.due))}
+                {item.due === 0 ? "क्लियर" : item.due < 0 ? `+${formatINR(-item.due)}` : formatINR(item.due)}
               </Text>
+              {item.c.phone ? (
+                <Pressable style={styles.callBtn} onPress={() => Linking.openURL(`tel:${item.c.phone}`)} hitSlop={6} testID={`call-${item.c.id}`}>
+                  <MaterialIcon name="phone-outline" size={18} color={colors.brandPrimary} />
+                </Pressable>
+              ) : null}
             </Pressable>
           )}
           ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border }} />}
@@ -112,6 +158,7 @@ const styles = StyleSheet.create({
   chip: { height: 36, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   chipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
   chipText: { fontSize: 13, color: colors.onSurface, fontWeight: "600" },
+  summary: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: spacing.md },
   row: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderLeftWidth: 1, borderRightWidth: 1, borderColor: colors.border },
   firstRow: { borderTopLeftRadius: radius.md, borderTopRightRadius: radius.md, borderTopWidth: 1 },
   lastRow: { borderBottomLeftRadius: radius.md, borderBottomRightRadius: radius.md, borderBottomWidth: 1 },
@@ -119,7 +166,9 @@ const styles = StyleSheet.create({
   avatarText: { fontWeight: "700", color: colors.onBrandTertiary, fontSize: 14 },
   name: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   sub: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  last: { fontSize: 11, color: colors.muted, marginTop: 2 },
   dueAmt: { fontSize: 15, fontWeight: "700" },
+  callBtn: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   empty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },
   emptyTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   emptySub: { fontSize: 13, color: colors.muted },

@@ -1,16 +1,18 @@
 import { useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Linking, Alert } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { computeBalance, useCustomers, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
-import { formatDate, formatINR, formatPhone, initials } from "@/src/lib/format";
+import { formatDate, formatINR, formatPhone, initials, waNumber } from "@/src/lib/format";
 import { store } from "@/src/lib/store";
-import { AddEntrySheet, AddJobSheet, AddCustomerSheet, CompleteJobSheet } from "@/src/components/sheets";
+import { removeEntryWithLinks } from "@/src/lib/records";
+import { AddEntrySheet, AddJobSheet, AddCustomerSheet, CompleteJobSheet, EditRecordSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
 import { confirmAction } from "@/src/lib/confirm";
+import { useAuth } from "@/src/context/AuthContext";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -23,6 +25,9 @@ export default function CustomerDetail() {
   const [jobSheet, setJobSheet] = useState(false);
   const [editSheet, setEditSheet] = useState(false);
   const [completing, setCompleting] = useState<Job | null>(null);
+  const [editing, setEditing] = useState<Entry | null>(null);
+  const [editingJob, setEditingJob] = useState<Job | null>(null);
+  const { user } = useAuth();
 
   const customer = (customersQ.data ?? []).find((c) => c.id === id);
   const entries = useMemo(() => (entriesQ.data ?? []).filter((e) => e.customerId === id), [entriesQ.data, id]);
@@ -50,8 +55,24 @@ export default function CustomerDetail() {
   }
 
   const removeEntry = (e: Entry) => {
-    confirmAction("एंट्री हटाएँ?", `${e.description} · ${formatINR(e.amount)}`, "हटा दें", async () => {
-      store.deleteEntry(e.id);
+    confirmAction("एंट्री हटाएँ?", `${e.description} · ${formatINR(e.amount)}\nइसके साथ लिखी जमा और काम कार्ड भी हटेंगे।`, "हटा दें", () => {
+      removeEntryWithLinks(e, entriesQ.data ?? [], jobsQ.data ?? []);
+    });
+  };
+
+  const shareWhatsApp = () => {
+    const wa = waNumber(customer.phone);
+    if (!wa) {
+      Alert.alert("फ़ोन जोड़ें", "WhatsApp पर भेजने के लिए इस ग्राहक का फ़ोन नंबर चाहिए।");
+      setEditSheet(true);
+      return;
+    }
+    const shop = user?.shop_name || "बही खाता";
+    const status = due > 0 ? `बाकी: ${formatINR(due)}` : due < 0 ? `एडवांस: ${formatINR(Math.abs(due))}` : "खाता क्लियर है";
+    const lines = timeline.slice(0, 8).map(({ e }) => `• ${formatDate(e.date)}  ${e.description}  ${e.type === "work" ? "+" : "−"}${formatINR(e.amount)}`);
+    const text = [shop, customer.name, status, "", ...lines].join("\n");
+    Linking.openURL(`https://wa.me/${wa}?text=${encodeURIComponent(text)}`).catch(() => {
+      Alert.alert("WhatsApp नहीं खुला", "इस फ़ोन पर WhatsApp नहीं मिला।");
     });
   };
 
@@ -104,6 +125,10 @@ export default function CustomerDetail() {
               <Text style={[styles.actionText, { color: colors.onSurface }]}>काम</Text>
             </Pressable>
           </View>
+          <Pressable style={styles.waBtn} onPress={shareWhatsApp} testID="share-whatsapp-btn">
+            <MaterialIcon name="whatsapp" size={18} color="#128C7E" />
+            <Text style={styles.waText}>WhatsApp पर बाकी भेजें</Text>
+          </Pressable>
         </View>
 
         {openJobs.length > 0 && (
@@ -111,7 +136,7 @@ export default function CustomerDetail() {
             <Text style={styles.sectionHead}>आगे का काम / रिमार्क</Text>
             <View style={{ gap: spacing.sm }}>
               {openJobs.map((j) => (
-                <View key={j.id} style={styles.jobRow} testID={`cust-job-${j.id}`}>
+                <Pressable key={j.id} style={styles.jobRow} onPress={() => setEditingJob(j)} testID={`cust-job-${j.id}`}>
                   <MaterialIcon name="calendar-clock" size={20} color={colors.brandPrimary} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.jobTitle}>{j.title}</Text>
@@ -121,7 +146,7 @@ export default function CustomerDetail() {
                   <Pressable style={styles.pillBtn} onPress={() => setCompleting(j)} testID={`cust-complete-${j.id}`}>
                     <Text style={styles.pillBtnText}>पूरा</Text>
                   </Pressable>
-                </View>
+                </Pressable>
               ))}
             </View>
           </>
@@ -137,7 +162,7 @@ export default function CustomerDetail() {
           <View style={{ gap: spacing.sm }}>
             {timeline.map(({ e, running }, i) => (
               <Animated.View key={e.id} entering={FadeInDown.delay(Math.min(i, 8) * 40).duration(250)}>
-                <TimelineRow entry={e} running={running} onDelete={() => removeEntry(e)} />
+                <TimelineRow entry={e} running={running} onPress={() => setEditing(e)} onDelete={() => removeEntry(e)} />
               </Animated.View>
             ))}
           </View>
@@ -145,6 +170,7 @@ export default function CustomerDetail() {
       </ScrollView>
 
       <AddEntrySheet visible={entrySheet !== null} type={entrySheet ?? "work"} onClose={() => setEntrySheet(null)} customerId={customer.id} />
+      <EditRecordSheet entry={editing} job={editingJob} onClose={() => { setEditing(null); setEditingJob(null); }} />
       <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} customerId={customer.id} />
       <AddCustomerSheet visible={editSheet} onClose={() => setEditSheet(false)} initial={customer} />
       <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
@@ -152,10 +178,10 @@ export default function CustomerDetail() {
   );
 }
 
-function TimelineRow({ entry, running, onDelete }: { entry: Entry; running: number; onDelete: () => void }) {
+function TimelineRow({ entry, running, onPress, onDelete }: { entry: Entry; running: number; onPress: () => void; onDelete: () => void }) {
   const work = entry.type === "work";
   return (
-    <View style={styles.timelineRow} testID={`entry-${entry.id}`}>
+    <Pressable style={styles.timelineRow} onPress={onPress} testID={`entry-${entry.id}`}>
       <View style={[styles.iconBadge, { backgroundColor: work ? colors.errorSoft : colors.successSoft }]}>
         <MaterialIcon name={work ? "arrow-top-right" : "arrow-bottom-left"} size={16} color={work ? colors.error : colors.success} />
       </View>
@@ -172,7 +198,7 @@ function TimelineRow({ entry, running, onDelete }: { entry: Entry; running: numb
       <Pressable onPress={onDelete} hitSlop={8} testID={`del-entry-${entry.id}`}>
         <MaterialIcon name="close" size={18} color={colors.muted} />
       </Pressable>
-    </View>
+    </Pressable>
   );
 }
 
@@ -189,6 +215,8 @@ const styles = StyleSheet.create({
   actionsRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },
   actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 11, borderRadius: radius.md },
   actionText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  waBtn: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 12, borderRadius: radius.md, backgroundColor: "#E7F6F1", borderWidth: 1, borderColor: "#128C7E" },
+  waText: { color: "#0B6B5C", fontWeight: "700", fontSize: 14 },
   sectionHead: { fontSize: 17, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xl, marginBottom: spacing.md },
   jobRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   jobTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },

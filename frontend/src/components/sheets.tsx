@@ -14,7 +14,9 @@ import {
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
-import { useCustomers, type Job } from "@/src/lib/data";
+import { useCustomers, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
+import { jobForWork, linkedPayment, removeEntryWithLinks, workForJob, workForPayment } from "@/src/lib/records";
+import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
 import { formatINR, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
@@ -40,7 +42,7 @@ function useKeyboardOverlap(ref: React.RefObject<View | null>) {
   return overlap;
 }
 
-function SheetShell({ visible, onClose, title, children, testID }: { visible: boolean; onClose: () => void; title: string; children: React.ReactNode; testID?: string }) {
+export function SheetShell({ visible, onClose, title, children, testID }: { visible: boolean; onClose: () => void; title: string; children: React.ReactNode; testID?: string }) {
   const insets = useSafeAreaInsets();
   const containerRef = useRef<View>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -84,7 +86,7 @@ function SheetShell({ visible, onClose, title, children, testID }: { visible: bo
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+export function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <View style={{ marginBottom: spacing.md }}>
       <Text style={styles.label}>{label}</Text>
@@ -93,7 +95,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-const inputStyle = {
+export const inputStyle = {
   borderWidth: 1,
   borderColor: colors.border,
   backgroundColor: colors.surface,
@@ -104,7 +106,7 @@ const inputStyle = {
   minHeight: 48,
 };
 
-function Chip({ label, active, onPress, icon, testID, tone }: { label: string; active: boolean; onPress: () => void; icon?: string; testID?: string; tone?: string }) {
+export function Chip({ label, active, onPress, icon, testID, tone }: { label: string; active: boolean; onPress: () => void; icon?: string; testID?: string; tone?: string }) {
   const bg = active ? tone ?? colors.brandPrimary : colors.surfaceSecondary;
   return (
     <Pressable onPress={onPress} style={[styles.chip, active && { backgroundColor: bg, borderColor: bg }]} testID={testID}>
@@ -114,7 +116,7 @@ function Chip({ label, active, onPress, icon, testID, tone }: { label: string; a
   );
 }
 
-function DateField({ label, value, onChange, future, testID }: { label: string; value: string; onChange: (v: string) => void; future?: boolean; testID?: string }) {
+export function DateField({ label, value, onChange, future, testID }: { label: string; value: string; onChange: (v: string) => void; future?: boolean; testID?: string }) {
   const presets = future
     ? [{ label: "आज", d: todayISO() }, { label: "कल", d: todayISO(1) }, { label: "परसों", d: todayISO(2) }, { label: "1 हफ़्ता", d: todayISO(7) }]
     : [{ label: "आज", d: todayISO() }, { label: "कल (बीता)", d: todayISO(-1) }];
@@ -203,14 +205,19 @@ function PaymentPicker({ mode, onMode, paid, onPaid, total }: { mode: PayMode; o
   );
 }
 
+const paidFor = (mode: PayMode, amount: number, paid: number) =>
+  mode === "cash" ? amount : mode === "partial" ? Math.min(Math.max(paid, 0), amount) : 0;
+const payDescription = (title: string, mode: PayMode) => `${title} — ${mode === "cash" ? "नकद" : "आंशिक जमा"}`;
+
 // Work is always booked as udhaar; whatever was paid now is booked as jama so the khata stays balanced.
-async function recordWork({ customerId, title, amount, mode, paid, date, notes }: { customerId: string; title: string; amount: number; mode: PayMode; paid: number; date: string; notes: string }) {
-  if (amount <= 0) return;
-  await store.createEntry({ customerId, type: "work", date, description: title, amount, notes });
-  const paidNow = mode === "cash" ? amount : mode === "partial" ? Math.min(Math.max(paid, 0), amount) : 0;
+function recordWork({ customerId, title, amount, mode, paid, date, notes }: { customerId: string; title: string; amount: number; mode: PayMode; paid: number; date: string; notes: string }): string {
+  if (amount <= 0) return "";
+  const work = store.createEntry({ customerId, type: "work", date, description: title, amount, notes });
+  const paidNow = paidFor(mode, amount, paid);
   if (paidNow > 0) {
-    await store.createEntry({ customerId, type: "payment", date, description: `${title} — ${mode === "cash" ? "नकद" : "आंशिक जमा"}`, amount: paidNow, notes: "" });
+    store.createEntry({ customerId, type: "payment", date, description: payDescription(title, mode), amount: paidNow, notes: "", linkId: work.id });
   }
+  return work.id;
 }
 
 function payNote(mode: PayMode, amount: number, paid: number) {
@@ -221,7 +228,7 @@ function payNote(mode: PayMode, amount: number, paid: number) {
   return `${formatINR(p)} जमा, ${formatINR(amount - p)} उधार`;
 }
 
-function PrimaryButton({ label, onPress, disabled, saving, color, testID }: { label: string; onPress: () => void; disabled?: boolean; saving?: boolean; color?: string; testID?: string }) {
+export function PrimaryButton({ label, onPress, disabled, saving, color, testID }: { label: string; onPress: () => void; disabled?: boolean; saving?: boolean; color?: string; testID?: string }) {
   return (
     <Pressable
       style={[styles.primaryBtn, color ? { backgroundColor: color } : null, (disabled || saving) && { opacity: 0.5 }]}
@@ -280,8 +287,8 @@ export function AddCustomerSheet({ visible, onClose, initial }: { visible: boole
   );
 }
 
-export function AddEntrySheet({ visible, type, onClose, customerId: fixedCustomerId }: { visible: boolean; type: "work" | "payment"; onClose: () => void; customerId?: string }) {
-  const choice = useCustomerChoice(visible, fixedCustomerId);
+export function AddEntrySheet({ visible, type, onClose, customerId: fixedCustomerId, initial }: { visible: boolean; type: "work" | "payment"; onClose: () => void; customerId?: string; initial?: Entry }) {
+  const choice = useCustomerChoice(visible, fixedCustomerId ?? initial?.customerId);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(todayISO());
@@ -289,30 +296,33 @@ export function AddEntrySheet({ visible, type, onClose, customerId: fixedCustome
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (visible) {
-      setDescription("");
-      setAmount("");
-      setDate(todayISO());
-      setNotes("");
-    }
-  }, [visible]);
+    if (!visible) return;
+    setDescription(initial?.description ?? "");
+    setAmount(initial ? String(initial.amount) : "");
+    setDate(initial?.date ?? todayISO());
+    setNotes(initial?.notes ?? "");
+  }, [visible, initial]);
 
   const amt = parseFloat(amount);
-  const valid = choice.ready && !!description.trim() && isFinite(amt) && amt > 0;
+  const valid = (initial ? true : choice.ready) && !!description.trim() && isFinite(amt) && amt > 0;
 
   const save = async () => {
     if (!valid) return;
     setSaving(true);
     try {
-      const customerId = await choice.resolve();
-      await store.createEntry({ customerId, type, date, description: description.trim(), amount: amt, notes: notes.trim() });
+      const body = { type, date, description: description.trim(), amount: amt, notes: notes.trim() };
+      if (initial) await store.updateEntry(initial.id, body);
+      else {
+        const customerId = await choice.resolve();
+        await store.createEntry({ customerId, ...body });
+      }
       onClose();
     } finally { setSaving(false); }
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title={type === "work" ? "उधार काम जोड़ें" : "जमा लिखें"} testID={`sheet-entry-${type}`}>
-      {!fixedCustomerId && <CustomerPicker choice={choice} testPrefix="chip-cust" />}
+    <SheetShell visible={visible} onClose={onClose} title={initial ? "एंट्री बदलें" : type === "work" ? "उधार काम जोड़ें" : "जमा लिखें"} testID={`sheet-entry-${type}`}>
+      {!initial && !fixedCustomerId && <CustomerPicker choice={choice} testPrefix="chip-cust" />}
       <Field label="विवरण">
         <TextInput style={inputStyle} value={description} onChangeText={setDescription} placeholder={type === "work" ? "जैसे पासपोर्ट फोटो 8 प्रति" : "आंशिक जमा"} placeholderTextColor={colors.muted} testID="input-entry-desc" />
       </Field>
@@ -324,14 +334,209 @@ export function AddEntrySheet({ visible, type, onClose, customerId: fixedCustome
         <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-entry-notes" />
       </Field>
       <PrimaryButton
-        label={type === "work" ? "उधार जोड़ें" : "जमा जोड़ें"}
+        label={initial ? "बदलाव सेव करें" : type === "work" ? "उधार जोड़ें" : "जमा जोड़ें"}
         color={type === "work" ? colors.error : colors.success}
         onPress={save}
         disabled={!valid}
         saving={saving}
         testID="save-entry-btn"
       />
+      {initial ? <DeleteEntryLink entry={initial} onDone={onClose} /> : null}
     </SheetShell>
+  );
+}
+
+function DeleteEntryLink({ entry, onDone }: { entry: Entry; onDone: () => void }) {
+  const entries = useEntries().data ?? [];
+  const jobs = useJobs().data ?? [];
+  const remove = () => {
+    confirmAction("एंट्री हटाएँ?", `${entry.description} · ${formatINR(entry.amount)}\nइसके साथ लिखी जमा और काम कार्ड भी हटेंगे।`, "हटा दें", () => {
+      removeEntryWithLinks(entry, entries, jobs);
+      onDone();
+    });
+  };
+  return <DangerLink label="यह एंट्री हटाएँ" onPress={remove} testID="delete-entry-link" />;
+}
+
+export function DangerLink({ label, onPress, testID }: { label: string; onPress: () => void; testID?: string }) {
+  return (
+    <Pressable onPress={onPress} style={styles.dangerLink} testID={testID}>
+      <MaterialIcon name="trash-can-outline" size={16} color={colors.error} />
+      <Text style={styles.dangerText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function payModeOf(amount: number, paid: number): { mode: PayMode; paid: string } {
+  if (paid <= 0) return { mode: "udhaar", paid: "" };
+  if (paid >= amount) return { mode: "cash", paid: "" };
+  return { mode: "partial", paid: String(paid) };
+}
+
+/** Edits a finished piece of work: the work entry, the money taken with it and its job card. */
+export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose: () => void }) {
+  const entries = useEntries().data ?? [];
+  const jobs = useJobs().data ?? [];
+  const [title, setTitle] = useState("");
+  const [amount, setAmount] = useState("");
+  const [pay, setPay] = useState<PayMode>("udhaar");
+  const [paid, setPaid] = useState("");
+  const [date, setDate] = useState(todayISO());
+  const [notes, setNotes] = useState("");
+  const [remark, setRemark] = useState("");
+  const [remarkDate, setRemarkDate] = useState(todayISO(1));
+  const [saving, setSaving] = useState(false);
+
+  const link = entry ? linkedPayment(entry, entries) : undefined;
+  const job = entry ? jobForWork(entry, jobs) : undefined;
+
+  useEffect(() => {
+    if (!entry) return;
+    const p = payModeOf(entry.amount, link?.amount ?? 0);
+    setTitle(entry.description);
+    setAmount(String(entry.amount));
+    setPay(p.mode);
+    setPaid(p.paid);
+    setDate(entry.date);
+    setNotes(entry.notes);
+    setRemark("");
+    setRemarkDate(todayISO(1));
+    // Only re-initialise when a different record is opened.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry?.id]);
+
+  const amt = parseFloat(amount) || 0;
+  const valid = !!title.trim() && amt > 0;
+
+  const save = () => {
+    if (!entry || !valid) return;
+    setSaving(true);
+    try {
+      const t = title.trim();
+      const paidNum = parseFloat(paid) || 0;
+      const paidNow = paidFor(pay, amt, paidNum);
+      store.updateEntry(entry.id, { type: "work", date, description: t, amount: amt, notes: notes.trim() });
+      if (link) {
+        if (paidNow > 0) store.updateEntry(link.id, { type: "payment", date, description: payDescription(t, pay), amount: paidNow, notes: link.notes, linkId: entry.id });
+        else store.deleteEntry(link.id);
+      } else if (paidNow > 0) {
+        store.createEntry({ customerId: entry.customerId, type: "payment", date, description: payDescription(t, pay), amount: paidNow, notes: "", linkId: entry.id });
+      }
+      if (job) {
+        store.updateJob(job.id, { title: t, dueDate: date, estimatedAmount: amt, notes: [payNote(pay, amt, paidNum), notes.trim()].filter(Boolean).join(" · "), entryId: entry.id });
+      }
+      if (remark.trim()) {
+        store.createJob({ customerId: entry.customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
+      }
+      onClose();
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <SheetShell visible={!!entry} onClose={onClose} title="काम बदलें" testID="sheet-edit-work">
+      <Field label="क्या काम">
+        <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholderTextColor={colors.muted} testID="input-edit-work-title" />
+      </Field>
+      <Field label="रकम (₹)">
+        <TextInput style={inputStyle} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.muted} testID="input-edit-work-amount" />
+      </Field>
+      <PaymentPicker mode={pay} onMode={setPay} paid={paid} onPaid={setPaid} total={amt} />
+      <DateField label="तारीख" value={date} onChange={setDate} testID="input-edit-work-date" />
+      <Field label="नोट (वैकल्पिक)">
+        <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-edit-work-notes" />
+      </Field>
+      <Field label="नया आगे का काम / रिमार्क (वैकल्पिक)">
+        <TextInput style={[inputStyle, { minHeight: 56 }]} value={remark} onChangeText={setRemark} multiline placeholder="जैसे बाकी पैसे शनिवार को" placeholderTextColor={colors.muted} testID="input-edit-work-remark" />
+      </Field>
+      {remark.trim() ? <DateField label="रिमार्क कब देखना है" value={remarkDate} onChange={setRemarkDate} future /> : null}
+      <PrimaryButton label="बदलाव सेव करें" onPress={save} disabled={!valid} saving={saving} testID="save-edit-work-btn" />
+      {entry ? <DeleteEntryLink entry={entry} onDone={onClose} /> : null}
+    </SheetShell>
+  );
+}
+
+/** Edits an open (or money-less finished) job card. */
+export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () => void }) {
+  const [title, setTitle] = useState("");
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(todayISO());
+  const [notes, setNotes] = useState("");
+  const [status, setStatus] = useState<Job["status"]>("pending");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!job) return;
+    setTitle(job.title);
+    setAmount(job.estimatedAmount > 0 ? String(job.estimatedAmount) : "");
+    setDate(job.dueDate);
+    setNotes(job.notes);
+    setStatus(job.status);
+  }, [job]);
+
+  const save = () => {
+    if (!job || !title.trim()) return;
+    setSaving(true);
+    try {
+      store.updateJob(job.id, { title: title.trim(), estimatedAmount: parseFloat(amount) || 0, dueDate: date, notes: notes.trim(), status });
+      onClose();
+    } finally { setSaving(false); }
+  };
+
+  const remove = () => {
+    if (!job) return;
+    confirmAction("काम हटाएँ?", job.title, "हटा दें", () => {
+      store.deleteJob(job.id);
+      onClose();
+    });
+  };
+
+  return (
+    <SheetShell visible={!!job} onClose={onClose} title="काम बदलें" testID="sheet-edit-job">
+      <Field label="स्थिति">
+        <View style={styles.chipRow}>
+          <Chip label="बाकी" active={status === "pending"} onPress={() => setStatus("pending")} testID="edit-job-status-pending" />
+          <Chip label="चल रहा" active={status === "doing"} onPress={() => setStatus("doing")} tone={colors.warning} testID="edit-job-status-doing" />
+          {job?.status === "done" ? <Chip label="पूरा" active={status === "done"} onPress={() => setStatus("done")} tone={colors.success} /> : null}
+        </View>
+      </Field>
+      <Field label="क्या काम">
+        <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholderTextColor={colors.muted} testID="input-edit-job-title" />
+      </Field>
+      <Field label="अनुमानित रकम (₹, वैकल्पिक)">
+        <TextInput style={inputStyle} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.muted} testID="input-edit-job-amount" />
+      </Field>
+      <DateField label={status === "done" ? "तारीख" : "डिलीवरी तारीख"} value={date} onChange={setDate} future={status !== "done"} testID="input-edit-job-date" />
+      <Field label="नोट / रिमार्क">
+        <TextInput style={[inputStyle, { minHeight: 56 }]} value={notes} onChangeText={setNotes} multiline placeholderTextColor={colors.muted} testID="input-edit-job-notes" />
+      </Field>
+      <PrimaryButton label="बदलाव सेव करें" onPress={save} disabled={!title.trim()} saving={saving} testID="save-edit-job-btn" />
+      <DangerLink label="यह काम हटाएँ" onPress={remove} testID="delete-job-link" />
+    </SheetShell>
+  );
+}
+
+/**
+ * One entry point for "tap to edit" anywhere: picks the work editor when the row belongs to a
+ * work record, otherwise the plain entry or job editor.
+ */
+export function EditRecordSheet({ entry, job, onClose }: { entry?: Entry | null; job?: Job | null; onClose: () => void }) {
+  const entries = useEntries().data ?? [];
+  let work: Entry | null = null;
+  let plainEntry: Entry | null = null;
+  let plainJob: Job | null = null;
+  if (job) {
+    work = workForJob(job, entries) ?? null;
+    if (!work) plainJob = job;
+  } else if (entry) {
+    work = entry.type === "work" ? entry : workForPayment(entry, entries) ?? null;
+    if (!work) plainEntry = entry;
+  }
+  return (
+    <>
+      <WorkEditSheet entry={work} onClose={onClose} />
+      <EditJobSheet job={plainJob} onClose={onClose} />
+      <AddEntrySheet visible={!!plainEntry} type={plainEntry?.type ?? "payment"} initial={plainEntry ?? undefined} customerId={plainEntry?.customerId} onClose={onClose} />
+    </>
   );
 }
 
@@ -379,8 +584,8 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       if (mode === "now") {
         const paidNum = parseFloat(paid) || 0;
         const note = payNote(pay, amt, paidNum);
-        await recordWork({ customerId, title: t, amount: amt, mode: pay, paid: paidNum, date, notes: remark.trim() });
-        await store.createJob({ customerId, title: t, dueDate: date, status: "done", estimatedAmount: amt, notes: [note, remark.trim()].filter(Boolean).join(" · ") });
+        const entryId = recordWork({ customerId, title: t, amount: amt, mode: pay, paid: paidNum, date, notes: remark.trim() });
+        store.createJob({ customerId, title: t, dueDate: date, status: "done", estimatedAmount: amt, notes: [note, remark.trim()].filter(Boolean).join(" · "), entryId });
         if (remark.trim()) {
           await store.createJob({ customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
         }
@@ -490,9 +695,9 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
     try {
       const paidNum = parseFloat(paid) || 0;
       const date = todayISO();
-      await recordWork({ customerId: job.customerId, title: job.title, amount: amt, mode: pay, paid: paidNum, date, notes: "काम पूरा" });
+      const entryId = recordWork({ customerId: job.customerId, title: job.title, amount: amt, mode: pay, paid: paidNum, date, notes: "काम पूरा" });
       const note = payNote(pay, amt, paidNum);
-      await store.updateJob(job.id, { status: "done", estimatedAmount: amt, notes: [job.notes, note].filter(Boolean).join(" · ") });
+      store.updateJob(job.id, { status: "done", dueDate: date, estimatedAmount: amt, notes: [job.notes, note].filter(Boolean).join(" · "), entryId });
       onClose();
     } finally { setSaving(false); }
   };
@@ -528,4 +733,6 @@ const styles = StyleSheet.create({
   segmentBtn: { flex: 1, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", paddingVertical: 10, borderRadius: radius.sm },
   segmentActive: { backgroundColor: colors.brandPrimary },
   segmentText: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
+  dangerLink: { flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", paddingVertical: spacing.md, marginTop: spacing.sm },
+  dangerText: { color: colors.error, fontWeight: "600", fontSize: 14 },
 });

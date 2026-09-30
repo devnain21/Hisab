@@ -1,0 +1,214 @@
+import { useEffect, useMemo, useState } from "react";
+import { View, Text, StyleSheet, TextInput, FlatList, ScrollView, ActivityIndicator } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import MaterialIcon from "@react-native-vector-icons/material-design-icons";
+import { colors, spacing, radius } from "@/src/theme";
+import { useAeps, type AepsType } from "@/src/lib/data";
+import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals } from "@/src/lib/aeps";
+import { formatDateShort, formatINR, todayISO } from "@/src/lib/format";
+import { Pressable } from "@/src/components/tap";
+import { SlowServerHint } from "@/src/components/slow-server-hint";
+import { AepsSheet } from "@/src/components/aeps-sheet";
+
+type Range = "today" | "yesterday" | "month" | "all";
+const RANGES: { key: Range; label: string }[] = [
+  { key: "today", label: "आज" },
+  { key: "yesterday", label: "कल" },
+  { key: "month", label: "इस महीने" },
+  { key: "all", label: "सभी" },
+];
+
+export default function AepsScreen() {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const params = useLocalSearchParams<{ range?: Range; t?: string }>();
+  const q = useAeps();
+  const txns = q.data ?? [];
+  const [range, setRange] = useState<Range>("today");
+  const [type, setType] = useState<AepsType | "all">("all");
+  const [search, setSearch] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  useEffect(() => {
+    if (params.range) setRange(params.range);
+  }, [params.range, params.t]);
+
+  const today = todayISO();
+  const yesterday = todayISO(-1);
+  const monthPrefix = today.slice(0, 7);
+
+  const inRange = useMemo(
+    () =>
+      txns.filter((t) =>
+        range === "today" ? t.date === today : range === "yesterday" ? t.date === yesterday : range === "month" ? t.date.startsWith(monthPrefix) : true,
+      ),
+    [txns, range, today, yesterday, monthPrefix],
+  );
+
+  const rows = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return inRange
+      .filter((t) => type === "all" || t.type === type)
+      .filter(
+        (t) =>
+          !needle ||
+          t.customerName.toLowerCase().includes(needle) ||
+          t.mobile.includes(needle) ||
+          t.reference.toLowerCase().includes(needle) ||
+          t.accountNumber.includes(needle) ||
+          t.billAccount.toLowerCase().includes(needle) ||
+          t.rechargeNumber.includes(needle),
+      )
+      .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : (b.time || b.createdAt).localeCompare(a.time || a.createdAt)));
+  }, [inRange, type, search]);
+
+  const totals = useMemo(() => aepsTotals(rows), [rows]);
+  const countByType = useMemo(() => {
+    const m: Partial<Record<AepsType, number>> = {};
+    inRange.forEach((t) => { m[t.type] = (m[t.type] ?? 0) + 1; });
+    return m;
+  }, [inRange]);
+
+  const header = (
+      <View style={{ paddingTop: insets.top + spacing.md }}>
+        <Text style={styles.h1}>AEPS</Text>
+        <Text style={styles.sub}>निकासी, जमा, ट्रांसफर, रिचार्ज और बिल का रिकॉर्ड</Text>
+
+        <View style={styles.segment}>
+          {RANGES.map((r) => (
+            <Pressable key={r.key} onPress={() => setRange(r.key)} style={[styles.segmentBtn, range === r.key && styles.segmentActive]} testID={`aeps-range-${r.key}`}>
+              <Text style={[styles.segmentText, range === r.key && { color: colors.onBrandPrimary }]}>{r.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <View style={styles.summary} testID="aeps-summary">
+          <SummaryCell label="कैश दिया" value={formatINR(totals.cashOut)} color={colors.error} />
+          <View style={styles.summaryDivider} />
+          <SummaryCell label="कैश लिया" value={formatINR(totals.cashIn)} color={colors.success} />
+          <View style={styles.summaryDivider} />
+          <SummaryCell label="कमीशन" value={formatINR(totals.commission)} color={colors.brandSecondary} />
+        </View>
+        <Text style={styles.summaryNote}>{totals.count} सफल लेन-देन · पेंडिंग/फेल हिसाब में नहीं जुड़ते</Text>
+
+        <View style={styles.searchWrap}>
+          <MaterialIcon name="magnify" size={18} color={colors.muted} />
+          <TextInput style={styles.search} value={search} onChangeText={setSearch} placeholder="नाम, मोबाइल, खाता या Txn ID" placeholderTextColor={colors.muted} testID="aeps-search" />
+          {search ? (
+            <Pressable onPress={() => setSearch("")} hitSlop={8}><MaterialIcon name="close-circle" size={18} color={colors.muted} /></Pressable>
+          ) : null}
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: spacing.md }}>
+          <TypeChip label={`सब (${inRange.length})`} active={type === "all"} onPress={() => setType("all")} />
+          {AEPS_TYPES.filter((t) => countByType[t]).map((t) => (
+            <TypeChip key={t} label={`${AEPS_META[t].short} (${countByType[t]})`} icon={AEPS_META[t].icon} color={AEPS_META[t].color} active={type === t} onPress={() => setType(t)} />
+          ))}
+        </ScrollView>
+      </View>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.surface }}>
+        <FlatList
+          data={q.isLoading ? [] : rows}
+          keyExtractor={(t) => t.id}
+          keyboardShouldPersistTaps="handled"
+          ListHeaderComponent={header}
+          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl * 2, gap: spacing.sm }}
+          ListEmptyComponent={
+            q.isLoading ? (
+              <View style={{ marginTop: spacing.xl, alignItems: "center" }}><ActivityIndicator color={colors.brandPrimary} /><SlowServerHint /></View>
+            ) :
+            <View style={styles.empty} testID="aeps-empty">
+              <MaterialIcon name="fingerprint" size={36} color={colors.muted} />
+              <Text style={styles.emptyTitle}>{search ? "कुछ नहीं मिला" : "इस समय का कोई लेन-देन नहीं"}</Text>
+              {!search ? <Text style={styles.emptySub}>नीचे + दबाकर पहला लेन-देन लिखें</Text> : null}
+            </View>
+          }
+          renderItem={({ item: t }) => {
+            const m = AEPS_META[t.type];
+            const st = STATUS_META[t.status];
+            const detail = aepsDetailLine(t);
+            return (
+              <Pressable style={styles.row} onPress={() => router.push(`/aeps/${t.id}`)} testID={`aeps-row-${t.id}`}>
+                <View style={[styles.typeIcon, { backgroundColor: m.soft }]}>
+                  <MaterialIcon name={m.icon as any} size={20} color={m.color} />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.name} numberOfLines={1}>{t.customerName}</Text>
+                  <Text style={styles.meta} numberOfLines={1}>
+                    {m.short} · {t.date === today ? "आज" : formatDateShort(t.date)}{t.time ? ` ${t.time}` : ""}
+                  </Text>
+                  {detail ? <Text style={styles.meta} numberOfLines={1}>{detail}</Text> : null}
+                </View>
+                <View style={{ alignItems: "flex-end", gap: 4 }}>
+                  {t.amount > 0 ? <Text style={[styles.amount, { color: m.cash === "out" ? colors.error : m.cash === "in" ? colors.success : colors.onSurface }]}>{formatINR(t.amount)}</Text> : null}
+                  {t.status !== "success" ? (
+                    <View style={[styles.statusPill, { backgroundColor: st.soft }]}><Text style={[styles.statusText, { color: st.color }]}>{st.label}</Text></View>
+                  ) : t.commission > 0 ? (
+                    <Text style={styles.commission}>+{formatINR(t.commission)}</Text>
+                  ) : null}
+                </View>
+              </Pressable>
+            );
+          }}
+        />
+
+      <Pressable style={[styles.fab, { bottom: insets.bottom + 16 }]} onPress={() => setAdding(true)} testID="add-aeps-fab">
+        <MaterialIcon name="plus" size={26} color={colors.onBrandPrimary} />
+      </Pressable>
+
+      <AepsSheet visible={adding} onClose={() => setAdding(false)} />
+    </View>
+  );
+}
+
+function SummaryCell({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <View style={{ flex: 1, alignItems: "center" }}>
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <Text style={[styles.summaryValue, { color }]} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
+    </View>
+  );
+}
+
+function TypeChip({ label, icon, color, active, onPress }: { label: string; icon?: string; color?: string; active: boolean; onPress: () => void }) {
+  const bg = color ?? colors.brandPrimary;
+  return (
+    <Pressable onPress={onPress} style={[styles.chip, active && { backgroundColor: bg, borderColor: bg }]}>
+      {icon ? <MaterialIcon name={icon as any} size={14} color={active ? "#fff" : bg} /> : null}
+      <Text style={[styles.chipText, active && { color: "#fff" }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  h1: { fontSize: 30, fontWeight: "700", color: colors.onSurface },
+  sub: { fontSize: 13, color: colors.muted, marginTop: 2 },
+  segment: { flexDirection: "row", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: 4, marginTop: spacing.lg, borderWidth: 1, borderColor: colors.border },
+  segmentBtn: { flex: 1, alignItems: "center", paddingVertical: 8, borderRadius: radius.sm },
+  segmentActive: { backgroundColor: colors.brandPrimary },
+  segmentText: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
+  summary: { flexDirection: "row", alignItems: "center", marginTop: spacing.md, paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  summaryDivider: { width: 1, alignSelf: "stretch", backgroundColor: colors.border },
+  summaryLabel: { fontSize: 11, fontWeight: "600", color: colors.muted },
+  summaryValue: { fontSize: 18, fontWeight: "800", marginTop: 2, paddingHorizontal: spacing.xs },
+  summaryNote: { fontSize: 11, color: colors.muted, marginTop: spacing.xs, textAlign: "center" },
+  searchWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44, borderWidth: 1, borderColor: colors.border, marginTop: spacing.md },
+  search: { flex: 1, color: colors.onSurface, fontSize: 15 },
+  chip: { flexDirection: "row", gap: 4, height: 32, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
+  chipText: { fontSize: 12, color: colors.onSurface, fontWeight: "700" },
+  row: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
+  typeIcon: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center" },
+  name: { fontSize: 15, fontWeight: "700", color: colors.onSurface },
+  meta: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  amount: { fontSize: 16, fontWeight: "800" },
+  commission: { fontSize: 11, fontWeight: "700", color: colors.brandSecondary },
+  statusPill: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.pill },
+  statusText: { fontSize: 11, fontWeight: "700" },
+  empty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },
+  emptyTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
+  emptySub: { fontSize: 13, color: colors.muted },
+  fab: { position: "absolute", right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#000", shadowOpacity: 0.15, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
+});

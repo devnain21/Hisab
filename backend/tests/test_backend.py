@@ -188,6 +188,26 @@ class TestEntriesCRUD:
         found = [e for e in rows if e["id"] in TestEntriesCRUD.entry_ids]
         assert len(found) == 2
 
+    def test_update_entry(self, session_a, api_url):
+        eid = TestEntriesCRUD.entry_ids[1]
+        r = session_a.put(f"{api_url}/entries/{eid}", json={
+            "type": "payment",
+            "date": "2026-01-17",
+            "description": "TEST Payment edited",
+            "amount": 250,
+            "notes": "corrected",
+        })
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["id"] == eid
+        assert d["amount"] == 250
+        assert d["description"] == "TEST Payment edited"
+        assert d["customerId"] == TestEntriesCRUD.customer_id
+        bad = session_a.put(f"{api_url}/entries/{eid}", json={
+            "type": "payment", "date": "2026-01-17", "description": "x", "amount": 0,
+        })
+        assert bad.status_code == 422
+
     def test_delete_entry(self, session_a, api_url):
         eid = TestEntriesCRUD.entry_ids[0]
         r = session_a.delete(f"{api_url}/entries/{eid}")
@@ -348,6 +368,13 @@ class TestUserIsolation:
         rows = session_b.get(f"{api_url}/jobs").json()
         assert not any(j["id"] == TestUserIsolation.a_job_id for j in rows)
 
+    def test_user_b_cannot_update_user_a_entry(self, session_b, api_url):
+        r = session_b.put(
+            f"{api_url}/entries/{TestUserIsolation.a_entry_id}",
+            json={"type": "work", "date": "2026-01-05", "description": "hacked", "amount": 1},
+        )
+        assert r.status_code == 404
+
     def test_user_b_cannot_update_user_a_customer(self, session_b, api_url):
         r = session_b.put(
             f"{api_url}/customers/{TestUserIsolation.a_customer_id}",
@@ -371,6 +398,98 @@ class TestUserIsolation:
         assert r.status_code == 404
 
 
+# --- Linked work records ------------------------------------------------
+class TestLinkedRecords:
+    def test_payment_link_and_job_entry_persist(self, session_a, api_url):
+        c = session_a.post(f"{api_url}/customers", json={"name": "TEST_Linked"}).json()
+        work = session_a.post(f"{api_url}/entries", json={
+            "customerId": c["id"], "type": "work", "date": "2026-02-01",
+            "description": "TEST linked work", "amount": 400,
+        }).json()
+        assert work["linkId"] == ""
+        pay = session_a.post(f"{api_url}/entries", json={
+            "customerId": c["id"], "type": "payment", "date": "2026-02-01",
+            "description": "TEST linked pay", "amount": 400, "linkId": work["id"],
+        }).json()
+        assert pay["linkId"] == work["id"]
+        job = session_a.post(f"{api_url}/jobs", json={
+            "customerId": c["id"], "title": "TEST linked job", "dueDate": "2026-02-01", "status": "done",
+        }).json()
+        r = session_a.put(f"{api_url}/jobs/{job['id']}", json={"entryId": work["id"]})
+        assert r.status_code == 200
+        assert r.json()["entryId"] == work["id"]
+        # Editing the entry must keep its link.
+        r = session_a.put(f"{api_url}/entries/{pay['id']}", json={
+            "type": "payment", "date": "2026-02-02", "description": "TEST linked pay", "amount": 150,
+        })
+        assert r.json()["linkId"] == work["id"]
+
+
+# --- AEPS ------------------------------------------------------------------
+class TestAeps:
+    txn_id = None
+
+    def _payload(self, **over):
+        base = {
+            "type": "withdrawal", "date": "2026-03-01", "time": "10:30",
+            "customerName": "TEST Aeps Customer", "mobile": "9876543210",
+            "aadhaarLast4": "1234", "bankName": "SBI", "amount": 2000,
+            "commission": 10, "reference": "RRN123",
+        }
+        base.update(over)
+        return base
+
+    def test_create_aeps(self, session_a, api_url):
+        r = session_a.post(f"{api_url}/aeps", json=self._payload())
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["type"] == "withdrawal" and d["amount"] == 2000
+        assert d["status"] == "success"
+        assert "_id" not in d and "user_id" not in d
+        TestAeps.txn_id = d["id"]
+
+    def test_create_aeps_idempotent(self, session_a, api_url):
+        cid = str(uuid.uuid4())
+        first = session_a.post(f"{api_url}/aeps", json=self._payload(id=cid)).json()
+        again = session_a.post(f"{api_url}/aeps", json=self._payload(id=cid, amount=9)).json()
+        assert first["id"] == again["id"] == cid
+        assert again["amount"] == 2000
+        rows = session_a.get(f"{api_url}/aeps").json()
+        assert sum(1 for t in rows if t["id"] == cid) == 1
+        session_a.delete(f"{api_url}/aeps/{cid}")
+
+    def test_full_aadhaar_rejected(self, session_a, api_url):
+        r = session_a.post(f"{api_url}/aeps", json=self._payload(aadhaarLast4="123456789012"))
+        assert r.status_code == 422
+
+    def test_negative_amount_and_bad_type_rejected(self, session_a, api_url):
+        assert session_a.post(f"{api_url}/aeps", json=self._payload(amount=-5)).status_code == 422
+        assert session_a.post(f"{api_url}/aeps", json=self._payload(type="loan")).status_code == 422
+
+    def test_update_aeps(self, session_a, api_url):
+        r = session_a.put(f"{api_url}/aeps/{TestAeps.txn_id}", json=self._payload(
+            type="bill", billerName="बिजली", billAccount="CN-778", amount=1450, status="pending",
+        ))
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["id"] == TestAeps.txn_id
+        assert d["type"] == "bill" and d["billAccount"] == "CN-778" and d["status"] == "pending"
+
+    def test_other_user_cannot_see_or_edit(self, session_b, api_url):
+        rows = session_b.get(f"{api_url}/aeps").json()
+        assert not any(t["id"] == TestAeps.txn_id for t in rows)
+        r = session_b.put(f"{api_url}/aeps/{TestAeps.txn_id}", json=self._payload())
+        assert r.status_code == 404
+
+    def test_delete_aeps(self, session_a, api_url):
+        assert session_a.delete(f"{api_url}/aeps/{TestAeps.txn_id}").json() == {"ok": True}
+        rows = session_a.get(f"{api_url}/aeps").json()
+        assert not any(t["id"] == TestAeps.txn_id for t in rows)
+
+    def test_aeps_requires_auth(self, anon_session, api_url):
+        assert anon_session.get(f"{api_url}/aeps").status_code == 401
+
+
 # --- Cleanup -------------------------------------------------------------
 class TestZZCleanup:
     """Ensures test data is removed after suite completes."""
@@ -388,4 +507,7 @@ class TestZZCleanup:
         for j in session_a.get(f"{api_url}/jobs").json():
             if j.get("title", "").startswith("TEST"):
                 session_a.delete(f"{api_url}/jobs/{j['id']}")
+        for t in session_a.get(f"{api_url}/aeps").json():
+            if t.get("customerName", "").startswith("TEST"):
+                session_a.delete(f"{api_url}/aeps/{t['id']}")
         assert True

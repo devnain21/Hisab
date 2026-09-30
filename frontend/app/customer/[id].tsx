@@ -5,13 +5,12 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { cashIn, computeBalance, useCustomers, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
+import { computeBalance, useCustomers, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
 import { formatDate, formatINR, formatPhone, initials, waNumber } from "@/src/lib/format";
 import { store } from "@/src/lib/store";
-import { buildLedger, removeEntryWithLinks, type WorkState, type WorkStatus } from "@/src/lib/records";
+import { buildLedger, type WorkState, type WorkStatus } from "@/src/lib/records";
 import { AddEntrySheet, AddJobSheet, AddCustomerSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
-import { confirmAction } from "@/src/lib/confirm";
 import { useAuth } from "@/src/context/AuthContext";
 
 export default function CustomerDetail() {
@@ -65,9 +64,8 @@ export default function CustomerDetail() {
   });
 
   const due = computeBalance(entries);
-  const totalWork = entries.filter((e) => e.type === "work").reduce((s, e) => s + e.amount, 0);
-  const totalIn = entries.reduce((s, e) => s + cashIn(e), 0);
   const openJobs = jobs.filter((j) => j.status !== "done");
+  const showMoreFilters = rows.length > 8;
 
   if (!customer) {
     return (
@@ -80,13 +78,6 @@ export default function CustomerDetail() {
       </View>
     );
   }
-
-  const removeEntry = (e: Entry) => {
-    const extra = e.type === "work" ? "\nइसके साथ इसका भुगतान और काम कार्ड भी हटेंगे।" : "\nयह रकम फिर से बाकी में जुड़ जाएगी।";
-    confirmAction("एंट्री हटाएँ?", `${e.description} · ${formatINR(e.amount)}${extra}`, "हटा दें", () => {
-      removeEntryWithLinks(e, entriesQ.data ?? [], jobsQ.data ?? []);
-    });
-  };
 
   const shareWhatsApp = () => {
     const wa = waNumber(customer.phone);
@@ -107,13 +98,6 @@ export default function CustomerDetail() {
     });
   };
 
-  const deleteCustomer = () => {
-    confirmAction(`${customer.name} को हटाएँ?`, "इनका पूरा खाता मिट जाएगा।", "हटा दें", async () => {
-      store.deleteCustomer(customer.id);
-      router.back();
-    });
-  };
-
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, flexDirection: "row", alignItems: "center", gap: spacing.md }}>
@@ -127,11 +111,16 @@ export default function CustomerDetail() {
             {customer.phone ? formatPhone(customer.phone) : "फ़ोन नहीं"}{customer.address ? ` · ${customer.address}` : ""}
           </Text>
         </View>
+        {customer.phone ? (
+          <Pressable onPress={() => Linking.openURL(`tel:${customer.phone}`)} hitSlop={8} testID="call-cust-btn">
+            <MaterialIcon name="phone-outline" size={22} color={colors.onSurface} />
+          </Pressable>
+        ) : null}
+        <Pressable onPress={shareWhatsApp} hitSlop={8} testID="share-whatsapp-btn">
+          <MaterialIcon name="whatsapp" size={22} color="#128C7E" />
+        </Pressable>
         <Pressable onPress={() => setEditSheet(true)} hitSlop={10} testID="edit-cust-btn">
           <MaterialIcon name="pencil-outline" size={22} color={colors.onSurface} />
-        </Pressable>
-        <Pressable onPress={deleteCustomer} hitSlop={10} testID="del-cust-btn">
-          <MaterialIcon name="trash-can-outline" size={22} color={colors.error} />
         </Pressable>
       </View>
 
@@ -141,9 +130,6 @@ export default function CustomerDetail() {
           <Text style={[styles.balanceValue, { color: due > 0 ? colors.error : due < 0 ? colors.success : colors.onSurface }]}>
             {due === 0 ? "क्लियर" : formatINR(Math.abs(due))}
           </Text>
-          {totalWork > 0 ? (
-            <Text style={styles.balanceSub}>कुल काम {formatINR(totalWork)} · मिले {formatINR(totalIn)}</Text>
-          ) : null}
           {customer.notes ? <Text style={styles.notes}>{customer.notes}</Text> : null}
           <View style={styles.actionsRow}>
             <Pressable style={[styles.actionBtn, { backgroundColor: colors.brandPrimary }]} onPress={() => setJobSheet("now")} testID="add-work-btn">
@@ -154,15 +140,13 @@ export default function CustomerDetail() {
               <MaterialIcon name="arrow-bottom-left" size={16} color="#fff" />
               <Text style={styles.actionText}>जमा</Text>
             </Pressable>
-            <Pressable style={[styles.actionBtn, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }]} onPress={() => setJobSheet("later")} testID="add-job-btn">
-              <MaterialIcon name="calendar-clock" size={16} color={colors.onSurface} />
-              <Text style={[styles.actionText, { color: colors.onSurface }]}>आगे का</Text>
-            </Pressable>
+            {openJobs.length > 0 ? (
+              <Pressable style={[styles.actionBtn, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }]} onPress={() => setJobSheet("later")} testID="add-job-btn">
+                <MaterialIcon name="calendar-clock" size={16} color={colors.onSurface} />
+                <Text style={[styles.actionText, { color: colors.onSurface }]}>आगे का</Text>
+              </Pressable>
+            ) : null}
           </View>
-          <Pressable style={styles.waBtn} onPress={shareWhatsApp} testID="share-whatsapp-btn">
-            <MaterialIcon name="whatsapp" size={18} color="#128C7E" />
-            <Text style={styles.waText}>WhatsApp पर बाकी भेजें</Text>
-          </Pressable>
         </View>
 
         {openJobs.length > 0 && (
@@ -186,10 +170,13 @@ export default function CustomerDetail() {
           </>
         )}
 
-        <Text style={styles.sectionHead}>खाता</Text>
-        {rows.length > 0 ? (
+        <Text style={styles.sectionHead}>खाता</Text>        {rows.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.md }}>
-            {LEDGER_FILTERS.filter((f) => f === "all" || counts[f] > 0).map((f) => {
+            {LEDGER_FILTERS.filter((f) => {
+              if (f === "all") return true;
+              if (f === "due") return counts.due > 0;
+              return showMoreFilters && counts[f] > 0;
+            }).map((f) => {
               const active = filter === f;
               const tone = f === "due" ? colors.error : f === "all" ? colors.brandPrimary : colors.success;
               return (
@@ -216,9 +203,9 @@ export default function CustomerDetail() {
             {visible.map((e, i) => (
               <Animated.View key={e.id} entering={FadeInDown.delay(Math.min(i, 8) * 40).duration(250)}>
                 {e.type === "work" ? (
-                  <WorkCard entry={e} status={ledger.work.get(e.id)!} onPress={() => setEditing(e)} onSettle={() => setSettling(e)} onDelete={() => removeEntry(e)} />
+                  <WorkCard entry={e} status={ledger.work.get(e.id)!} onPress={() => setEditing(e)} onSettle={() => setSettling(e)} />
                 ) : (
-                  <JamaCard entry={e} onPress={() => setEditing(e)} onDelete={() => removeEntry(e)} />
+                  <JamaCard entry={e} onPress={() => setEditing(e)} />
                 )}
               </Animated.View>
             ))}
@@ -230,7 +217,12 @@ export default function CustomerDetail() {
       <EditRecordSheet entry={editing} job={editingJob} onClose={() => { setEditing(null); setEditingJob(null); }} />
       <AddJobSheet visible={jobSheet !== null} initialMode={jobSheet ?? "now"} onClose={() => setJobSheet(null)} customerId={customer.id} />
       <SettleSheet work={settling} onClose={() => setSettling(null)} />
-      <AddCustomerSheet visible={editSheet} onClose={() => setEditSheet(false)} initial={customer} />
+      <AddCustomerSheet
+        visible={editSheet}
+        onClose={() => setEditSheet(false)}
+        initial={customer}
+        onDelete={() => { store.deleteCustomer(customer.id); router.back(); }}
+      />
       <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
     </View>
   );
@@ -247,7 +239,7 @@ const STATE_UI: Record<WorkState, { label: string; icon: string; fg: string; bg:
   settled: { label: "चुकता", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
 };
 
-function WorkCard({ entry, status, onPress, onSettle, onDelete }: { entry: Entry; status: WorkStatus; onPress: () => void; onSettle: () => void; onDelete: () => void }) {
+function WorkCard({ entry, status, onPress, onSettle }: { entry: Entry; status: WorkStatus; onPress: () => void; onSettle: () => void }) {
   const ui = STATE_UI[status.state];
   const open = status.state === "pending" || status.state === "partial";
   const laterPaid = status.received - status.paidAtBooking;
@@ -283,24 +275,17 @@ function WorkCard({ entry, status, onPress, onSettle, onDelete }: { entry: Entry
         </View>
       ) : null}
 
-      <View style={styles.cardActions}>
-        {open ? (
-          <Pressable style={styles.settleBtn} onPress={onSettle} testID={`settle-${entry.id}`}>
-            <MaterialIcon name="cash-check" size={16} color="#fff" />
-            <Text style={styles.settleText}>पैसे मिले{status.state === "partial" ? ` · ${formatINR(status.remaining)}` : ""}</Text>
-          </Pressable>
-        ) : null}
-        <View style={{ flex: 1 }} />
-        <MaterialIcon name="pencil-outline" size={16} color={colors.muted} />
-        <Pressable onPress={onDelete} hitSlop={8} style={{ marginLeft: spacing.md }} testID={`del-entry-${entry.id}`}>
-          <MaterialIcon name="trash-can-outline" size={18} color={colors.muted} />
+      {open ? (
+        <Pressable style={styles.settleBtn} onPress={onSettle} testID={`settle-${entry.id}`}>
+          <MaterialIcon name="cash-check" size={16} color="#fff" />
+          <Text style={styles.settleText}>पैसे मिले{status.state === "partial" ? ` · ${formatINR(status.remaining)}` : ""}</Text>
         </Pressable>
-      </View>
+      ) : null}
     </Pressable>
   );
 }
 
-function JamaCard({ entry, onPress, onDelete }: { entry: Entry; onPress: () => void; onDelete: () => void }) {
+function JamaCard({ entry, onPress }: { entry: Entry; onPress: () => void }) {
   return (
     <Pressable style={styles.card} onPress={onPress} testID={`entry-${entry.id}`}>
       <View style={styles.cardTop}>
@@ -317,9 +302,6 @@ function JamaCard({ entry, onPress, onDelete }: { entry: Entry; onPress: () => v
             <Text style={[styles.stateText, { color: colors.success }]}>जमा</Text>
           </View>
         </View>
-        <Pressable onPress={onDelete} hitSlop={8} style={{ marginLeft: spacing.sm }} testID={`del-entry-${entry.id}`}>
-          <MaterialIcon name="close" size={18} color={colors.muted} />
-        </Pressable>
       </View>
     </Pressable>
   );
@@ -330,7 +312,6 @@ const styles = StyleSheet.create({
   avatarText: { fontWeight: "700", color: colors.onBrandTertiary },
   name: { fontSize: 18, fontWeight: "700", color: colors.onSurface },
   sub: { fontSize: 12, color: colors.muted, marginTop: 2 },
-  subFaint: { fontSize: 11, color: colors.muted },
   balanceCard: { padding: spacing.xl, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   balanceLabel: { fontSize: 12, color: colors.muted, fontWeight: "700", textTransform: "uppercase" },
   balanceValue: { fontSize: 36, fontWeight: "800", marginTop: spacing.xs },
@@ -338,14 +319,10 @@ const styles = StyleSheet.create({
   actionsRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },
   actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 11, borderRadius: radius.md },
   actionText: { color: "#fff", fontWeight: "700", fontSize: 13 },
-  waBtn: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 12, borderRadius: radius.md, backgroundColor: "#E7F6F1", borderWidth: 1, borderColor: "#128C7E" },
-  waText: { color: "#0B6B5C", fontWeight: "700", fontSize: 14 },
-  sectionHead: { fontSize: 17, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xl, marginBottom: spacing.md },
-  jobRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
+  sectionHead: { fontSize: 17, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xl, marginBottom: spacing.md },  jobRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   jobTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   pillBtn: { paddingHorizontal: spacing.md, paddingVertical: 7, backgroundColor: colors.brandPrimary, borderRadius: radius.pill },
   pillBtnText: { color: colors.onBrandPrimary, fontWeight: "700", fontSize: 12 },
-  balanceSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   filterChip: { height: 32, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   filterText: { fontSize: 12, fontWeight: "700", color: colors.onSurface },
   card: { padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
@@ -356,8 +333,7 @@ const styles = StyleSheet.create({
   stateText: { fontSize: 11, fontWeight: "800" },
   moneyLine: { flexDirection: "row", flexWrap: "wrap", columnGap: spacing.md, rowGap: 2, marginTop: spacing.sm, marginLeft: 48 },
   moneyText: { fontSize: 12, color: colors.onSurfaceSecondary },
-  cardActions: { flexDirection: "row", alignItems: "center", marginTop: spacing.sm, marginLeft: 48 },
-  settleBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md, paddingVertical: 7, borderRadius: radius.pill, backgroundColor: colors.success },
+  settleBtn: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, borderRadius: radius.md, backgroundColor: colors.success },
   settleText: { color: "#fff", fontWeight: "700", fontSize: 12 },
   empty: { alignItems: "center", padding: spacing.xl, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
 });

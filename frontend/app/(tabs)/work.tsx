@@ -6,17 +6,15 @@ import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
-import { store } from "@/src/lib/store";
 import { formatDate, formatINR, todayISO } from "@/src/lib/format";
 import { buildAllLedgers, workForJob, type WorkStatus } from "@/src/lib/records";
 import { AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
 import { SlowServerHint } from "@/src/components/slow-server-hint";
-import { confirmAction } from "@/src/lib/confirm";
-
 type Filter = "open" | "late" | "today" | "unpaid" | "done" | "all";
 const FILTERS: Filter[] = ["open", "late", "today", "unpaid", "done", "all"];
-const FILTER_LABEL: Record<Filter, string> = { open: "बाकी / आगे का", late: "देर", today: "आज", unpaid: "पैसे बाकी", done: "पूरा", all: "सभी" };
+const CHIPS: Filter[] = ["open", "done"];
+const FILTER_LABEL: Record<Filter, string> = { open: "बाकी", late: "देर", today: "आज", unpaid: "पैसे बाकी", done: "पूरा", all: "सभी" };
 
 function matches(j: Job, f: Filter, today: string, pay?: WorkStatus) {
   if (f === "open") return j.status !== "done";
@@ -90,26 +88,14 @@ export default function WorkScreen() {
 
   const openValue = useMemo(() => jobs.filter((j) => j.status !== "done").reduce((s, j) => s + (j.estimatedAmount || 0), 0), [jobs]);
 
-  const start = (j: Job) => {
-    store.updateJob(j.id, { status: "doing" });
-  };
-
-  const del = (j: Job) => {
-    const msg = j.status === "done" ? `${j.title}\n\nखाते में लिखी एंट्री नहीं हटेगी।` : j.title;
-    confirmAction("काम हटाएँ?", msg, "हटा दें", () => {
-      store.deleteJob(j.id);
-    });
-  };
-
   const loading = jobsQ.isLoading;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.md }}>
         <Text style={styles.h1}>काम</Text>
-        <Text style={styles.sub}>अभी किया काम लिखें या आगे का काम याद रखें। बदलने के लिए कार्ड दबाएँ।</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.md }}>
-          {FILTERS.map((f) => {
+          {CHIPS.map((f) => {
             const active = filter === f;
             const warn = (f === "late" || f === "unpaid") && counts[f] > 0;
             return (
@@ -126,10 +112,12 @@ export default function WorkScreen() {
             );
           })}
         </ScrollView>
-        {!loading && counts.open > 0 && (filter === "open" || filter === "late" || filter === "today") ? (
+        {!loading && (filter === "open" || filter === "late" || filter === "today") ? (
           <Text style={styles.summary} testID="work-summary">
-            {counts.open} काम बाकी · आज {counts.today}
-            {counts.late > 0 ? <Text style={{ color: colors.error, fontWeight: "700" }}> · {counts.late} देर से</Text> : null}
+            <Text onPress={() => setFilter("open")} style={filter === "open" ? styles.summaryOn : undefined}>{counts.open} काम बाकी</Text>
+            {" · "}
+            <Text onPress={() => setFilter("today")} style={filter === "today" ? styles.summaryOn : undefined}>आज {counts.today}</Text>
+            {counts.late > 0 ? <Text onPress={() => setFilter("late")} style={{ color: colors.error, fontWeight: "700" }}> · {counts.late} देर से</Text> : null}
             {openValue > 0 ? ` · अनुमानित ${formatINR(openValue)}` : ""}
           </Text>
         ) : null}
@@ -171,31 +159,17 @@ export default function WorkScreen() {
                     {j.estimatedAmount > 0 ? ` · ${formatINR(j.estimatedAmount)}` : ""}
                   </Text>
                   {notes ? <Text style={styles.notes}>{notes}</Text> : null}
-                  <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md, alignItems: "center" }}>
-                    {pay && work && pay.remaining > 0 ? (
-                      <Pressable style={[styles.smBtn, { backgroundColor: colors.success, borderColor: colors.success }]} onPress={() => setSettling(work)} testID={`settle-job-${j.id}`}>
-                        <MaterialIcon name="cash-check" size={16} color="#fff" />
-                        <Text style={[styles.smBtnText, { color: "#fff" }]}>पैसे मिले · {formatINR(pay.remaining)}</Text>
-                      </Pressable>
-                    ) : null}
-                    {j.status === "pending" && (
-                      <Pressable style={styles.smBtn} onPress={() => start(j)} testID={`start-${j.id}`}>
-                        <MaterialIcon name="play-outline" size={16} color={colors.onSurface} />
-                        <Text style={styles.smBtnText}>शुरू करें</Text>
-                      </Pressable>
-                    )}
-                    {j.status !== "done" && (
-                      <Pressable style={[styles.smBtn, { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary }]} onPress={() => setCompleting(j)} testID={`complete-${j.id}`}>
-                        <MaterialIcon name="check" size={16} color={colors.onBrandPrimary} />
-                        <Text style={[styles.smBtnText, { color: colors.onBrandPrimary }]}>पूरा करें</Text>
-                      </Pressable>
-                    )}
-                    <View style={{ flex: 1 }} />
-                    <MaterialIcon name="pencil-outline" size={16} color={colors.muted} />
-                    <Pressable style={[styles.smBtn, { paddingHorizontal: 12 }]} onPress={() => del(j)} testID={`del-${j.id}`}>
-                      <MaterialIcon name="trash-can-outline" size={18} color={colors.error} />
+                  {pay && work && pay.remaining > 0 ? (
+                    <Pressable style={[styles.wideBtn, { backgroundColor: colors.success, borderColor: colors.success }]} onPress={() => setSettling(work)} testID={`settle-job-${j.id}`}>
+                      <MaterialIcon name="cash-check" size={16} color="#fff" />
+                      <Text style={[styles.smBtnText, { color: "#fff" }]}>पैसे मिले · {formatINR(pay.remaining)}</Text>
                     </Pressable>
-                  </View>
+                  ) : j.status !== "done" ? (
+                    <Pressable style={[styles.wideBtn, { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary }]} onPress={() => setCompleting(j)} testID={`complete-${j.id}`}>
+                      <MaterialIcon name="check" size={16} color={colors.onBrandPrimary} />
+                      <Text style={[styles.smBtnText, { color: colors.onBrandPrimary }]}>पूरा करें</Text>
+                    </Pressable>
+                  ) : null}
                 </Pressable>
               </Animated.View>
             );
@@ -260,6 +234,8 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
   chipText: { fontSize: 13, color: colors.onSurface, fontWeight: "600" },
   summary: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: spacing.md },
+  summaryOn: { fontWeight: "800", color: colors.onSurface },
+  wideBtn: { marginTop: spacing.md, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", paddingVertical: 10, borderRadius: radius.md, borderWidth: 1 },
   jobCard: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
   jobTitle: { fontSize: 15, fontWeight: "700", color: colors.onSurface },
   jobSub: { fontSize: 12, color: colors.muted, marginTop: 4 },

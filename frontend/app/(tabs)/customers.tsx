@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, TextInput, FlatList, ScrollView, ActivityIndicator, Linking } from "react-native";
+import { View, Text, StyleSheet, TextInput, FlatList, ScrollView, ActivityIndicator } from "react-native";
 import { Pressable } from "@/src/components/tap";
 import { SlowServerHint } from "@/src/components/slow-server-hint";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -131,11 +131,6 @@ export default function CustomersScreen() {
               <Text style={[styles.dueAmt, { color: item.due > 0 ? colors.error : item.due < 0 ? colors.success : colors.muted }]}>
                 {item.due === 0 ? "क्लियर" : item.due < 0 ? `+${formatINR(-item.due)}` : formatINR(item.due)}
               </Text>
-              {item.c.phone ? (
-                <Pressable style={styles.callBtn} onPress={() => Linking.openURL(`tel:${item.c.phone}`)} hitSlop={6} testID={`call-${item.c.id}`}>
-                  <MaterialIcon name="phone-outline" size={18} color={colors.brandPrimary} />
-                </Pressable>
-              ) : null}
             </Pressable>
           )}
           ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border }} />}
@@ -168,7 +163,6 @@ const styles = StyleSheet.create({
   sub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   last: { fontSize: 11, color: colors.muted, marginTop: 2 },
   dueAmt: { fontSize: 15, fontWeight: "700" },
-  callBtn: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   empty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },
   emptyTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   emptySub: { fontSize: 13, color: colors.muted },

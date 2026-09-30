@@ -46,10 +46,18 @@ export default function AepsScreen() {
     [txns, range, today, yesterday, monthPrefix],
   );
 
+  const countByType = useMemo(() => {
+    const m: Partial<Record<AepsType, number>> = {};
+    inRange.forEach((t) => { m[t.type] = (m[t.type] ?? 0) + 1; });
+    return m;
+  }, [inRange]);
+  const typesInRange = AEPS_TYPES.filter((t) => countByType[t]);
+
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
+    const narrow = typesInRange.length > 1;
     return inRange
-      .filter((t) => type === "all" || t.type === type)
+      .filter((t) => !narrow || type === "all" || t.type === type)
       .filter(
         (t) =>
           !needle ||
@@ -61,20 +69,13 @@ export default function AepsScreen() {
           t.rechargeNumber.includes(needle),
       )
       .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : (b.time || b.createdAt).localeCompare(a.time || a.createdAt)));
-  }, [inRange, type, search]);
+  }, [inRange, type, search, typesInRange.length]);
 
   const totals = useMemo(() => aepsTotals(rows), [rows]);
-  const countByType = useMemo(() => {
-    const m: Partial<Record<AepsType, number>> = {};
-    inRange.forEach((t) => { m[t.type] = (m[t.type] ?? 0) + 1; });
-    return m;
-  }, [inRange]);
 
   const header = (
       <View style={{ paddingTop: insets.top + spacing.md }}>
         <Text style={styles.h1}>AEPS</Text>
-        <Text style={styles.sub}>निकासी, जमा, ट्रांसफर, रिचार्ज और बिल का रिकॉर्ड</Text>
-
         <View style={styles.segment}>
           {RANGES.map((r) => (
             <Pressable key={r.key} onPress={() => setRange(r.key)} style={[styles.segmentBtn, range === r.key && styles.segmentActive]} testID={`aeps-range-${r.key}`}>
@@ -83,14 +84,10 @@ export default function AepsScreen() {
           ))}
         </View>
 
-        <View style={styles.summary} testID="aeps-summary">
-          <SummaryCell label="कैश दिया" value={formatINR(totals.cashOut)} color={colors.error} />
-          <View style={styles.summaryDivider} />
-          <SummaryCell label="कैश लिया" value={formatINR(totals.cashIn)} color={colors.success} />
-          <View style={styles.summaryDivider} />
-          <SummaryCell label="कमीशन" value={formatINR(totals.commission)} color={colors.brandSecondary} />
-        </View>
-        <Text style={styles.summaryNote}>{totals.count} सफल लेन-देन · पेंडिंग/फेल हिसाब में नहीं जुड़ते</Text>
+        <Text style={styles.summaryLine} testID="aeps-summary">
+          दिया {formatINR(totals.cashOut)} · लिया {formatINR(totals.cashIn)} · कमीशन {formatINR(totals.commission)}
+        </Text>
+        <Text style={styles.summaryNote}>{totals.count} सफल · पेंडिंग और फेल हिसाब में नहीं जुड़ते</Text>
 
         <View style={styles.searchWrap}>
           <MaterialIcon name="magnify" size={18} color={colors.muted} />
@@ -99,12 +96,14 @@ export default function AepsScreen() {
             <Pressable onPress={() => setSearch("")} hitSlop={8}><MaterialIcon name="close-circle" size={18} color={colors.muted} /></Pressable>
           ) : null}
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: spacing.md }}>
-          <TypeChip label={`सब (${inRange.length})`} active={type === "all"} onPress={() => setType("all")} />
-          {AEPS_TYPES.filter((t) => countByType[t]).map((t) => (
-            <TypeChip key={t} label={`${AEPS_META[t].short} (${countByType[t]})`} icon={AEPS_META[t].icon} color={AEPS_META[t].color} active={type === t} onPress={() => setType(t)} />
-          ))}
-        </ScrollView>
+        {typesInRange.length > 1 ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: spacing.md }}>
+            <TypeChip label={`सब (${inRange.length})`} active={type === "all"} onPress={() => setType("all")} />
+            {typesInRange.map((t) => (
+              <TypeChip key={t} label={`${AEPS_META[t].short} (${countByType[t]})`} icon={AEPS_META[t].icon} color={AEPS_META[t].color} active={type === t} onPress={() => setType(t)} />
+            ))}
+          </ScrollView>
+        ) : <View style={{ height: spacing.md }} />}
       </View>
   );
 
@@ -164,15 +163,6 @@ export default function AepsScreen() {
   );
 }
 
-function SummaryCell({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <View style={{ flex: 1, alignItems: "center" }}>
-      <Text style={styles.summaryLabel}>{label}</Text>
-      <Text style={[styles.summaryValue, { color }]} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
-    </View>
-  );
-}
-
 function TypeChip({ label, icon, color, active, onPress }: { label: string; icon?: string; color?: string; active: boolean; onPress: () => void }) {
   const bg = color ?? colors.brandPrimary;
   return (
@@ -190,10 +180,7 @@ const styles = StyleSheet.create({
   segmentBtn: { flex: 1, alignItems: "center", paddingVertical: 8, borderRadius: radius.sm },
   segmentActive: { backgroundColor: colors.brandPrimary },
   segmentText: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
-  summary: { flexDirection: "row", alignItems: "center", marginTop: spacing.md, paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  summaryDivider: { width: 1, alignSelf: "stretch", backgroundColor: colors.border },
-  summaryLabel: { fontSize: 11, fontWeight: "600", color: colors.muted },
-  summaryValue: { fontSize: 18, fontWeight: "800", marginTop: 2, paddingHorizontal: spacing.xs },
+  summaryLine: { marginTop: spacing.md, fontSize: 14, fontWeight: "700", color: colors.onSurface, textAlign: "center" },
   summaryNote: { fontSize: 11, color: colors.muted, marginTop: spacing.xs, textAlign: "center" },
   searchWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44, borderWidth: 1, borderColor: colors.border, marginTop: spacing.md },
   search: { flex: 1, color: colors.onSurface, fontSize: 15 },

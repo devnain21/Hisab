@@ -229,7 +229,7 @@ export function PrimaryButton({ label, onPress, disabled, saving, color, testID 
   );
 }
 
-export function AddCustomerSheet({ visible, onClose, initial }: { visible: boolean; onClose: () => void; initial?: any }) {
+export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visible: boolean; onClose: () => void; initial?: any; onDelete?: () => void }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
@@ -271,6 +271,13 @@ export function AddCustomerSheet({ visible, onClose, initial }: { visible: boole
         <TextInput style={[inputStyle, { minHeight: 72 }]} value={notes} onChangeText={setNotes} multiline placeholderTextColor={colors.muted} testID="input-cust-notes" />
       </Field>
       <PrimaryButton label={initial ? "बदलाव सेव करें" : "ग्राहक जोड़ें"} onPress={save} disabled={!name.trim()} saving={saving} testID="save-customer-btn" />
+      {initial?.id && onDelete ? (
+        <DangerLink
+          label="यह ग्राहक हटाएँ"
+          testID="delete-customer-link"
+          onPress={() => confirmAction(`${name || "ग्राहक"} को हटाएँ?`, "इनका पूरा खाता मिट जाएगा।", "हटा दें", () => { onDelete(); onClose(); })}
+        />
+      ) : null}
     </SheetShell>
   );
 }

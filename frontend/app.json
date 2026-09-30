@@ -7,6 +7,15 @@
     "icon": "./assets/images/icon.png",
     "scheme": "nainhisab",
     "userInterfaceStyle": "automatic",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/bc4207c9-dc20-4088-a255-a5d628468a62",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.nainphotostate.hisab",

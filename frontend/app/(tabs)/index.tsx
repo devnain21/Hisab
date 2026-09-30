@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { Pressable } from "@/src/components/tap";
-import { SlowServerHint } from "@/src/components/slow-server-hint";
+import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
 import { useState, useMemo } from "react";
 import { useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
@@ -10,7 +10,7 @@ import { colors, spacing, radius } from "@/src/theme";
 import { cashIn, useAeps, useCustomers, useEntries, useJobs, computeBalance, type Job } from "@/src/lib/data";
 import { aepsTotals } from "@/src/lib/aeps";
 import { formatDateShort, formatINR, formatWeekdayDate, todayISO } from "@/src/lib/format";
-import { AddEntrySheet, AddCustomerSheet, AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
+import { AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
 import { useAuth } from "@/src/context/AuthContext";
 import { usePendingCount } from "@/src/lib/store";
 
@@ -21,8 +21,6 @@ export default function Home() {
   const entriesQ = useEntries();
   const jobsQ = useJobs();
   const aeps = useAeps().data ?? [];
-  const [entrySheet, setEntrySheet] = useState<"work" | "payment" | null>(null);
-  const [custSheet, setCustSheet] = useState(false);
   const [jobSheet, setJobSheet] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const { user } = useAuth();
@@ -54,11 +52,12 @@ export default function Home() {
   const aepsToday = useMemo(() => aepsTotals(aeps.filter((t) => t.date === today)), [aeps, today]);
 
   const upcoming = useMemo(
-    () => jobs.filter((j) => j.status !== "done").sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 4),
+    () => jobs.filter((j) => j.status !== "done").sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 8),
     [jobs]
   );
 
   const loading = customersQ.isLoading || entriesQ.isLoading || jobsQ.isLoading;
+  const loadFailed = !loading && (customersQ.isError || entriesQ.isError) && customersQ.data == null;
   const nameOf = (id: string) => customers.find((c) => c.id === id)?.name ?? "ग्राहक";
   // The nonce makes the target tab re-apply the filter even if it was already open with it.
   const go = (pathname: string, params: Record<string, string>) =>
@@ -70,14 +69,15 @@ export default function Home() {
         contentContainerStyle={{ padding: spacing.lg, paddingTop: insets.top + spacing.md, paddingBottom: spacing.xxl }}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.eyebrow}>{formatWeekdayDate(today)}</Text>
-        <Text style={styles.h1} numberOfLines={2} testID="shop-name">{user?.shop_name || "आज का खाता"}</Text>
-        <Text style={styles.sub}>बही खाता — उधार, जमा और काम</Text>
-        {!user?.shop_name ? (
-          <Pressable onPress={() => router.push("/(tabs)/profile")} testID="set-shop-name-hint">
-            <Text style={styles.sub}>खाता पेज पर अपनी दुकान का नाम लिखें। हर Google खाते का हिसाब अलग रहता है।</Text>
+        <View style={styles.topRow}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.eyebrow}>{formatWeekdayDate(today)}</Text>
+            <Text style={styles.h1} numberOfLines={2} testID="shop-name">{user?.shop_name || "आज का खाता"}</Text>
+          </View>
+          <Pressable onPress={() => router.push("/(tabs)/profile")} hitSlop={8} testID="open-profile" style={styles.accountBtn}>
+            <MaterialIcon name="account-circle-outline" size={28} color={colors.onSurface} />
           </Pressable>
-        ) : null}
+        </View>
         {pending > 0 ? (
           <View style={styles.pendingPill} testID="home-sync-pending">
             <MaterialIcon name="cloud-upload-outline" size={14} color={colors.warning} />
@@ -85,7 +85,9 @@ export default function Home() {
           </View>
         ) : null}
 
-        {loading ? (
+        {loadFailed ? (
+          <DataLoadError onRetry={() => { customersQ.refetch(); entriesQ.refetch(); jobsQ.refetch(); }} />
+        ) : loading ? (
           <View style={{ marginTop: spacing.xxl, alignItems: "center" }}>
             <ActivityIndicator color={colors.brandPrimary} />
             <SlowServerHint />
@@ -131,24 +133,19 @@ export default function Home() {
               />
             </View>
 
-            <View style={styles.actionsRow}>
-              <ActionBtn label="काम लिखें" icon="briefcase-plus-outline" tone="brand" onPress={() => setJobSheet(true)} testID="quick-work" />
-              <ActionBtn label="जमा" icon="arrow-down-left" tone="ok" onPress={() => setEntrySheet("payment")} testID="quick-jama" />
-              <ActionBtn label="ग्राहक" icon="account-plus-outline" tone="neutral" onPress={() => setCustSheet(true)} testID="quick-customer" />
-            </View>
+            <Pressable style={styles.primaryAction} onPress={() => setJobSheet(true)} testID="quick-work">
+              <MaterialIcon name="briefcase-plus-outline" size={20} color={colors.onBrandPrimary} />
+              <Text style={styles.primaryActionText}>काम लिखें</Text>
+            </Pressable>
 
-            <Pressable style={styles.aepsCard} onPress={() => go("/(tabs)/aeps", { range: "today" })} testID="home-aeps-card">
-              <View style={styles.aepsIcon}><MaterialIcon name="fingerprint" size={22} color={colors.brandPrimary} /></View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.rowTitle}>आज AEPS / मनी सर्विस</Text>
-                <Text style={styles.rowSub} numberOfLines={1}>
-                  {aepsToday.count === 0
-                    ? "आज कोई लेन-देन नहीं"
-                    : `${aepsToday.count} लेन-देन · कैश दिया ${formatINR(aepsToday.cashOut)} · लिया ${formatINR(aepsToday.cashIn)}`}
-                </Text>
-              </View>
-              {aepsToday.commission > 0 ? <Text style={styles.commission}>+{formatINR(aepsToday.commission)}</Text> : null}
-              <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
+            <Pressable style={styles.aepsLine} onPress={() => go("/(tabs)/aeps", { range: "today" })} testID="home-aeps-card">
+              <MaterialIcon name="fingerprint" size={16} color={colors.brandPrimary} />
+              <Text style={styles.aepsLineText} numberOfLines={1}>
+                {aepsToday.count === 0
+                  ? "आज AEPS में कुछ नहीं"
+                  : `AEPS · दिया ${formatINR(aepsToday.cashOut)} · लिया ${formatINR(aepsToday.cashIn)}${aepsToday.commission > 0 ? ` · कमीशन ${formatINR(aepsToday.commission)}` : ""}`}
+              </Text>
+              <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
             </Pressable>
 
             <View style={styles.sectionRow}>
@@ -189,8 +186,6 @@ export default function Home() {
         )}
       </ScrollView>
 
-      <AddEntrySheet visible={entrySheet !== null} type={entrySheet ?? "work"} onClose={() => setEntrySheet(null)} />
-      <AddCustomerSheet visible={custSheet} onClose={() => setCustSheet(false)} />
       <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />
       <EditRecordSheet job={editingJob} onClose={() => setEditingJob(null)} />
     </View>
@@ -216,18 +211,9 @@ function StatCard({ label, value, hint, icon, tone, onPress, testID }: { label: 
   );
 }
 
-function ActionBtn({ label, icon, tone, onPress, testID }: any) {
-  const bg = tone === "brand" ? colors.brandPrimary : tone === "due" ? colors.error : tone === "ok" ? colors.success : colors.surfaceSecondary;
-  const fg = tone === "neutral" ? colors.onSurface : "#fff";
-  return (
-    <Pressable onPress={onPress} testID={testID} style={[styles.actionBtn, { backgroundColor: bg }]}>
-      <MaterialIcon name={icon} size={18} color={fg} />
-      <Text style={[styles.actionText, { color: fg }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
+  topRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md },
+  accountBtn: { marginTop: spacing.sm, width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   eyebrow: { fontSize: 11, color: colors.brandSecondary, fontWeight: "700", textTransform: "uppercase" },
   h1: { fontSize: 30, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xs },
   sub: { fontSize: 13, color: colors.muted, marginTop: spacing.xs },
@@ -240,12 +226,10 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 22, fontWeight: "700", marginTop: spacing.xs },
   statBottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xs },
   statHint: { fontSize: 12, color: colors.muted, flexShrink: 1 },
-  actionsRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },
-  actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
-  actionText: { fontSize: 13, fontWeight: "600" },
-  aepsCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginTop: spacing.lg, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.border },
-  aepsIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
-  commission: { fontSize: 14, fontWeight: "700", color: colors.success },
+  primaryAction: { marginTop: spacing.lg, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
+  primaryActionText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "700" },
+  aepsLine: { marginTop: spacing.sm, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 10, paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary },
+  aepsLineText: { flex: 1, fontSize: 13, fontWeight: "600", color: colors.onSurface },
   sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xl, marginBottom: spacing.md },
   sectionHead: { fontSize: 18, fontWeight: "700", color: colors.onSurface },
   link: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },

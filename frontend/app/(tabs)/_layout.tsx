@@ -75,8 +75,8 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="profile"
         options={{
+          href: null,
           title: "खाता",
-          tabBarIcon: ({ color, size }) => <MaterialIcon name="account-circle-outline" size={size} color={color} />,
         }}
       />
     </Tabs>

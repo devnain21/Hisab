@@ -7,7 +7,7 @@ import { useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { useAeps, useCustomers, useEntries, useJobs, computeBalance, type Job } from "@/src/lib/data";
+import { cashIn, useAeps, useCustomers, useEntries, useJobs, computeBalance, type Job } from "@/src/lib/data";
 import { aepsTotals } from "@/src/lib/aeps";
 import { formatDateShort, formatINR, formatWeekdayDate, todayISO } from "@/src/lib/format";
 import { AddEntrySheet, AddCustomerSheet, AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
@@ -37,14 +37,14 @@ export default function Home() {
     const dueCustomers = customers.filter((c) => computeBalance(entries, c.id) > 0).length;
     const totalDue = computeBalance(entries);
     const todayWork = entries.filter((e) => e.date === today && e.type === "work");
-    const todayPay = entries.filter((e) => e.date === today && e.type === "payment");
+    const todayPay = entries.filter((e) => e.date === today && cashIn(e) > 0);
     const open = jobs.filter((j) => j.status !== "done");
     return {
       totalDue,
       dueCustomers,
       todayWork: todayWork.reduce((n, e) => n + e.amount, 0),
       todayWorkCount: todayWork.length,
-      todayPay: todayPay.reduce((n, e) => n + e.amount, 0),
+      todayPay: todayPay.reduce((n, e) => n + cashIn(e), 0),
       todayPayCount: todayPay.length,
       openJobs: open.length,
       overdue: open.filter((j) => j.dueDate < today).length,

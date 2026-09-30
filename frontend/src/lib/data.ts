@@ -3,8 +3,9 @@ import { api } from "@/src/lib/api";
 import { withPending } from "@/src/lib/store";
 
 export type Customer = { id: string; name: string; phone: string; address: string; notes: string; createdAt: string };
-// linkId: a payment booked together with a work entry points at that work entry.
-export type Entry = { id: string; customerId: string; type: "work" | "payment"; date: string; description: string; amount: number; notes: string; linkId?: string; createdAt: string };
+// paid: cash taken when the work was booked (work rows only, 0..amount).
+// linkId: a payment that settles a specific work entry points at that work entry.
+export type Entry = { id: string; customerId: string; type: "work" | "payment"; date: string; description: string; amount: number; paid?: number; notes: string; linkId?: string; createdAt: string };
 // entryId: the work entry booked when this job was completed.
 export type Job = { id: string; customerId: string; title: string; dueDate: string; status: "pending" | "doing" | "done"; estimatedAmount: number; notes: string; entryId?: string; createdAt: string };
 
@@ -49,5 +50,15 @@ export function useAeps() {
 
 export function computeBalance(entries: Entry[], customerId?: string): number {
   const list = customerId ? entries.filter((e) => e.customerId === customerId) : entries;
-  return list.reduce((s, e) => s + (e.type === "work" ? e.amount : -e.amount), 0);
+  return list.reduce((s, e) => s + entryDelta(e), 0);
+}
+
+/** How much this row moves the customer's balance: udhaar part of work up, payments down. */
+export function entryDelta(e: Entry): number {
+  return e.type === "work" ? e.amount - (e.paid ?? 0) : -e.amount;
+}
+
+/** Cash that came in with this row (for day totals). */
+export function cashIn(e: Entry): number {
+  return e.type === "work" ? e.paid ?? 0 : e.amount;
 }

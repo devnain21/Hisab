@@ -5,22 +5,24 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { useCustomers, useJobs, useEntries, type Job } from "@/src/lib/data";
+import { useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
 import { store } from "@/src/lib/store";
 import { formatDate, formatINR, todayISO } from "@/src/lib/format";
-import { AddJobSheet, CompleteJobSheet, EditRecordSheet } from "@/src/components/sheets";
+import { buildAllLedgers, workForJob, type WorkStatus } from "@/src/lib/records";
+import { AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
 import { SlowServerHint } from "@/src/components/slow-server-hint";
 import { confirmAction } from "@/src/lib/confirm";
 
-type Filter = "open" | "late" | "today" | "done" | "all";
-const FILTERS: Filter[] = ["open", "late", "today", "done", "all"];
-const FILTER_LABEL: Record<Filter, string> = { open: "बाकी / आगे का", late: "देर", today: "आज", done: "पूरा", all: "सभी" };
+type Filter = "open" | "late" | "today" | "unpaid" | "done" | "all";
+const FILTERS: Filter[] = ["open", "late", "today", "unpaid", "done", "all"];
+const FILTER_LABEL: Record<Filter, string> = { open: "बाकी / आगे का", late: "देर", today: "आज", unpaid: "पैसे बाकी", done: "पूरा", all: "सभी" };
 
-function matches(j: Job, f: Filter, today: string) {
+function matches(j: Job, f: Filter, today: string, pay?: WorkStatus) {
   if (f === "open") return j.status !== "done";
   if (f === "late") return j.status !== "done" && j.dueDate < today;
   if (f === "today") return j.status !== "done" && j.dueDate === today;
+  if (f === "unpaid") return j.status === "done" && !!pay && pay.remaining > 0;
   if (f === "done") return j.status === "done";
   return true;
 }
@@ -30,14 +32,31 @@ export default function WorkScreen() {
   const params = useLocalSearchParams<{ filter?: Filter; t?: string }>();
   const customersQ = useCustomers();
   const jobsQ = useJobs();
-  useEntries();
+  const entriesQ = useEntries();
   const customers = customersQ.data ?? [];
   const jobs = jobsQ.data ?? [];
+  const entries = entriesQ.data ?? [];
   const [filter, setFilter] = useState<Filter>("open");
   const [open, setOpen] = useState(false);
   const [completing, setCompleting] = useState<Job | null>(null);
   const [editing, setEditing] = useState<Job | null>(null);
+  const [settling, setSettling] = useState<Entry | null>(null);
   const today = todayISO();
+
+  const ledger = useMemo(() => buildAllLedgers(entries), [entries]);
+  const workOf = useMemo(() => {
+    const m = new Map<string, Entry>();
+    jobs.forEach((j) => {
+      if (j.status !== "done") return;
+      const w = workForJob(j, entries);
+      if (w) m.set(j.id, w);
+    });
+    return m;
+  }, [jobs, entries]);
+  const payOf = (j: Job) => {
+    const w = workOf.get(j.id);
+    return w ? ledger.get(w.id) : undefined;
+  };
 
   useEffect(() => {
     if (params.filter && FILTERS.includes(params.filter)) setFilter(params.filter);
@@ -47,19 +66,27 @@ export default function WorkScreen() {
 
   const counts = useMemo(() => {
     const c = {} as Record<Filter, number>;
-    FILTERS.forEach((f) => { c[f] = jobs.filter((j) => matches(j, f, today)).length; });
+    FILTERS.forEach((f) => { c[f] = jobs.filter((j) => matches(j, f, today, payOf(j))).length; });
     return c;
-  }, [jobs, today]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs, today, ledger, workOf]);
+
+  const unpaidTotal = useMemo(
+    () => jobs.reduce((s, j) => s + (j.status === "done" ? payOf(j)?.remaining ?? 0 : 0), 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [jobs, ledger, workOf],
+  );
 
   const rows = useMemo(() => {
     return jobs
-      .filter((j) => matches(j, filter, today))
+      .filter((j) => matches(j, filter, today, payOf(j)))
       .sort((a, b) => {
         if (a.status === "done" && b.status !== "done") return 1;
         if (a.status !== "done" && b.status === "done") return -1;
         return a.status === "done" ? b.dueDate.localeCompare(a.dueDate) : a.dueDate.localeCompare(b.dueDate);
       });
-  }, [jobs, filter, today]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs, filter, today, ledger, workOf]);
 
   const openValue = useMemo(() => jobs.filter((j) => j.status !== "done").reduce((s, j) => s + (j.estimatedAmount || 0), 0), [jobs]);
 
@@ -84,7 +111,7 @@ export default function WorkScreen() {
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.md }}>
           {FILTERS.map((f) => {
             const active = filter === f;
-            const warn = f === "late" && counts.late > 0;
+            const warn = (f === "late" || f === "unpaid") && counts[f] > 0;
             return (
               <Pressable
                 key={f}
@@ -106,6 +133,11 @@ export default function WorkScreen() {
             {openValue > 0 ? ` · अनुमानित ${formatINR(openValue)}` : ""}
           </Text>
         ) : null}
+        {!loading && filter === "unpaid" && unpaidTotal > 0 ? (
+          <Text style={styles.summary} testID="work-unpaid-summary">
+            पूरे हो चुके काम पर <Text style={{ color: colors.error, fontWeight: "800" }}>{formatINR(unpaidTotal)}</Text> लेना बाकी
+          </Text>
+        ) : null}
       </View>
 
       {loading ? (
@@ -124,19 +156,28 @@ export default function WorkScreen() {
           }
           renderItem={({ item: j, index }) => {
             const overdue = j.status !== "done" && j.dueDate < today;
+            const pay = j.status === "done" ? payOf(j) : undefined;
+            const work = workOf.get(j.id);
+            const notes = pay ? stripPayNote(j.notes) : j.notes;
             return (
               <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 40).duration(250)}>
                 <Pressable style={[styles.jobCard, overdue && { borderLeftWidth: 4, borderLeftColor: colors.error }]} onPress={() => setEditing(j)} testID={`job-card-${j.id}`}>
                   <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
                     <Text style={[styles.jobTitle, { flex: 1 }]} numberOfLines={2}>{j.title}</Text>
-                    <StatusPill status={j.status} />
+                    {pay ? <PayPill pay={pay} /> : <StatusPill status={j.status} />}
                   </View>
                   <Text style={[styles.jobSub, overdue && { color: colors.error }]}>
                     {nameOf(j.customerId)} · {j.dueDate === today ? "आज" : formatDate(j.dueDate)}{overdue ? " (देर)" : ""}
                     {j.estimatedAmount > 0 ? ` · ${formatINR(j.estimatedAmount)}` : ""}
                   </Text>
-                  {j.notes ? <Text style={styles.notes}>{j.notes}</Text> : null}
+                  {notes ? <Text style={styles.notes}>{notes}</Text> : null}
                   <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md, alignItems: "center" }}>
+                    {pay && work && pay.remaining > 0 ? (
+                      <Pressable style={[styles.smBtn, { backgroundColor: colors.success, borderColor: colors.success }]} onPress={() => setSettling(work)} testID={`settle-job-${j.id}`}>
+                        <MaterialIcon name="cash-check" size={16} color="#fff" />
+                        <Text style={[styles.smBtnText, { color: "#fff" }]}>पैसे मिले · {formatINR(pay.remaining)}</Text>
+                      </Pressable>
+                    ) : null}
                     {j.status === "pending" && (
                       <Pressable style={styles.smBtn} onPress={() => start(j)} testID={`start-${j.id}`}>
                         <MaterialIcon name="play-outline" size={16} color={colors.onSurface} />
@@ -169,6 +210,31 @@ export default function WorkScreen() {
       <AddJobSheet visible={open} onClose={() => setOpen(false)} />
       <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
       <EditRecordSheet job={editing} onClose={() => setEditing(null)} />
+      <SettleSheet work={settling} onClose={() => setSettling(null)} />
+    </View>
+  );
+}
+
+// Completion notes carry the payment split as it was on that day ("₹500 उधार"); the live
+// status pill replaces it, so drop those parts to avoid showing stale money info.
+function stripPayNote(notes: string) {
+  return notes
+    .split(" · ")
+    .filter((p) => !/^₹[\d,.]+ (नकद मिला|उधार)$|^₹[\d,.]+ जमा, ₹[\d,.]+ उधार$/.test(p.trim()))
+    .join(" · ");
+}
+
+function PayPill({ pay }: { pay: WorkStatus }) {
+  const map = {
+    cash: { bg: colors.successSoft, fg: colors.success, label: "नकद" },
+    settled: { bg: colors.successSoft, fg: colors.success, label: "✔ चुकता" },
+    partial: { bg: "#FEF3E2", fg: colors.warning, label: `${formatINR(pay.remaining)} बाकी` },
+    pending: { bg: colors.errorSoft, fg: colors.error, label: "उधार बाकी" },
+  } as const;
+  const s = map[pay.state];
+  return (
+    <View style={{ paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill, backgroundColor: s.bg }}>
+      <Text style={{ fontSize: 11, fontWeight: "800", color: s.fg }}>{s.label}</Text>
     </View>
   );
 }

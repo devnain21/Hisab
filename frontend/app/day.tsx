@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { useCustomers, useEntries, type Entry } from "@/src/lib/data";
+import { cashIn, useCustomers, useEntries, type Entry } from "@/src/lib/data";
 import { formatINR, formatWeekdayDate, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { EditRecordSheet } from "@/src/components/sheets";
@@ -33,8 +33,11 @@ export default function DayScreen() {
   const nameOf = (id: string) => customers.find((c) => c.id === id)?.name ?? "ग्राहक";
 
   const dayEntries = useMemo(() => entries.filter((e) => e.date === date), [entries, date]);
-  const rows = useMemo(() => dayEntries.filter((e) => e.type === kind).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [dayEntries, kind]);
-  const sum = (k: Kind) => dayEntries.filter((e) => e.type === k).reduce((s, e) => s + e.amount, 0);
+  // "जमा" = all cash that came in that day: jama rows plus cash taken with work.
+  const inKind = (e: Entry, k: Kind) => (k === "work" ? e.type === "work" : cashIn(e) > 0);
+  const amountFor = (e: Entry, k: Kind) => (k === "work" ? e.amount : cashIn(e));
+  const rows = useMemo(() => dayEntries.filter((e) => inKind(e, kind)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [dayEntries, kind]);
+  const sum = (k: Kind) => dayEntries.filter((e) => inKind(e, k)).reduce((s, e) => s + amountFor(e, k), 0);
   const total = sum(kind);
 
   const dateLabel = date === today ? "आज" : date === todayISO(-1) ? "कल" : formatWeekdayDate(date);
@@ -95,9 +98,14 @@ export default function DayScreen() {
                 <Text style={styles.name} numberOfLines={1}>{nameOf(e.customerId)}</Text>
               </Pressable>
               <Text style={styles.desc} numberOfLines={2}>{e.description || (e.type === "work" ? "काम" : "जमा")}</Text>
+              {e.type === "work" ? (
+                <Text style={[styles.notes, { color: (e.paid ?? 0) >= e.amount ? colors.success : colors.error }]}>
+                  {(e.paid ?? 0) >= e.amount ? "नकद" : (e.paid ?? 0) > 0 ? `${formatINR(e.paid ?? 0)} नकद · ${formatINR(e.amount - (e.paid ?? 0))} उधार` : "उधार"}
+                </Text>
+              ) : null}
               {e.notes ? <Text style={styles.notes} numberOfLines={1}>{e.notes}</Text> : null}
             </View>
-            <Text style={[styles.amount, { color: e.type === "work" ? colors.onSurface : colors.success }]}>{formatINR(e.amount)}</Text>
+            <Text style={[styles.amount, { color: kind === "work" ? colors.onSurface : colors.success }]}>{formatINR(amountFor(e, kind))}</Text>
             <MaterialIcon name="pencil-outline" size={16} color={colors.muted} />
           </Pressable>
         )}

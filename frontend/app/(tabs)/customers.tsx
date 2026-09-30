@@ -6,7 +6,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
-import { useCustomers, useEntries } from "@/src/lib/data";
+import { entryDelta, useCustomers, useEntries } from "@/src/lib/data";
 import { formatDateShort, formatINR, formatPhone, initials, todayISO } from "@/src/lib/format";
 import { AddCustomerSheet } from "@/src/components/sheets";
 
@@ -38,7 +38,7 @@ export default function CustomersScreen() {
     const stats = new Map<string, { due: number; last: string }>();
     for (const e of entries) {
       const s = stats.get(e.customerId) ?? { due: 0, last: "" };
-      s.due += e.type === "work" ? e.amount : -e.amount;
+      s.due += entryDelta(e);
       if (e.date > s.last) s.last = e.date;
       stats.set(e.customerId, s);
     }

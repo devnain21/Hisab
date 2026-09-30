@@ -15,10 +15,10 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
 import { useCustomers, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
-import { jobForWork, linkedPayment, removeEntryWithLinks, workForJob, workForPayment } from "@/src/lib/records";
+import { buildLedger, jobForWork, linkedPayment, removeEntryWithLinks, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
-import { formatINR, todayISO } from "@/src/lib/format";
+import { formatDate, formatINR, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
 
@@ -207,25 +207,13 @@ function PaymentPicker({ mode, onMode, paid, onPaid, total }: { mode: PayMode; o
 
 const paidFor = (mode: PayMode, amount: number, paid: number) =>
   mode === "cash" ? amount : mode === "partial" ? Math.min(Math.max(paid, 0), amount) : 0;
-const payDescription = (title: string, mode: PayMode) => `${title} — ${mode === "cash" ? "नकद" : "आंशिक जमा"}`;
+const settleDescription = (title: string) => `${title} — भुगतान`;
 
-// Work is always booked as udhaar; whatever was paid now is booked as jama so the khata stays balanced.
+// One row per piece of work: `paid` is the cash taken now, the rest is udhaar.
 function recordWork({ customerId, title, amount, mode, paid, date, notes }: { customerId: string; title: string; amount: number; mode: PayMode; paid: number; date: string; notes: string }): string {
   if (amount <= 0) return "";
-  const work = store.createEntry({ customerId, type: "work", date, description: title, amount, notes });
-  const paidNow = paidFor(mode, amount, paid);
-  if (paidNow > 0) {
-    store.createEntry({ customerId, type: "payment", date, description: payDescription(title, mode), amount: paidNow, notes: "", linkId: work.id });
-  }
+  const work = store.createEntry({ customerId, type: "work", date, description: title, amount, paid: paidFor(mode, amount, paid), notes });
   return work.id;
-}
-
-function payNote(mode: PayMode, amount: number, paid: number) {
-  if (amount <= 0) return "";
-  if (mode === "cash") return `${formatINR(amount)} नकद मिला`;
-  if (mode === "udhaar") return `${formatINR(amount)} उधार`;
-  const p = Math.min(Math.max(paid, 0), amount);
-  return `${formatINR(p)} जमा, ${formatINR(amount - p)} उधार`;
 }
 
 export function PrimaryButton({ label, onPress, disabled, saving, color, testID }: { label: string; onPress: () => void; disabled?: boolean; saving?: boolean; color?: string; testID?: string }) {
@@ -377,6 +365,7 @@ function payModeOf(amount: number, paid: number): { mode: PayMode; paid: string 
 export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose: () => void }) {
   const entries = useEntries().data ?? [];
   const jobs = useJobs().data ?? [];
+  const later = entry ? settlementsFor(entry, entries).filter((p) => p.date !== entry.date) : [];
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
   const [pay, setPay] = useState<PayMode>("udhaar");
@@ -392,7 +381,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
 
   useEffect(() => {
     if (!entry) return;
-    const p = payModeOf(entry.amount, link?.amount ?? 0);
+    const p = payModeOf(entry.amount, (entry.paid ?? 0) || (link?.amount ?? 0));
     setTitle(entry.description);
     setAmount(String(entry.amount));
     setPay(p.mode);
@@ -415,15 +404,11 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       const t = title.trim();
       const paidNum = parseFloat(paid) || 0;
       const paidNow = paidFor(pay, amt, paidNum);
-      store.updateEntry(entry.id, { type: "work", date, description: t, amount: amt, notes: notes.trim() });
-      if (link) {
-        if (paidNow > 0) store.updateEntry(link.id, { type: "payment", date, description: payDescription(t, pay), amount: paidNow, notes: link.notes, linkId: entry.id });
-        else store.deleteEntry(link.id);
-      } else if (paidNow > 0) {
-        store.createEntry({ customerId: entry.customerId, type: "payment", date, description: payDescription(t, pay), amount: paidNow, notes: "", linkId: entry.id });
-      }
+      store.updateEntry(entry.id, { type: "work", date, description: t, amount: amt, paid: paidNow, notes: notes.trim() });
+      // Old two-row cash records: the same-day jama is now carried by `paid`.
+      if (link && !(entry.paid ?? 0)) store.deleteEntry(link.id);
       if (job) {
-        store.updateJob(job.id, { title: t, dueDate: date, estimatedAmount: amt, notes: [payNote(pay, amt, paidNum), notes.trim()].filter(Boolean).join(" · "), entryId: entry.id });
+        store.updateJob(job.id, { title: t, dueDate: date, estimatedAmount: amt, notes: notes.trim(), entryId: entry.id });
       }
       if (remark.trim()) {
         store.createJob({ customerId: entry.customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
@@ -441,6 +426,23 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
         <TextInput style={inputStyle} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.muted} testID="input-edit-work-amount" />
       </Field>
       <PaymentPicker mode={pay} onMode={setPay} paid={paid} onPaid={setPaid} total={amt} />
+      {later.length > 0 ? (
+        <Field label="बाद में मिले पैसे">
+          {later.map((p) => (
+            <View key={p.id} style={styles.settleRow}>
+              <MaterialIcon name="check-circle" size={16} color={colors.success} />
+              <Text style={styles.settleText}>{formatINR(p.amount)} · {formatDate(p.date)}{p.notes ? ` · ${p.notes}` : ""}</Text>
+              <Pressable
+                hitSlop={8}
+                onPress={() => confirmAction("यह भुगतान हटाएँ?", `${formatINR(p.amount)} · ${formatDate(p.date)}\nयह रकम फिर से उधार में जुड़ जाएगी।`, "हटा दें", () => store.deleteEntry(p.id))}
+                testID={`del-settle-${p.id}`}
+              >
+                <MaterialIcon name="close" size={18} color={colors.muted} />
+              </Pressable>
+            </View>
+          ))}
+        </Field>
+      ) : null}
       <DateField label="तारीख" value={date} onChange={setDate} testID="input-edit-work-date" />
       <Field label="नोट (वैकल्पिक)">
         <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-edit-work-notes" />
@@ -528,8 +530,13 @@ export function EditRecordSheet({ entry, job, onClose }: { entry?: Entry | null;
     work = workForJob(job, entries) ?? null;
     if (!work) plainJob = job;
   } else if (entry) {
-    work = entry.type === "work" ? entry : workForPayment(entry, entries) ?? null;
-    if (!work) plainEntry = entry;
+    if (entry.type === "work") work = entry;
+    else {
+      // Same-day jama from old two-row cash records belongs to the work; later settlements are their own event.
+      const w = workForPayment(entry, entries);
+      if (w && w.date === entry.date) work = w;
+      else plainEntry = entry;
+    }
   }
   return (
     <>
@@ -537,6 +544,69 @@ export function EditRecordSheet({ entry, job, onClose }: { entry?: Entry | null;
       <EditJobSheet job={plainJob} onClose={onClose} />
       <AddEntrySheet visible={!!plainEntry} type={plainEntry?.type ?? "payment"} initial={plainEntry ?? undefined} customerId={plainEntry?.customerId} onClose={onClose} />
     </>
+  );
+}
+
+/** "पैसे मिले": records money received later against one udhaar work entry. */
+export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: () => void }) {
+  const entries = useEntries().data ?? [];
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(todayISO());
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const status = work ? buildLedger(entries.filter((e) => e.customerId === work.customerId)).work.get(work.id) : undefined;
+  const remaining = status?.remaining ?? 0;
+
+  useEffect(() => {
+    if (!work) return;
+    setAmount(remaining > 0 ? String(remaining) : "");
+    setDate(todayISO());
+    setNotes("");
+    // Only re-initialise when a different record is opened.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [work?.id]);
+
+  const amt = parseFloat(amount) || 0;
+  const valid = !!work && amt > 0;
+
+  const save = () => {
+    if (!work || !valid) return;
+    setSaving(true);
+    try {
+      store.createEntry({ customerId: work.customerId, type: "payment", date, description: settleDescription(work.description), amount: amt, notes: notes.trim(), linkId: work.id });
+      onClose();
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <SheetShell visible={!!work} onClose={onClose} title="पैसे मिले" testID="sheet-settle">
+      {work ? (
+        <View style={styles.settleSummary}>
+          <Text style={styles.jobName}>{work.description}</Text>
+          <Text style={styles.hint}>
+            कुल {formatINR(work.amount)} · मिल चुके {formatINR(status?.received ?? 0)} ·{" "}
+            <Text style={{ color: colors.error, fontWeight: "700" }}>बाकी {formatINR(remaining)}</Text>
+          </Text>
+        </View>
+      ) : null}
+      <Field label="कितने मिले (₹)">
+        {remaining > 0 ? (
+          <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
+            <Chip label={`पूरा ${formatINR(remaining)}`} active={amt === remaining} onPress={() => setAmount(String(remaining))} tone={colors.success} testID="settle-full" />
+            {remaining >= 2 ? <Chip label="आधा" active={amt === Math.round(remaining / 2)} onPress={() => setAmount(String(Math.round(remaining / 2)))} testID="settle-half" /> : null}
+          </View>
+        ) : null}
+        <TextInput style={inputStyle} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.muted} testID="input-settle-amount" />
+        {amt > 0 && amt < remaining ? <Text style={styles.hint}>{formatINR(remaining - amt)} अभी भी उधार रहेगा</Text> : null}
+        {amt > remaining && remaining > 0 ? <Text style={styles.hint}>{formatINR(amt - remaining)} ज़्यादा — बाकी पुराने उधार / एडवांस में जुड़ेगा</Text> : null}
+      </Field>
+      <DateField label="कब मिले" value={date} onChange={setDate} testID="input-settle-date" />
+      <Field label="नोट (वैकल्पिक)">
+        <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholder="जैसे UPI से, PhonePe" placeholderTextColor={colors.muted} testID="input-settle-notes" />
+      </Field>
+      <PrimaryButton label={amt >= remaining && remaining > 0 ? "चुकता करें ✔" : "जमा करें"} color={colors.success} onPress={save} disabled={!valid} saving={saving} testID="save-settle-btn" />
+    </SheetShell>
   );
 }
 
@@ -583,9 +653,8 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       const t = title.trim();
       if (mode === "now") {
         const paidNum = parseFloat(paid) || 0;
-        const note = payNote(pay, amt, paidNum);
         const entryId = recordWork({ customerId, title: t, amount: amt, mode: pay, paid: paidNum, date, notes: remark.trim() });
-        store.createJob({ customerId, title: t, dueDate: date, status: "done", estimatedAmount: amt, notes: [note, remark.trim()].filter(Boolean).join(" · "), entryId });
+        store.createJob({ customerId, title: t, dueDate: date, status: "done", estimatedAmount: amt, notes: remark.trim(), entryId });
         if (remark.trim()) {
           await store.createJob({ customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
         }
@@ -696,8 +765,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
       const paidNum = parseFloat(paid) || 0;
       const date = todayISO();
       const entryId = recordWork({ customerId: job.customerId, title: job.title, amount: amt, mode: pay, paid: paidNum, date, notes: "काम पूरा" });
-      const note = payNote(pay, amt, paidNum);
-      store.updateJob(job.id, { status: "done", dueDate: date, estimatedAmount: amt, notes: [job.notes, note].filter(Boolean).join(" · "), entryId });
+      store.updateJob(job.id, { status: "done", dueDate: date, estimatedAmount: amt, entryId });
       onClose();
     } finally { setSaving(false); }
   };
@@ -735,4 +803,7 @@ const styles = StyleSheet.create({
   segmentText: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
   dangerLink: { flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", paddingVertical: spacing.md, marginTop: spacing.sm },
   dangerText: { color: colors.error, fontWeight: "600", fontSize: 14 },
+  settleRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
+  settleText: { flex: 1, fontSize: 14, color: colors.onSurface },
+  settleSummary: { padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md },
 });

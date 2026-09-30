@@ -16,12 +16,14 @@ export function buildBackupCsv(customers: Customer[], entries: Entry[], jobs: Jo
   const lines: string[] = [];
 
   lines.push(row(["खाता (सभी एंट्री)"]));
-  lines.push(row(["तारीख", "ग्राहक", "फ़ोन", "प्रकार", "विवरण", "रकम", "नोट"]));
+  lines.push(row(["तारीख", "ग्राहक", "फ़ोन", "प्रकार", "विवरण", "रकम", "नकद मिला", "उधार", "नोट"]));
   [...entries]
     .sort((a, b) => (a.date !== b.date ? a.date.localeCompare(b.date) : a.createdAt.localeCompare(b.createdAt)))
     .forEach((e) => {
       const c = byId.get(e.customerId);
-      lines.push(row([e.date, c?.name ?? "", c?.phone ?? "", e.type === "work" ? "उधार/काम" : "जमा", e.description, e.amount, e.notes]));
+      const paid = e.type === "work" ? e.paid ?? 0 : 0;
+      const kind = e.type === "payment" ? "जमा" : paid >= e.amount ? "नकद काम" : paid > 0 ? "आंशिक" : "उधार काम";
+      lines.push(row([e.date, c?.name ?? "", c?.phone ?? "", kind, e.description, e.amount, e.type === "work" ? paid : "", e.type === "work" ? e.amount - paid : "", e.notes]));
     });
 
   lines.push("");

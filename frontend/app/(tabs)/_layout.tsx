@@ -4,6 +4,12 @@ import { useAuth } from "@/src/context/AuthContext";
 import { colors } from "@/src/theme";
 import { View, ActivityIndicator, Platform } from "react-native";
 import * as Haptics from "expo-haptics";
+import { useFoldLegacyCashRows } from "@/src/lib/records";
+
+function LedgerMaintenance() {
+  useFoldLegacyCashRows();
+  return null;
+}
 
 export default function TabsLayout() {
   const { status } = useAuth();
@@ -17,6 +23,8 @@ export default function TabsLayout() {
   if (status === "unauthenticated") return <Redirect href="/login" />;
 
   return (
+    <>
+    <LedgerMaintenance />
     <Tabs
       screenListeners={{
         tabPress: () => {
@@ -72,5 +80,6 @@ export default function TabsLayout() {
         }}
       />
     </Tabs>
+    </>
   );
 }

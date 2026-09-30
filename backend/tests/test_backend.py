@@ -425,6 +425,42 @@ class TestLinkedRecords:
         assert r.json()["linkId"] == work["id"]
 
 
+# --- Cash taken with the work (single-row cash entries) ---------------------
+class TestWorkPaid:
+    def test_paid_defaults_to_zero_and_persists(self, session_a, api_url):
+        c = session_a.post(f"{api_url}/customers", json={"name": "TEST_Paid"}).json()
+        TestWorkPaid.customer_id = c["id"]
+        udhaar = session_a.post(f"{api_url}/entries", json={
+            "customerId": c["id"], "type": "work", "date": "2026-02-01", "description": "TEST udhaar", "amount": 300,
+        }).json()
+        assert udhaar["paid"] == 0
+        cash = session_a.post(f"{api_url}/entries", json={
+            "customerId": c["id"], "type": "work", "date": "2026-02-01", "description": "TEST cash", "amount": 200, "paid": 200,
+        })
+        assert cash.status_code == 200, cash.text
+        assert cash.json()["paid"] == 200
+        TestWorkPaid.cash_id = cash.json()["id"]
+        rows = session_a.get(f"{api_url}/entries").json()
+        assert next(e for e in rows if e["id"] == TestWorkPaid.cash_id)["paid"] == 200
+
+    def test_paid_cannot_exceed_amount_or_go_negative(self, session_a, api_url):
+        base = {"customerId": TestWorkPaid.customer_id, "type": "work", "date": "2026-02-01", "description": "TEST bad"}
+        assert session_a.post(f"{api_url}/entries", json={**base, "amount": 100, "paid": 150}).status_code == 422
+        assert session_a.post(f"{api_url}/entries", json={**base, "amount": 100, "paid": -1}).status_code == 422
+        pay = {**base, "type": "payment", "amount": 100, "paid": 50}
+        assert session_a.post(f"{api_url}/entries", json=pay).status_code == 422
+
+    def test_update_keeps_or_changes_paid(self, session_a, api_url):
+        eid = TestWorkPaid.cash_id
+        body = {"type": "work", "date": "2026-02-01", "description": "TEST cash", "amount": 250}
+        r = session_a.put(f"{api_url}/entries/{eid}", json=body)
+        assert r.status_code == 200 and r.json()["paid"] == 200
+        r = session_a.put(f"{api_url}/entries/{eid}", json={**body, "paid": 100})
+        assert r.json()["paid"] == 100
+        # Lowering the amount below the stored paid value must be rejected.
+        assert session_a.put(f"{api_url}/entries/{eid}", json={**body, "amount": 50}).status_code == 422
+
+
 # --- AEPS ------------------------------------------------------------------
 class TestAeps:
     txn_id = None

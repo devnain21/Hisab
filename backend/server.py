@@ -7,7 +7,7 @@ import os
 import logging
 import uuid
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Literal
 from datetime import datetime, timezone
 
@@ -98,6 +98,18 @@ class CustomerCreate(BaseModel):
     notes: str = ""
 
 
+def _check_paid(m):
+    # `paid` is the cash taken when the work was booked; it only exists on work rows and
+    # can never exceed the work amount, so balance = sum(work.amount - work.paid) - sum(payments).
+    if m.paid is None:
+        return m
+    if m.type == "payment" and m.paid:
+        raise ValueError("paid is only allowed on work entries")
+    if m.paid > m.amount:
+        raise ValueError("paid cannot exceed amount")
+    return m
+
+
 class Entry(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     customerId: str
@@ -105,6 +117,7 @@ class Entry(BaseModel):
     date: str
     description: str
     amount: float
+    paid: float = 0
     notes: str = ""
     linkId: str = ""
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -117,8 +130,13 @@ class EntryCreate(BaseModel):
     date: str
     description: str
     amount: float
+    paid: float = Field(0, ge=0)
     notes: str = ""
     linkId: str = ""
+
+    @model_validator(mode="after")
+    def validate_paid(self):
+        return _check_paid(self)
 
 
 class EntryUpdate(BaseModel):
@@ -126,8 +144,13 @@ class EntryUpdate(BaseModel):
     date: str
     description: str
     amount: float
+    paid: Optional[float] = Field(None, ge=0)
     notes: str = ""
     linkId: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_paid(self):
+        return _check_paid(self)
 
 
 class Job(BaseModel):
@@ -365,6 +388,10 @@ async def update_entry(entry_id: str, payload: EntryUpdate, user: dict = Depends
     if payload.amount <= 0:
         raise HTTPException(422, "Amount must be greater than 0")
     patch = payload.dict(exclude_none=True)
+    paid = 0 if payload.type == "payment" else patch.get("paid", existing.get("paid", 0))
+    if paid > payload.amount:
+        raise HTTPException(422, "paid cannot exceed amount")
+    patch["paid"] = paid
     await db.entries.update_one({"id": entry_id, "user_id": user["user_id"]}, {"$set": patch})
     return Entry(**{**existing, **patch})
 

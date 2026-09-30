@@ -175,11 +175,11 @@ export const store = {
     enqueue({ kind: "delete", coll: "customers", itemId: id });
   },
   createEntry(b: Omit<Entry, "id" | "createdAt">): Entry {
-    const item: Entry = { id: Crypto.randomUUID(), createdAt: now(), ...b };
+    const item: Entry = { id: Crypto.randomUUID(), createdAt: now(), paid: 0, ...b };
     enqueue({ kind: "create", coll: "entries", item });
     return item;
   },
-  updateEntry(id: string, patch: Pick<Entry, "type" | "date" | "description" | "amount" | "notes"> & { linkId?: string }) {
+  updateEntry(id: string, patch: Pick<Entry, "type" | "date" | "description" | "amount" | "notes"> & { linkId?: string; paid?: number }) {
     enqueue({ kind: "update", coll: "entries", itemId: id, patch });
   },
   deleteEntry(id: string) {

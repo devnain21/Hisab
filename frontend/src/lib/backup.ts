@@ -16,25 +16,25 @@ export function buildBackupCsv(customers: Customer[], entries: Entry[], jobs: Jo
   const lines: string[] = [];
 
   lines.push(row(["खाता (सभी एंट्री)"]));
-  lines.push(row(["तारीख", "ग्राहक", "फ़ोन", "प्रकार", "विवरण", "रकम", "नकद मिला", "उधार", "नोट"]));
+  lines.push(row(["तारीख", "ग्राहक", "फ़ोन", "प्रकार", "विवरण", "रकम", "मिले", "लेने हैं", "नोट"]));
   [...entries]
     .sort((a, b) => (a.date !== b.date ? a.date.localeCompare(b.date) : a.createdAt.localeCompare(b.createdAt)))
     .forEach((e) => {
       const c = byId.get(e.customerId);
       const paid = e.type === "work" ? e.paid ?? 0 : 0;
-      const kind = e.type === "payment" ? "मिले" : e.type === "given" ? "दिए" : paid >= e.amount ? "नकद काम" : paid > 0 ? "आंशिक" : "उधार काम";
+      const kind = e.type === "payment" ? "मिले" : e.type === "given" ? "दिए" : paid >= e.amount ? "पूरे मिले" : paid > 0 ? "कुछ मिले" : "लेने हैं";
       lines.push(row([e.date, c?.name ?? "", c?.phone ?? "", kind, e.description, e.amount, e.type === "work" ? paid : "", e.type === "work" ? e.amount - paid : "", e.notes]));
     });
 
   lines.push("");
   lines.push(row(["ग्राहक सारांश"]));
-  lines.push(row(["ग्राहक", "फ़ोन", "पता", "बकाया", "नोट"]));
+  lines.push(row(["ग्राहक", "फ़ोन", "पता", "लेने हैं", "नोट"]));
   customers.forEach((c) => lines.push(row([c.name, c.phone, c.address, computeBalance(entries, c.id), c.notes])));
 
   lines.push("");
   lines.push(row(["काम"]));
   lines.push(row(["तारीख", "ग्राहक", "काम", "स्थिति", "रकम", "नोट"]));
-  const status = { pending: "बाकी", doing: "चल रहा", done: "पूरा" } as const;
+  const status = { pending: "काम बाकी", doing: "चल रहा", done: "पूरा" } as const;
   [...jobs]
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
     .forEach((j) => lines.push(row([j.dueDate, j.customerId ? byId.get(j.customerId)?.name ?? "" : "खुद का", j.title, status[j.status], j.estimatedAmount, j.notes])));
@@ -42,13 +42,13 @@ export function buildBackupCsv(customers: Customer[], entries: Entry[], jobs: Jo
   if (aeps.length) {
     lines.push("");
     lines.push(row(["AEPS / सेवाएँ"]));
-    lines.push(row(["तारीख", "समय", "सेवा", "स्थिति", "ग्राहक", "मोबाइल", "आधार (आख़िरी 4)", "बैंक", "पाने वाला", "खाता", "IFSC", "ऑपरेटर", "नंबर", "बिल", "कंज़्यूमर नं.", "रकम", "कमीशन", "Txn ID", "नोट"]));
+    lines.push(row(["तारीख", "समय", "सेवा", "स्थिति", "ग्राहक", "मोबाइल", "आधार (आख़िरी 4)", "बैंक", "पाने वाला", "UPI", "खाता", "IFSC", "ऑपरेटर", "नंबर", "बिल", "कंज़्यूमर नं.", "रकम", "कमीशन", "Txn ID", "नोट"]));
     [...aeps]
       .sort((a, b) => (a.date !== b.date ? a.date.localeCompare(b.date) : a.time.localeCompare(b.time)))
       .forEach((t) =>
         lines.push(row([
           t.date, t.time, AEPS_META[t.type]?.short ?? t.type, STATUS_META[t.status]?.label ?? t.status, t.customerName, t.mobile,
-          t.aadhaarLast4, t.bankName, t.beneficiaryName, t.accountNumber, t.ifsc, t.operator, t.rechargeNumber, t.billerName,
+          t.aadhaarLast4, t.bankName, t.beneficiaryName, t.upiId ?? "", t.accountNumber, t.ifsc, t.operator, t.rechargeNumber, t.billerName,
           t.billAccount, t.amount, t.commission, t.reference, t.notes,
         ])),
       );

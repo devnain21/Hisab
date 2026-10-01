@@ -32,8 +32,8 @@ const fullShop = (s: Partial<ShopProfile>): ShopProfile => ({
 
 /** Whole-account position, worded for a customer (advance) or a personal contact (we owe them). */
 function accountLine(balance: number, isCustomer: boolean): Line {
-  if (balance > 0) return { label: "खाते में कुल बाकी", value: formatINR(balance), tone: "due" };
-  if (balance < 0) return { label: isCustomer ? "एडवांस जमा" : "हमें आपको देने हैं", value: formatINR(-balance), tone: "ok" };
+  if (balance > 0) return { label: "कुल लेने हैं", value: formatINR(balance), tone: "due" };
+  if (balance < 0) return { label: isCustomer ? "एडवांस" : "देने हैं", value: formatINR(-balance), tone: "ok" };
   return { label: "खाता", value: "पूरा क्लियर", tone: "ok" };
 }
 
@@ -63,11 +63,11 @@ export function receiptDoc(
     const received = status?.received ?? (entry.type === "work" ? entry.paid ?? 0 : 0);
     itemDue = status?.remaining ?? entry.amount - received;
     const given = entry.type === "given";
-    lines.push({ label: given ? "उधार दिए" : "कुल रकम", value: formatINR(entry.amount) });
+    lines.push({ label: given ? "पैसे दिए" : "कुल रकम", value: formatINR(entry.amount) });
     if (received > 0) lines.push({ label: given ? "वापस मिले" : "मिले", value: formatINR(received), tone: "ok" });
     if (itemDue > 0) {
-      lines.push({ label: "बाकी", value: formatINR(itemDue), tone: "due" });
-      stamp = { text: "बाकी", tone: "due" };
+      lines.push({ label: "लेने हैं", value: formatINR(itemDue), tone: "due" });
+      stamp = { text: "लेने हैं", tone: "due" };
     } else {
       stamp = { text: given ? "वापस मिले" : "पूरा भुगतान", tone: "ok" };
     }
@@ -76,7 +76,7 @@ export function receiptDoc(
 
   const no = entry.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase();
   const heading = entry.type === "work" ? "बिल" : "रसीद";
-  const item = entry.description || (entry.type === "payment" ? "भुगतान" : entry.type === "given" ? "उधार दिए" : "काम");
+  const item = entry.description || (entry.type === "payment" ? "भुगतान" : entry.type === "given" ? "पैसे दिए" : "काम");
 
   const message = [
     ...messageHead(shop),
@@ -131,7 +131,7 @@ export function statementDoc(
     running += d - c;
     debit += d;
     credit += c;
-    const text = e.description || (e.type === "payment" ? "पैसे मिले" : e.type === "given" ? "उधार दिए" : "काम");
+    const text = e.description || (e.type === "payment" ? "पैसे मिले" : e.type === "given" ? "पैसे दिए" : "काम");
     return { date: e.date, text, d, c, bal: running };
   });
   const balance = running;
@@ -154,18 +154,18 @@ export function statementDoc(
     ...lines.map(lineText),
     `*${account.label}: ${account.value}*`,
     ...(open.length
-      ? ["", "बाकी वाले काम:", ...open.map((e) => `• ${formatDateShort(e.date)} ${e.description || "उधार दिए"} — ${formatINR(ledger.work.get(e.id)!.remaining)}`)]
+      ? ["", "जिन पर लेने हैं:", ...open.map((e) => `• ${formatDateShort(e.date)} ${e.description || "पैसे दिए"} — ${formatINR(ledger.work.get(e.id)!.remaining)}`)]
       : []),
     "",
     "धन्यवाद 🙏",
   ].join("\n");
 
   const balCell = (b: number) =>
-    b > 0 ? `<span style="color:${DUE}">${esc(formatINR(b))}</span>` : b < 0 ? `<span style="color:${OK}">${esc(formatINR(-b))} जमा</span>` : "—";
+    b > 0 ? `<span style="color:${DUE}">${esc(formatINR(b))}</span>` : b < 0 ? `<span style="color:${OK}">${esc(formatINR(-b))} ${isCustomer ? "एडवांस" : "देने हैं"}</span>` : "—";
   const body = `
   ${period ? `<div class="meta" style="margin-bottom:8px">अवधि: ${esc(period)}</div>` : ""}
   <table class="ledger">
-    <tr><th>तारीख</th><th>विवरण</th><th class="amt">रकम</th><th class="amt">मिले</th><th class="amt">बाकी</th></tr>
+    <tr><th>तारीख</th><th>विवरण</th><th class="amt">रकम</th><th class="amt">मिले</th><th class="amt">हिसाब</th></tr>
     ${rows
       .map(
         (r) =>

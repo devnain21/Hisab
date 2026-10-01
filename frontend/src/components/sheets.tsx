@@ -293,14 +293,14 @@ function MoneyResult({ total, received, advance, freeAllowed }: { total: number;
     text = "मुफ़्त काम";
     tone = colors.onSurfaceSecondary;
   } else if (received >= total) {
-    text = received > total ? `✔ पूरे मिले · ${formatINR(received - total)} एडवांस जमा होगा` : "✔ पूरे पैसे मिले";
+    text = received > total ? `✔ पूरे मिले · ${formatINR(received - total)} एडवांस रहेगा` : "✔ पूरे पैसे मिले";
   } else {
     const due = total - received;
     const fromAdvance = Math.min(advance, due);
     const left = due - fromAdvance;
     const parts = [];
     if (fromAdvance > 0) parts.push(`${formatINR(fromAdvance)} एडवांस से कटेगा`);
-    if (left > 0) parts.push(`${formatINR(left)} उधार बाकी`);
+    if (left > 0) parts.push(`${formatINR(left)} लेने हैं`);
     text = parts.join(" · ");
     tone = left > 0 ? colors.error : colors.success;
   }
@@ -394,9 +394,9 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
 }
 
 const ENTRY_UI: Record<EntryType, { title: string; icon: string; color: string; placeholder: string }> = {
-  work: { title: "उधार काम", icon: "briefcase-outline", color: colors.error, placeholder: "जैसे पासपोर्ट फोटो 8 प्रति" },
-  payment: { title: "पैसे मिले", icon: "arrow-bottom-left", color: colors.success, placeholder: "जैसे उधार वापस, UPI" },
-  given: { title: "पैसे दिए", icon: "arrow-top-right", color: colors.error, placeholder: "जैसे उधार दिए" },
+  work: { title: "काम", icon: "briefcase-outline", color: colors.error, placeholder: "जैसे पासपोर्ट फोटो 8 प्रति" },
+  payment: { title: "पैसे मिले", icon: "arrow-bottom-left", color: colors.success, placeholder: "जैसे पुराना हिसाब, UPI" },
+  given: { title: "पैसे दिए", icon: "arrow-top-right", color: colors.error, placeholder: "जैसे घर के लिए दिए" },
 };
 
 /** Plain khata row. With `kinds`, the sheet lets you switch between them (e.g. मिले / दिए). */
@@ -441,7 +441,7 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title={initial ? "एंट्री बदलें" : kinds ? "लेन-देन" : ui.title} testID={`sheet-entry-${kind}`}>
+    <SheetShell visible={visible} onClose={onClose} title={initial ? "एंट्री बदलें" : kinds ? "मिले या दिए" : ui.title} testID={`sheet-entry-${kind}`}>
       {kinds && !initial ? (
         <View style={styles.segment}>
           {kinds.map((k) => (
@@ -456,13 +456,13 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
       <Field label="रकम (₹)">
         {kind === "payment" && due > 0 ? (
           <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
-            <Chip label={`पूरा बाकी ${formatINR(due)}`} active={amt === due} onPress={() => setAmount(String(due))} tone={colors.success} testID="entry-full-due" />
+            <Chip label={`पूरे लेने हैं ${formatINR(due)}`} active={amt === due} onPress={() => setAmount(String(due))} tone={colors.success} testID="entry-full-due" />
           </View>
         ) : null}
         <TextInput style={inputStyle} value={amount} onChangeText={setAmount} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-entry-amount" />
         {kind === "payment" && due > 0 && amt > 0 ? (
           <Text style={[styles.hint, { color: amt >= due ? colors.success : colors.error }]}>
-            {amt > due ? `✔ हिसाब बराबर · ${formatINR(amt - due)} एडवांस` : amt === due ? "✔ हिसाब बराबर" : `${formatINR(due - amt)} फिर भी बाकी`}
+            {amt > due ? `✔ हिसाब बराबर · ${formatINR(amt - due)} एडवांस` : amt === due ? "✔ हिसाब बराबर" : `${formatINR(due - amt)} अभी भी लेने हैं`}
           </Text>
         ) : null}
       </Field>
@@ -490,7 +490,7 @@ function DeleteEntryLink({ entry, onDone }: { entry: Entry; onDone: () => void }
   const entries = useEntries().data ?? [];
   const jobs = useJobs().data ?? [];
   const remove = () => {
-    const extra = entry.type === "work" ? "\nइसके साथ लिखी जमा और काम कार्ड भी हटेंगे।" : entry.type === "given" ? "\nइसके वापस मिले पैसे भी हटेंगे।" : "";
+    const extra = entry.type === "work" ? "\nइसके साथ लिखे मिले और काम कार्ड भी हटेंगे।" : entry.type === "given" ? "\nइसके वापस मिले पैसे भी हटेंगे।" : "";
     confirmAction("एंट्री हटाएँ?", `${entry.description || ENTRY_UI[entry.type].title} · ${formatINR(entry.amount)}${extra}`, "हटा दें", () => {
       removeEntryWithLinks(entry, entries, jobs);
       onDone();
@@ -573,7 +573,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
               <Text style={styles.settleText}>{formatINR(p.amount)} · {formatDate(p.date)}{p.notes ? ` · ${p.notes}` : ""}</Text>
               <Pressable
                 hitSlop={8}
-                onPress={() => confirmAction("यह भुगतान हटाएँ?", `${formatINR(p.amount)} · ${formatDate(p.date)}\nयह रकम फिर से उधार में जुड़ जाएगी।`, "हटा दें", () => store.deleteEntry(p.id))}
+                onPress={() => confirmAction("यह भुगतान हटाएँ?", `${formatINR(p.amount)} · ${formatDate(p.date)}\nहटाने के बाद ये पैसे फिर लेने होंगे।`, "हटा दें", () => store.deleteEntry(p.id))}
                 testID={`del-settle-${p.id}`}
               >
                 <MaterialIcon name="close" size={18} color={colors.muted} />
@@ -635,7 +635,7 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
     <SheetShell visible={!!job} onClose={onClose} title="काम बदलें" testID="sheet-edit-job">
       <Field label="स्थिति">
         <View style={styles.chipRow}>
-          <Chip label="बाकी" active={status === "pending"} onPress={() => setStatus("pending")} testID="edit-job-status-pending" />
+          <Chip label="काम बाकी" active={status === "pending"} onPress={() => setStatus("pending")} testID="edit-job-status-pending" />
           <Chip label="चल रहा" active={status === "doing"} onPress={() => setStatus("doing")} tone={colors.warning} testID="edit-job-status-doing" />
           {job?.status === "done" ? <Chip label="पूरा" active={status === "done"} onPress={() => setStatus("done")} tone={colors.success} /> : null}
         </View>
@@ -728,7 +728,7 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
           <Text style={styles.jobName}>{work.description || ENTRY_UI[work.type].title}</Text>
           <Text style={styles.hint}>
             कुल {formatINR(work.amount)} · मिल चुके {formatINR(status?.received ?? 0)} ·{" "}
-            <Text style={{ color: colors.error, fontWeight: "700" }}>बाकी {formatINR(remaining)}</Text>
+            <Text style={{ color: colors.error, fontWeight: "700" }}>लेने हैं {formatINR(remaining)}</Text>
           </Text>
         </View>
       ) : null}
@@ -740,14 +740,14 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
           </View>
         ) : null}
         <TextInput style={inputStyle} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.muted} testID="input-settle-amount" />
-        {amt > 0 && amt < remaining ? <Text style={styles.hint}>{formatINR(remaining - amt)} अभी भी उधार रहेगा</Text> : null}
-        {amt > remaining && remaining > 0 ? <Text style={styles.hint}>{formatINR(amt - remaining)} ज़्यादा — बाकी पुराने उधार / एडवांस में जुड़ेगा</Text> : null}
+        {amt > 0 && amt < remaining ? <Text style={styles.hint}>{formatINR(remaining - amt)} अभी भी लेने हैं</Text> : null}
+        {amt > remaining && remaining > 0 ? <Text style={styles.hint}>{formatINR(amt - remaining)} ज़्यादा — बचा हिसाब या एडवांस में जुड़ेगा</Text> : null}
       </Field>
       <DateField label="कब मिले" value={date} onChange={setDate} testID="input-settle-date" />
       <Field label="नोट (वैकल्पिक)">
         <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholder="जैसे UPI से, PhonePe" placeholderTextColor={colors.muted} testID="input-settle-notes" />
       </Field>
-      <PrimaryButton label={amt >= remaining && remaining > 0 ? "चुकता करें ✔" : "जमा करें"} color={colors.success} onPress={save} disabled={!valid} saving={saving} testID="save-settle-btn" />
+      <PrimaryButton label={amt >= remaining && remaining > 0 ? "चुकता करें ✔" : "मिले सेव करें"} color={colors.success} onPress={save} disabled={!valid} saving={saving} testID="save-settle-btn" />
     </SheetShell>
   );
 }
@@ -762,6 +762,8 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   const [date, setDate] = useState(todayISO());
   const [remark, setRemark] = useState("");
   const [remarkDate, setRemarkDate] = useState(todayISO(1));
+  const [paidNow, setPaidNow] = useState("");
+  const [paidDate, setPaidDate] = useState(todayISO());
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -772,6 +774,8 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       setDate(initialMode === "now" ? todayISO() : todayISO(1));
       setRemark("");
       setRemarkDate(todayISO(1));
+      setPaidNow("");
+      setPaidDate(todayISO());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initialMode]);
@@ -802,6 +806,9 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
         }
       } else {
         await store.createJob({ customerId, title: t, dueDate: date, estimatedAmount: amt, notes: remark.trim() });
+        const got = Math.max(parseFloat(paidNow) || 0, 0);
+        // Cash is its own row on the day it was received, not on the day the work is finished.
+        if (!self && got > 0) store.createEntry({ customerId, type: "payment", date: paidDate, description: "एडवांस", amount: got, notes: `${t} के लिए` });
       }
       onClose();
     } finally { setSaving(false); }
@@ -829,6 +836,14 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
           <TextInput style={inputStyle} value={money.total} onChangeText={money.setTotal} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-amount" />
         </Field>
       )}
+      {!self && mode === "later" ? (
+        <>
+          <Field label="अभी मिले (₹)">
+            <TextInput style={inputStyle} value={paidNow} onChangeText={setPaidNow} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-paid" />
+          </Field>
+          {(parseFloat(paidNow) || 0) > 0 ? <DateField label="पैसे कब मिले" value={paidDate} onChange={setPaidDate} testID="input-job-paid-date" /> : null}
+        </>
+      ) : null}
 
       {mode === "now" ? (
         <>
@@ -883,9 +898,9 @@ export function ShopProfileSheet({ visible, onClose }: { visible: boolean; onClo
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title="दुकान की जानकारी" testID="sheet-shop-name">
-      <Field label="दुकान / बिज़नेस का नाम">
-        <TextInput style={inputStyle} value={name} onChangeText={setName} placeholder="जैसे नैन फोटो स्टेट" placeholderTextColor={colors.muted} maxLength={60} testID="input-shop-name" />
+    <SheetShell visible={visible} onClose={onClose} title="बिल पर क्या छपे" testID="sheet-shop-name">
+      <Field label="नाम">
+        <TextInput style={inputStyle} value={name} onChangeText={setName} placeholder="दुकान का नाम, या आपका नाम" placeholderTextColor={colors.muted} maxLength={60} testID="input-shop-name" />
       </Field>
       <Field label="फ़ोन (रसीद पर छपेगा)">
         <TextInput style={inputStyle} value={phone} onChangeText={setPhone} keyboardType="phone-pad" maxLength={20} placeholderTextColor={colors.muted} testID="input-shop-phone" />
@@ -906,10 +921,16 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
   const entries = useEntries().data ?? [];
   const advance = job?.customerId ? advanceOf(entries, job.customerId) : 0;
   const money = useMoneyInput();
+  const [cashDate, setCashDate] = useState(todayISO());
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (job) money.reset(job.estimatedAmount > 0 ? String(job.estimatedAmount) : "");
+    if (job) {
+      const already = job.customerId ? advanceOf(entries, job.customerId) : 0;
+      // Money already in hand must not be typed again, or it would show up as cash today.
+      money.reset(job.estimatedAmount > 0 ? String(job.estimatedAmount) : "", already > 0 ? "0" : undefined);
+      setCashDate(todayISO());
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job]);
 
@@ -919,9 +940,12 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
     if (!job) return;
     setSaving(true);
     try {
-      const date = todayISO();
-      const entryId = recordWork({ customerId: job.customerId, title: job.title, amount: amt, received: money.receivedNum, date, notes: "काम पूरा" });
-      store.updateJob(job.id, { status: "done", dueDate: date, estimatedAmount: amt, entryId });
+      const workDate = todayISO();
+      const got = money.receivedNum;
+      const sameDay = cashDate === workDate;
+      const entryId = recordWork({ customerId: job.customerId, title: job.title, amount: amt, received: sameDay ? got : 0, date: workDate, notes: "काम पूरा" });
+      if (!sameDay && got > 0) store.createEntry({ customerId: job.customerId, type: "payment", date: cashDate, description: "एडवांस", amount: got, notes: `${job.title} के लिए` });
+      store.updateJob(job.id, { status: "done", dueDate: workDate, estimatedAmount: amt, entryId });
       onClose();
     } finally { setSaving(false); }
   };
@@ -929,7 +953,9 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
   return (
     <SheetShell visible={!!job} onClose={onClose} title="काम पूरा करें" testID="sheet-complete-job">
       {job ? <Text style={styles.jobName}>{job.title}</Text> : null}
-      {job?.customerId ? <MoneyFields money={money} advance={advance} freeAllowed /> : null}
+      {advance > 0 ? <Text style={styles.hint}>पहले मिल चुके {formatINR(advance)}। आज नई रकम ही लिखें।</Text> : null}
+      {job?.customerId ? <MoneyFields money={money} advance={advance} receivedLabel="आज कितने मिले (₹)" freeAllowed /> : null}
+      {job?.customerId && money.receivedNum > 0 ? <DateField label="यह नकद कब मिला" value={cashDate} onChange={setCashDate} testID="input-complete-cash-date" /> : null}
       <PrimaryButton label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"} color={colors.success} onPress={save} saving={saving} testID="save-complete-btn" />
     </SheetShell>
   );

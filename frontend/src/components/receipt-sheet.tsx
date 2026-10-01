@@ -1,22 +1,24 @@
 import { useState } from "react";
-import { View, Text, StyleSheet, Linking, Alert, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Alert, ActivityIndicator } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
 import { SheetShell } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
-import { waNumber } from "@/src/lib/format";
 import { pdfSupported, sharePdf, type ShareDoc } from "@/src/lib/receipt";
+import { shareMessage } from "@/src/lib/share-text";
 
 export function ReceiptSheet({ doc, onClose }: { doc: ShareDoc | null; onClose: () => void }) {
   const [making, setMaking] = useState(false);
-  const wa = doc ? waNumber(doc.phone) : "";
 
-  const sendText = () => {
+  const sendText = async () => {
     if (!doc) return;
-    const text = encodeURIComponent(doc.message);
-    Linking.openURL(wa ? `https://wa.me/${wa}?text=${text}` : `https://wa.me/?text=${text}`)
-      .then(onClose)
-      .catch(() => Alert.alert("WhatsApp नहीं खुला", "इस फ़ोन पर WhatsApp नहीं मिला।"));
+    try {
+      const result = await shareMessage(doc.message);
+      if (result === "copied") Alert.alert("मैसेज कॉपी हो गया", "जिसे भेजना है, वहाँ पेस्ट कर दें।");
+      onClose();
+    } catch {
+      Alert.alert("शेयर नहीं खुला", "दोबारा कोशिश करें।");
+    }
   };
 
   const sendPdf = async () => {
@@ -54,10 +56,10 @@ export function ReceiptSheet({ doc, onClose }: { doc: ShareDoc | null; onClose: 
       ) : null}
 
       <Pressable style={[styles.option, { backgroundColor: "#128C7E" }]} onPress={sendText} testID="receipt-text-btn">
-        <MaterialIcon name="whatsapp" size={24} color="#fff" />
+        <MaterialIcon name="share-variant" size={24} color="#fff" />
         <View style={{ flex: 1 }}>
-          <Text style={styles.optionTitle}>WhatsApp मैसेज</Text>
-          <Text style={styles.optionSub}>{wa ? "सीधे ग्राहक की चैट में खुलेगा" : "फ़ोन नंबर नहीं है, WhatsApp में ग्राहक चुनें"}</Text>
+          <Text style={styles.optionTitle}>मैसेज भेजें</Text>
+          <Text style={styles.optionSub}>WhatsApp, SMS या कोई और ऐप चुनें</Text>
         </View>
       </Pressable>
 

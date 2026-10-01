@@ -15,7 +15,7 @@ import { SlowServerHint } from "@/src/components/slow-server-hint";
 type Filter = "open" | "late" | "today" | "unpaid" | "done" | "all";
 const FILTERS: Filter[] = ["open", "late", "today", "unpaid", "done", "all"];
 const CHIPS: Filter[] = ["open", "done"];
-const FILTER_LABEL: Record<Filter, string> = { open: "बाकी", late: "देर", today: "आज", unpaid: "पैसे बाकी", done: "पूरा", all: "सभी" };
+const FILTER_LABEL: Record<Filter, string> = { open: "काम बाकी", late: "देर", today: "आज", unpaid: "लेने हैं", done: "पूरा", all: "सभी" };
 
 function matches(j: Job, f: Filter, today: string, pay?: WorkStatus) {
   if (f === "open") return j.status !== "done";
@@ -126,7 +126,7 @@ export default function WorkScreen() {
         ) : null}
         {!loading && filter === "unpaid" && unpaidTotal > 0 ? (
           <Text style={styles.summary} testID="work-unpaid-summary">
-            पूरे हो चुके काम पर <Text style={{ color: colors.error, fontWeight: "800" }}>{formatINR(unpaidTotal)}</Text> लेना बाकी
+            पूरे हो चुके काम पर <Text style={{ color: colors.error, fontWeight: "800" }}>{formatINR(unpaidTotal)}</Text> लेने हैं
           </Text>
         ) : null}
       </View>
@@ -205,8 +205,8 @@ function PayPill({ pay }: { pay: WorkStatus }) {
   const map = {
     cash: { bg: colors.successSoft, fg: colors.success, label: "नकद" },
     settled: { bg: colors.successSoft, fg: colors.success, label: "✔ चुकता" },
-    partial: { bg: "#FEF3E2", fg: colors.warning, label: `${formatINR(pay.remaining)} बाकी` },
-    pending: { bg: colors.errorSoft, fg: colors.error, label: "उधार बाकी" },
+    partial: { bg: "#FEF3E2", fg: colors.warning, label: `${formatINR(pay.remaining)} लेने हैं` },
+    pending: { bg: colors.errorSoft, fg: colors.error, label: "लेने हैं" },
   } as const;
   const s = map[pay.state];
   return (
@@ -218,7 +218,7 @@ function PayPill({ pay }: { pay: WorkStatus }) {
 
 function StatusPill({ status, free }: { status: Job["status"]; free?: boolean }) {
   const map = {
-    pending: { bg: colors.surfaceTertiary, fg: colors.onSurfaceTertiary, label: "बाकी" },
+    pending: { bg: colors.surfaceTertiary, fg: colors.onSurfaceTertiary, label: "काम बाकी" },
     doing: { bg: colors.errorSoft, fg: colors.error, label: "चल रहा" },
     done: { bg: colors.successSoft, fg: colors.success, label: free ? "मुफ़्त" : "पूरा" },
   } as const;

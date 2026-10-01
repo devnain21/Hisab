@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
 import { useAeps, type AepsType } from "@/src/lib/data";
-import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals } from "@/src/lib/aeps";
+import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, cashOf } from "@/src/lib/aeps";
 import { formatDateShort, formatINR, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { SlowServerHint } from "@/src/components/slow-server-hint";
@@ -75,7 +75,8 @@ export default function AepsScreen() {
 
   const header = (
       <View style={{ paddingTop: insets.top + spacing.md }}>
-        <Text style={styles.h1}>AEPS</Text>
+        <Text style={styles.h1}>काउंटर</Text>
+        <Text style={styles.sub}>निकासी, UPI, रिचार्ज — खाते से अलग</Text>
         <View style={styles.segment}>
           {RANGES.map((r) => (
             <Pressable key={r.key} onPress={() => setRange(r.key)} style={[styles.segmentBtn, range === r.key && styles.segmentActive]} testID={`aeps-range-${r.key}`}>
@@ -85,7 +86,7 @@ export default function AepsScreen() {
         </View>
 
         <Text style={styles.summaryLine} testID="aeps-summary">
-          दिया {formatINR(totals.cashOut)} · लिया {formatINR(totals.cashIn)} · कमीशन {formatINR(totals.commission)}
+          अलग हिसाब · नकद दिया {formatINR(totals.cashOut)} · नकद मिला {formatINR(totals.cashIn)} · कमीशन {formatINR(totals.commission)}
         </Text>
         <Text style={styles.summaryNote}>{totals.count} सफल · पेंडिंग और फेल हिसाब में नहीं जुड़ते</Text>
 
@@ -121,8 +122,8 @@ export default function AepsScreen() {
             ) :
             <View style={styles.empty} testID="aeps-empty">
               <MaterialIcon name="fingerprint" size={36} color={colors.muted} />
-              <Text style={styles.emptyTitle}>{search ? "कुछ नहीं मिला" : "इस समय का कोई लेन-देन नहीं"}</Text>
-              {!search ? <Text style={styles.emptySub}>नीचे + दबाकर पहला लेन-देन लिखें</Text> : null}
+              <Text style={styles.emptyTitle}>{search ? "कुछ नहीं मिला" : "इस समय कोई AEPS एंट्री नहीं"}</Text>
+              {!search ? <Text style={styles.emptySub}>नीचे + दबाकर पहली एंट्री लिखें</Text> : null}
             </View>
           }
           renderItem={({ item: t }) => {
@@ -142,7 +143,7 @@ export default function AepsScreen() {
                   {detail ? <Text style={styles.meta} numberOfLines={1}>{detail}</Text> : null}
                 </View>
                 <View style={{ alignItems: "flex-end", gap: 4 }}>
-                  {t.amount > 0 ? <Text style={[styles.amount, { color: m.cash === "out" ? colors.error : m.cash === "in" ? colors.success : colors.onSurface }]}>{formatINR(t.amount)}</Text> : null}
+                  {t.amount > 0 ? <Text style={[styles.amount, { color: cashOf(t) === "out" ? colors.error : cashOf(t) === "in" ? colors.success : colors.onSurface }]}>{formatINR(t.amount)}</Text> : null}
                   {t.status !== "success" ? (
                     <View style={[styles.statusPill, { backgroundColor: st.soft }]}><Text style={[styles.statusText, { color: st.color }]}>{st.label}</Text></View>
                   ) : t.commission > 0 ? (

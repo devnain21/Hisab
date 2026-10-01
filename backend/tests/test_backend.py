@@ -505,6 +505,15 @@ class TestAeps:
         assert "_id" not in d and "user_id" not in d
         TestAeps.txn_id = d["id"]
 
+    def test_upi_cash_in_is_its_own_service(self, session_a, api_url):
+        r = session_a.post(f"{api_url}/aeps", json=self._payload(
+            type="upi", aadhaarLast4="", bankName="", upiId="sunita@upi", amount=500, commission=0,
+        ))
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["type"] == "upi" and d["upiId"] == "sunita@upi" and d["cash"] == ""
+        session_a.delete(f"{api_url}/aeps/{d['id']}")
+
     def test_create_aeps_idempotent(self, session_a, api_url):
         cid = str(uuid.uuid4())
         first = session_a.post(f"{api_url}/aeps", json=self._payload(id=cid)).json()

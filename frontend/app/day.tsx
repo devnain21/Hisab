@@ -33,7 +33,7 @@ export default function DayScreen() {
   const nameOf = (id: string) => customers.find((c) => c.id === id)?.name ?? "ग्राहक";
 
   const dayEntries = useMemo(() => entries.filter((e) => e.date === date), [entries, date]);
-  // "जमा" = all cash that came in that day: jama rows plus cash taken with work.
+  // "मिले" = all cash that came in that day: payment rows plus cash taken with work.
   const inKind = (e: Entry, k: Kind) => (k === "work" ? e.type === "work" : cashIn(e) > 0);
   const amountFor = (e: Entry, k: Kind) => (k === "work" ? e.amount : cashIn(e));
   const rows = useMemo(() => dayEntries.filter((e) => inKind(e, kind)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [dayEntries, kind]);
@@ -69,14 +69,14 @@ export default function DayScreen() {
           {(["work", "payment"] as Kind[]).map((k) => (
             <Pressable key={k} onPress={() => setKind(k)} style={[styles.segmentBtn, kind === k && styles.segmentActive]} testID={`day-kind-${k}`}>
               <Text style={[styles.segmentText, kind === k && { color: colors.onBrandPrimary }]}>
-                {k === "work" ? "काम" : "जमा"} · {formatINR(sum(k))}
+                {k === "work" ? "काम" : "मिले"} · {formatINR(sum(k))}
               </Text>
             </Pressable>
           ))}
         </View>
 
         <View style={styles.totalCard}>
-          <Text style={styles.totalLabel}>{kind === "work" ? "कुल काम" : "कुल जमा"} ({rows.length} एंट्री)</Text>
+          <Text style={styles.totalLabel}>{kind === "work" ? "कुल काम" : "कुल मिले"} ({rows.length} एंट्री)</Text>
           <Text style={[styles.totalValue, { color: kind === "work" ? colors.onSurface : colors.success }]}>{formatINR(total)}</Text>
         </View>
       </View>
@@ -88,7 +88,7 @@ export default function DayScreen() {
         ListEmptyComponent={
           <View style={styles.empty}>
             <MaterialIcon name="calendar-blank-outline" size={32} color={colors.muted} />
-            <Text style={styles.emptyTitle}>{kind === "work" ? "इस दिन कोई काम नहीं लिखा" : "इस दिन कोई जमा नहीं"}</Text>
+            <Text style={styles.emptyTitle}>{kind === "work" ? "इस दिन कोई काम नहीं लिखा" : "इस दिन कुछ नहीं मिला"}</Text>
           </View>
         }
         renderItem={({ item: e }) => (
@@ -97,10 +97,10 @@ export default function DayScreen() {
               <Pressable onPress={() => router.push(`/customer/${e.customerId}`)} hitSlop={4}>
                 <Text style={styles.name} numberOfLines={1}>{nameOf(e.customerId)}</Text>
               </Pressable>
-              <Text style={styles.desc} numberOfLines={2}>{e.description || (e.type === "work" ? "काम" : "जमा")}</Text>
+              <Text style={styles.desc} numberOfLines={2}>{e.description || (e.type === "work" ? "काम" : "मिले")}</Text>
               {e.type === "work" ? (
                 <Text style={[styles.notes, { color: (e.paid ?? 0) >= e.amount ? colors.success : colors.error }]}>
-                  {(e.paid ?? 0) >= e.amount ? "नकद" : (e.paid ?? 0) > 0 ? `${formatINR(e.paid ?? 0)} नकद · ${formatINR(e.amount - (e.paid ?? 0))} उधार` : "उधार"}
+                  {(e.paid ?? 0) >= e.amount ? "पूरे मिले" : (e.paid ?? 0) > 0 ? `${formatINR(e.paid ?? 0)} मिले · ${formatINR(e.amount - (e.paid ?? 0))} लेने हैं` : "लेने हैं"}
                 </Text>
               ) : null}
               {e.notes ? <Text style={styles.notes} numberOfLines={1}>{e.notes}</Text> : null}

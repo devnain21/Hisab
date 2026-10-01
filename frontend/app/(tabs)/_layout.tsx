@@ -5,6 +5,7 @@ import { colors } from "@/src/theme";
 import { View, ActivityIndicator, Platform } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useFoldLegacyCashRows } from "@/src/lib/records";
+import { useCounterMode } from "@/src/lib/counter";
 
 function LedgerMaintenance() {
   useFoldLegacyCashRows();
@@ -13,6 +14,7 @@ function LedgerMaintenance() {
 
 export default function TabsLayout() {
   const { status } = useAuth();
+  const counter = useCounterMode();
   if (status === "loading") {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface }}>
@@ -68,7 +70,8 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="aeps"
         options={{
-          title: "AEPS",
+          title: "काउंटर",
+          href: counter.on ? undefined : null,
           tabBarIcon: ({ color, size }) => <MaterialIcon name="fingerprint" size={size} color={color} />,
         }}
       />

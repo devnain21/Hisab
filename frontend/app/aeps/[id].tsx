@@ -5,8 +5,9 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { useAeps, type AepsTxn } from "@/src/lib/data";
-import { AEPS_META, FIELD_LABEL, STATUS_META, receiptText, type AepsField } from "@/src/lib/aeps";
-import { formatDate, formatINR, formatPhone, waNumber } from "@/src/lib/format";
+import { AEPS_META, FIELD_LABEL, STATUS_META, cashOf, drawerSentence, receiptText, type AepsField } from "@/src/lib/aeps";
+import { formatDate, formatINR, formatPhone } from "@/src/lib/format";
+import { shareMessage } from "@/src/lib/share-text";
 import { store } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
 import { useAuth } from "@/src/context/AuthContext";
@@ -14,7 +15,7 @@ import { Pressable } from "@/src/components/tap";
 import { AepsSheet } from "@/src/components/aeps-sheet";
 
 const DETAIL_ORDER: AepsField[] = [
-  "mobile", "aadhaarLast4", "beneficiaryName", "bankName", "accountNumber", "ifsc",
+  "mobile", "aadhaarLast4", "beneficiaryName", "upiId", "bankName", "accountNumber", "ifsc",
   "operator", "rechargeNumber", "billerName", "billAccount", "reference",
 ];
 
@@ -39,7 +40,7 @@ export default function AepsDetail() {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
         <MaterialIcon name="file-question-outline" size={40} color={colors.muted} />
-        <Text style={{ marginTop: spacing.md, color: colors.onSurface }}>{q.isLoading ? "लोड हो रहा है…" : "लेन-देन नहीं मिला"}</Text>
+        <Text style={{ marginTop: spacing.md, color: colors.onSurface }}>{q.isLoading ? "लोड हो रहा है…" : "एंट्री नहीं मिली"}</Text>
         <Pressable onPress={() => router.back()} style={styles.backBtn}>
           <Text style={{ color: colors.onBrandPrimary, fontWeight: "600" }}>वापस</Text>
         </Pressable>
@@ -51,15 +52,17 @@ export default function AepsDetail() {
   const st = STATUS_META[t.status];
   const details = DETAIL_ORDER.map((f) => ({ f, v: displayValue(t, f) })).filter((d) => d.v);
 
-  const share = () => {
-    const wa = waNumber(t.mobile);
-    const text = receiptText(t, user?.shop_name || "बही खाता");
-    const url = wa ? `https://wa.me/${wa}?text=${encodeURIComponent(text)}` : `https://wa.me/?text=${encodeURIComponent(text)}`;
-    Linking.openURL(url).catch(() => Alert.alert("WhatsApp नहीं खुला", "इस फ़ोन पर WhatsApp नहीं मिला।"));
+  const share = async () => {
+    try {
+      const result = await shareMessage(receiptText(t, user?.shop_name || "बही खाता"));
+      if (result === "copied") Alert.alert("मैसेज कॉपी हो गया", "जिसे भेजना है, वहाँ पेस्ट कर दें।");
+    } catch {
+      Alert.alert("शेयर नहीं खुला", "दोबारा कोशिश करें।");
+    }
   };
 
   const remove = () => {
-    confirmAction("लेन-देन हटाएँ?", `${t.customerName} · ${meta.short}${t.amount > 0 ? ` · ${formatINR(t.amount)}` : ""}`, "हटा दें", () => {
+    confirmAction("एंट्री हटाएँ?", `${t.customerName} · ${meta.short}${t.amount > 0 ? ` · ${formatINR(t.amount)}` : ""}`, "हटा दें", () => {
       store.deleteAeps(t.id);
       router.back();
     });
@@ -71,7 +74,7 @@ export default function AepsDetail() {
         <Pressable onPress={() => router.back()} hitSlop={12} testID="aeps-back">
           <MaterialIcon name="arrow-left" size={26} color={colors.onSurface} />
         </Pressable>
-        <Text style={styles.topTitle}>लेन-देन की जानकारी</Text>
+        <Text style={styles.topTitle}>एंट्री की जानकारी</Text>
         <Pressable onPress={() => setEditing(true)} hitSlop={10} testID="aeps-edit-btn">
           <MaterialIcon name="pencil-outline" size={22} color={colors.onSurface} />
         </Pressable>
@@ -92,16 +95,14 @@ export default function AepsDetail() {
             <Text style={[styles.statusText, { color: st.color }]}>{st.label}</Text>
           </View>
           <Text style={styles.heroDate}>{formatDate(t.date)}{t.time ? ` · ${t.time}` : ""}</Text>
-          {meta.cash !== "none" && t.amount > 0 ? (
-            <Text style={styles.cashNote}>{meta.cash === "out" ? "ग्राहक को कैश दिया" : "ग्राहक से कैश लिया"}</Text>
-          ) : null}
+          <Text style={styles.cashNote}>{drawerSentence(t.type, t.amount, cashOf(t), t.status)}</Text>
         </View>
 
         <Text style={styles.sectionHead}>{t.type === "transfer" ? "भेजने वाला" : "ग्राहक"}</Text>
         <View style={styles.card}>
           <Row label="नाम" value={t.customerName} />
           {details.map((d) => (
-            <Row key={d.f} label={FIELD_LABEL[d.f]} value={d.v} mono={d.f === "reference" || d.f === "accountNumber" || d.f === "ifsc" || d.f === "billAccount"} />
+            <Row key={d.f} label={FIELD_LABEL[d.f]} value={d.v} mono={d.f === "reference" || d.f === "accountNumber" || d.f === "ifsc" || d.f === "billAccount" || d.f === "upiId"} />
           ))}
         </View>
 
@@ -116,8 +117,8 @@ export default function AepsDetail() {
         ) : null}
 
         <Pressable style={styles.waBtn} onPress={share} testID="aeps-share-btn">
-          <MaterialIcon name="whatsapp" size={20} color="#128C7E" />
-          <Text style={styles.waText}>{t.mobile ? "ग्राहक को WhatsApp पर रसीद भेजें" : "WhatsApp पर रसीद भेजें"}</Text>
+          <MaterialIcon name="share-variant" size={20} color={colors.brandPrimary} />
+          <Text style={styles.waText}>रसीद भेजें</Text>
         </Pressable>
         {t.mobile ? (
           <Pressable style={styles.callBtn} onPress={() => Linking.openURL(`tel:${t.mobile}`)} testID="aeps-call-btn">

@@ -1,4 +1,4 @@
-import type { AepsStatus, AepsTxn, AepsType } from "@/src/lib/data";
+import type { AepsCash, AepsStatus, AepsTxn, AepsType } from "@/src/lib/data";
 import { formatDate, formatINR } from "@/src/lib/format";
 
 export type AepsField =
@@ -14,18 +14,24 @@ export type AepsField =
   | "billAccount"
   | "beneficiaryName"
   | "accountNumber"
-  | "ifsc";
+  | "ifsc"
+  | "upiId";
 
 // "out": shop hands cash to the customer, "in": customer hands cash to the shop.
 type Meta = { label: string; short: string; icon: string; color: string; soft: string; cash: "in" | "out" | "none"; amountLabel: string; fields: AepsField[] };
 
-export const AEPS_TYPES: AepsType[] = ["withdrawal", "deposit", "transfer", "recharge", "bill", "balance", "other"];
+export const AEPS_TYPES: AepsType[] = ["withdrawal", "cash", "upi", "deposit", "transfer", "recharge", "bill", "balance", "other"];
 
 export const AEPS_META: Record<AepsType, Meta> = {
   withdrawal: {
     label: "नकद निकासी (AEPS)", short: "निकासी", icon: "cash-fast", color: "#C62828", soft: "#FDECEA", cash: "out",
     amountLabel: "निकाली गई रकम (₹)",
     fields: ["mobile", "aadhaarLast4", "bankName", "amount", "reference", "commission"],
+  },
+  cash: {
+    label: "नकद दिया", short: "नकद", icon: "cash", color: "#9A3412", soft: "#FFEDD5", cash: "out",
+    amountLabel: "दिए गए नकद (₹)",
+    fields: ["amount", "reference", "commission"],
   },
   deposit: {
     label: "खाते में जमा", short: "जमा", icon: "bank-plus", color: "#2E7D32", soft: "#E8F5E9", cash: "in",
@@ -36,6 +42,11 @@ export const AEPS_META: Record<AepsType, Meta> = {
     label: "मनी ट्रांसफर", short: "ट्रांसफर", icon: "bank-transfer", color: "#1D4ED8", soft: "#E0E9FF", cash: "in",
     amountLabel: "भेजी गई रकम (₹)",
     fields: ["mobile", "beneficiaryName", "bankName", "accountNumber", "ifsc", "amount", "reference", "commission"],
+  },
+  upi: {
+    label: "UPI", short: "UPI", icon: "qrcode", color: "#5B21B6", soft: "#EDE9FE", cash: "in",
+    amountLabel: "नकद रकम (₹)",
+    fields: ["mobile", "beneficiaryName", "upiId", "amount", "reference", "commission"],
   },
   recharge: {
     label: "मोबाइल / DTH रिचार्ज", short: "रिचार्ज", icon: "cellphone-arrow-down", color: "#7C3AED", soft: "#F1E9FF", cash: "in",
@@ -71,6 +82,7 @@ export const FIELD_LABEL: Record<AepsField, string> = {
   billerName: "बिल किसका",
   billAccount: "कंज़्यूमर / अकाउंट नंबर",
   beneficiaryName: "पाने वाले का नाम",
+  upiId: "UPI ID",
   accountNumber: "खाता नंबर",
   ifsc: "IFSC कोड",
 };
@@ -85,6 +97,43 @@ export const BANKS = ["SBI", "PNB", "Bank of Baroda", "Canara", "Union Bank", "H
 export const OPERATORS = ["Jio", "Airtel", "Vi", "BSNL", "Tata Play", "Dish TV", "Airtel DTH", "d2h"];
 export const BILLERS = ["बिजली", "पानी", "गैस सिलेंडर", "पाइप गैस", "पोस्टपेड मोबाइल", "ब्रॉडबैंड", "बीमा प्रीमियम", "लोन EMI", "FASTag"];
 
+export type CashFlow = "in" | "out" | "none";
+
+export const CASH_GROUPS: { id: CashFlow; label: string; hint: string }[] = [
+  { id: "out", label: "नकद दिया", hint: "दराज से गया" },
+  { id: "in", label: "नकद मिला", hint: "दराज में आया" },
+  { id: "none", label: "नकद नहीं", hint: "सिर्फ़ देखा" },
+];
+
+/** Drawer direction. An explicit `cash` on the row wins, so one service can move the drawer in more than one way. */
+export function cashOf(t: { type: AepsType; cash?: AepsCash }): CashFlow {
+  if (t.cash === "in" || t.cash === "out" || t.cash === "none") return t.cash;
+  return AEPS_META[t.type]?.cash ?? "none";
+}
+
+export function typesFor(flow: CashFlow): AepsType[] {
+  return AEPS_TYPES.filter((t) => t !== "other" && AEPS_META[t].cash === flow);
+}
+
+/** One sentence for the drawer, so the service name and the cash never disagree. */
+export function drawerSentence(type: AepsType, amount: number, flow: CashFlow, status: AepsStatus = "success"): string {
+  if (status === "failed") return "फेल — दराज नहीं बदली";
+  const money = amount > 0 ? formatINR(amount) : "रकम";
+  if (type === "upi" && flow === "none") return amount > 0 ? `UPI से ${formatINR(amount)} भेजे, दराज नहीं छुई` : "UPI, दराज नहीं छुई";
+  if (type === "balance" || flow === "none") return "दराज नहीं बदली";
+  const tail: Partial<Record<AepsType, string>> = {
+    withdrawal: "ग्राहक को दिए",
+    cash: "नकद दिए",
+    deposit: "खाते में डाले",
+    transfer: "दूसरे खाते में भेजे",
+    upi: "UPI से भेजे",
+    recharge: "रिचार्ज किया",
+    bill: "बिल भरा",
+  };
+  const head = flow === "out" ? `दराज से ${money} निकले` : `दराज में ${money} आए`;
+  return tail[type] ? `${head}, ${tail[type]}` : head;
+}
+
 export function aepsTotals(list: AepsTxn[]) {
   let cashIn = 0;
   let cashOut = 0;
@@ -94,7 +143,7 @@ export function aepsTotals(list: AepsTxn[]) {
     if (t.status !== "success") continue;
     count += 1;
     commission += t.commission || 0;
-    const dir = AEPS_META[t.type]?.cash;
+    const dir = cashOf(t);
     if (dir === "in") cashIn += t.amount;
     else if (dir === "out") cashOut += t.amount;
   }
@@ -108,6 +157,8 @@ export function aepsDetailLine(t: AepsTxn): string {
       return [t.operator, t.rechargeNumber].filter(Boolean).join(" · ");
     case "bill":
       return [t.billerName, t.billAccount].filter(Boolean).join(" · ");
+    case "upi":
+      return [t.upiId, t.beneficiaryName && `→ ${t.beneficiaryName}`].filter(Boolean).join(" · ");
     case "transfer":
       return [t.beneficiaryName && `→ ${t.beneficiaryName}`, t.bankName, maskAccount(t.accountNumber)].filter(Boolean).join(" · ");
     case "deposit":
@@ -132,6 +183,7 @@ export function receiptText(t: AepsTxn, shop: string): string {
   const add = (label: string, v: string) => { if (v) rows.push([label, v]); };
   add("बैंक", t.bankName);
   add("आधार", t.aadhaarLast4 ? `XXXX XXXX ${t.aadhaarLast4}` : "");
+  add("UPI", t.upiId ?? "");
   add("पाने वाला", t.beneficiaryName);
   add("खाता", maskAccount(t.accountNumber));
   add("IFSC", t.ifsc);

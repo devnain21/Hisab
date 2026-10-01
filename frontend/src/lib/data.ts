@@ -12,7 +12,8 @@ export type Entry = { id: string; customerId: string; type: EntryType; date: str
 // entryId: the work entry booked when this job was completed.
 export type Job = { id: string; customerId: string; title: string; dueDate: string; status: "pending" | "doing" | "done"; estimatedAmount: number; notes: string; entryId?: string; createdAt: string };
 
-export type AepsType = "withdrawal" | "deposit" | "transfer" | "balance" | "recharge" | "bill" | "other";
+export type AepsType = "withdrawal" | "cash" | "deposit" | "transfer" | "upi" | "balance" | "recharge" | "bill" | "other";
+export type AepsCash = "" | "in" | "out" | "none";
 export type AepsStatus = "success" | "pending" | "failed";
 export type AepsTxn = {
   id: string;
@@ -34,6 +35,9 @@ export type AepsTxn = {
   beneficiaryName: string;
   accountNumber: string;
   ifsc: string;
+  upiId?: string;
+  /** Set only when type is "other"; otherwise the service decides the drawer. */
+  cash?: AepsCash;
   notes: string;
   createdAt: string;
 };

@@ -12,7 +12,7 @@ import { AddCustomerSheet } from "@/src/components/sheets";
 
 type Filter = "due" | "all" | "clear";
 const FILTERS: Filter[] = ["due", "all", "clear"];
-const FILTER_LABEL: Record<Filter, string> = { due: "बकाया", all: "सभी", clear: "क्लियर" };
+const FILTER_LABEL: Record<Filter, string> = { due: "लेने हैं", all: "सभी", clear: "लेने नहीं" };
 
 export default function CustomersScreen() {
   const insets = useSafeAreaInsets();
@@ -91,7 +91,7 @@ export default function CustomersScreen() {
         </ScrollView>
         {!loading && filter === "due" && totalDue > 0 ? (
           <Text style={styles.summary} testID="customers-summary">
-            कुल बकाया <Text style={{ color: colors.error, fontWeight: "800" }}>{formatINR(totalDue)}</Text> · {counts.due} ग्राहकों से लेना है
+            कुल लेने हैं <Text style={{ color: colors.error, fontWeight: "800" }}>{formatINR(totalDue)}</Text> · {counts.due} ग्राहक
           </Text>
         ) : null}
       </View>
@@ -108,7 +108,7 @@ export default function CustomersScreen() {
             <View style={styles.empty} testID="customers-empty">
               <MaterialIcon name="account-group-outline" size={32} color={colors.muted} />
               <Text style={styles.emptyTitle}>
-                {q ? "कोई ग्राहक नहीं मिला" : customers.length === 0 ? "अभी कोई ग्राहक नहीं" : filter === "due" ? "किसी का पैसा बाकी नहीं" : "इस सूची में कोई नहीं"}
+                {q ? "कोई ग्राहक नहीं मिला" : customers.length === 0 ? "अभी कोई ग्राहक नहीं" : filter === "due" ? "किसी से लेने नहीं हैं" : "इस सूची में कोई नहीं"}
               </Text>
               {!q && customers.length === 0 && <Text style={styles.emptySub}>पहला ग्राहक जोड़कर शुरू करें</Text>}
             </View>

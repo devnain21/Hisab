@@ -196,7 +196,7 @@ class JobUpdate(BaseModel):
     entryId: Optional[str] = None
 
 
-AepsType = Literal["withdrawal", "deposit", "transfer", "balance", "recharge", "bill", "other"]
+AepsType = Literal["withdrawal", "cash", "deposit", "transfer", "upi", "balance", "recharge", "bill", "other"]
 
 
 class AepsFields(BaseModel):
@@ -219,6 +219,9 @@ class AepsFields(BaseModel):
     beneficiaryName: str = ""
     accountNumber: str = ""
     ifsc: str = ""
+    upiId: str = ""
+    # Empty means the service decides. "other" stores which way the drawer moved.
+    cash: Literal["", "in", "out", "none"] = ""
     notes: str = ""
 
 

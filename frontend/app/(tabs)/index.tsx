@@ -13,6 +13,7 @@ import { formatDateShort, formatINR, formatWeekdayDate, todayISO } from "@/src/l
 import { AddEntrySheet, AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
 import { useAuth } from "@/src/context/AuthContext";
 import { usePendingCount } from "@/src/lib/store";
+import { useCounterMode } from "@/src/lib/counter";
 
 export default function Home() {
   const insets = useSafeAreaInsets();
@@ -26,6 +27,7 @@ export default function Home() {
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const { user } = useAuth();
   const pending = usePendingCount();
+  const counter = useCounterMode();
 
   const today = todayISO();
   const customers = customersQ.data ?? [];
@@ -98,7 +100,7 @@ export default function Home() {
           <Animated.View entering={FadeInDown.duration(300)}>
             <View style={styles.statsGrid}>
               <StatCard
-                label="कुल बकाया"
+                label="कुल लेने हैं"
                 value={formatINR(Math.max(stats.totalDue, 0))}
                 hint={`${stats.dueCustomers} ग्राहक`}
                 icon="account-cash-outline"
@@ -107,7 +109,7 @@ export default function Home() {
                 testID="stat-total-due"
               />
               <StatCard
-                label="पेंडिंग काम"
+                label="काम बाकी"
                 value={String(stats.openJobs)}
                 hint={stats.overdue > 0 ? `${stats.overdue} देर से` : "सब समय पर"}
                 icon="briefcase-clock-outline"
@@ -125,7 +127,7 @@ export default function Home() {
                 testID="stat-today-work"
               />
               <StatCard
-                label="आज की जमा"
+                label="आज मिले"
                 value={formatINR(stats.todayPay)}
                 hint={`${stats.todayPayCount} एंट्री`}
                 icon="cash-check"
@@ -142,19 +144,21 @@ export default function Home() {
               </Pressable>
               <Pressable style={styles.secondaryAction} onPress={() => setMoneySheet(true)} testID="quick-money">
                 <MaterialIcon name="swap-vertical" size={20} color={colors.brandPrimary} />
-                <Text style={styles.secondaryActionText}>लेन-देन</Text>
+                <Text style={styles.secondaryActionText}>मिले · दिए</Text>
               </Pressable>
             </View>
 
+            {counter.on ? (
             <Pressable style={styles.aepsLine} onPress={() => go("/(tabs)/aeps", { range: "today" })} testID="home-aeps-card">
               <MaterialIcon name="fingerprint" size={16} color={colors.brandPrimary} />
-              <Text style={styles.aepsLineText} numberOfLines={1}>
+              <Text style={styles.aepsLineText} numberOfLines={2}>
                 {aepsToday.count === 0
-                  ? "आज AEPS में कुछ नहीं"
-                  : `AEPS · दिया ${formatINR(aepsToday.cashOut)} · लिया ${formatINR(aepsToday.cashIn)}${aepsToday.commission > 0 ? ` · कमीशन ${formatINR(aepsToday.commission)}` : ""}`}
+                  ? "काउंटर · आज कुछ नहीं"
+                  : `काउंटर · नकद दिया ${formatINR(aepsToday.cashOut)} · नकद मिला ${formatINR(aepsToday.cashIn)}${aepsToday.commission > 0 ? ` · कमीशन ${formatINR(aepsToday.commission)}` : ""}`}
               </Text>
               <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
             </Pressable>
+            ) : null}
 
             <View style={styles.sectionRow}>
               <Text style={styles.sectionHead}>आने वाला काम</Text>
@@ -167,7 +171,7 @@ export default function Home() {
             {upcoming.length === 0 ? (
               <View style={styles.emptyRow}>
                 <MaterialIcon name="briefcase-outline" size={20} color={colors.muted} />
-                <Text style={{ color: colors.muted, fontSize: 14 }}>कोई पेंडिंग काम नहीं</Text>
+                <Text style={{ color: colors.muted, fontSize: 14 }}>कोई काम बाकी नहीं</Text>
               </View>
             ) : (
               <View style={{ gap: spacing.sm }}>

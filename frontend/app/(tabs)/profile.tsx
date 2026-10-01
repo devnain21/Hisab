@@ -13,6 +13,7 @@ import { biometricAvailable, disableLock, lockSupported, setBiometric, setPin } 
 import { buildBackupCsv, shareBackup } from "@/src/lib/backup";
 import { usePendingCount } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
+import { useCounterMode } from "@/src/lib/counter";
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
@@ -24,6 +25,7 @@ export default function Profile() {
   const aeps = useAeps().data ?? [];
   const totalDue = computeBalance(entries);
   const pending = usePendingCount();
+  const counter = useCounterMode();
 
   const { config: lock, refresh: refreshLock } = useAppLock();
   const [pinSetup, setPinSetup] = useState(false);
@@ -104,13 +106,22 @@ export default function Profile() {
       <Pressable style={styles.row} onPress={() => setShopSheet(true)} testID="profile-shop-name">
         <MaterialIcon name="storefront-outline" size={22} color={colors.brandPrimary} />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.rowLabel}>दुकान की जानकारी</Text>
+          <Text style={styles.rowLabel}>बिल पर नाम</Text>
           <Text style={[styles.rowValue, !user?.shop_name && { color: colors.muted }]} numberOfLines={1}>
             {user?.shop_name ? [user.shop_name, user.shop_phone].filter(Boolean).join(" · ") : "अभी सेट नहीं है"}
           </Text>
         </View>
         <MaterialIcon name="pencil-outline" size={18} color={colors.muted} />
       </Pressable>
+
+      <View style={styles.row}>
+        <MaterialIcon name="fingerprint" size={22} color={colors.brandPrimary} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.rowLabel}>काउंटर</Text>
+          <Text style={styles.rowValue} numberOfLines={2}>निकासी, UPI, रिचार्ज। घर का हिसाब हो तो बंद रखें</Text>
+        </View>
+        <Switch value={counter.on} onValueChange={counter.toggle} trackColor={{ true: colors.brandPrimary, false: colors.border }} testID="counter-toggle" />
+      </View>
 
       {pending > 0 ? (
         <View style={[styles.syncCard, { backgroundColor: colors.errorSoft }]} testID="sync-pending">
@@ -133,10 +144,10 @@ export default function Profile() {
       <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg }}>
         <StatBox label="ग्राहक" value={String(customers.length)} />
         <StatBox label="एंट्री" value={String(entries.length)} />
-        <StatBox label="पेंडिंग काम" value={String(jobs.filter((j) => j.status !== "done").length)} />
+        <StatBox label="काम बाकी" value={String(jobs.filter((j) => j.status !== "done").length)} />
       </View>
       <View style={styles.totalBox}>
-        <Text style={styles.totalLabel}>कुल बकाया</Text>
+        <Text style={styles.totalLabel}>कुल लेने हैं</Text>
         <Text style={styles.totalValue}>{formatINR(Math.max(totalDue, 0))}</Text>
       </View>
 

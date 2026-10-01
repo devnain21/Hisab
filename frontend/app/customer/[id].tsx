@@ -78,7 +78,7 @@ export default function CustomerDetail() {
   }, [entries]);
   // Money left with us by a customer is an advance; with a personal contact it's money we owe back.
   const isCustomer = entries.some((e) => e.type === "work") || jobs.length > 0;
-  const balanceLabel = due > 0 ? "लेने हैं" : due < 0 ? (isCustomer ? "एडवांस जमा" : "देने हैं") : "हिसाब";
+  const balanceLabel = due > 0 ? "लेने हैं" : due < 0 ? (isCustomer ? "एडवांस" : "देने हैं") : "हिसाब";
   const openJobs = jobs.filter((j) => j.status !== "done");
   const showMoreFilters = rows.length > 8;
 
@@ -249,20 +249,20 @@ export default function CustomerDetail() {
 
 type LedgerFilter = "all" | "due" | "settled" | "cash" | "jama";
 const LEDGER_FILTERS: LedgerFilter[] = ["all", "due", "settled", "cash", "jama"];
-const LEDGER_FILTER_LABEL: Record<LedgerFilter, string> = { all: "सभी", due: "बाकी", settled: "चुकता", cash: "नकद", jama: "मिले" };
+const LEDGER_FILTER_LABEL: Record<LedgerFilter, string> = { all: "सभी", due: "लेने हैं", settled: "चुकता", cash: "नकद", jama: "मिले" };
 
 // Money handed over (personal loan): same settle flow as udhaar work, different wording.
 const GIVEN_UI: Record<WorkState, { label: string; icon: string; fg: string; bg: string }> = {
   cash: { label: "वापस मिले", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
   pending: { label: "वापस लेने हैं", icon: "arrow-top-right", fg: colors.error, bg: colors.errorSoft },
-  partial: { label: "कुछ बाकी", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
+  partial: { label: "कुछ लेने हैं", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
   settled: { label: "वापस मिले", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
 };
 
 const STATE_UI: Record<WorkState, { label: string; icon: string; fg: string; bg: string }> = {
   cash: { label: "नकद", icon: "cash", fg: colors.success, bg: colors.successSoft },
-  pending: { label: "उधार बाकी", icon: "clock-alert-outline", fg: colors.error, bg: colors.errorSoft },
-  partial: { label: "कुछ बाकी", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
+  pending: { label: "लेने हैं", icon: "clock-alert-outline", fg: colors.error, bg: colors.errorSoft },
+  partial: { label: "कुछ लेने हैं", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
   settled: { label: "चुकता", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
 };
 
@@ -309,12 +309,12 @@ function WorkCard({ entry, status, onPress, onSettle, onReceipt }: { entry: Entr
           <Text style={styles.moneyText}>
             मिले {formatINR(status.received)}
             {status.paidAtBooking > 0 && laterPaid > 0 ? ` (उसी दिन ${formatINR(status.paidAtBooking)} + बाद में ${formatINR(laterPaid)})` : ""}
-            {status.fromJama > 0 && status.settlements.length === 0 ? " (पुरानी जमा से)" : ""}
+            {status.fromJama > 0 && status.settlements.length === 0 ? " (पहले के एडवांस से)" : ""}
           </Text>
           {status.state === "settled" ? (
             <Text style={[styles.moneyText, { color: colors.success, fontWeight: "700" }]}>✔ {status.settledOn ? `${formatDate(status.settledOn)} को ` : ""}चुकता</Text>
           ) : (
-            <Text style={[styles.moneyText, { color: colors.error, fontWeight: "800" }]}>बाकी {formatINR(status.remaining)}</Text>
+            <Text style={[styles.moneyText, { color: colors.error, fontWeight: "800" }]}>लेने हैं {formatINR(status.remaining)}</Text>
           )}
         </View>
       ) : null}

@@ -35,14 +35,15 @@ export default function CustomersScreen() {
   }, [params.filter, params.t]);
 
   const all = useMemo(() => {
-    const stats = new Map<string, { due: number; last: string }>();
+    const stats = new Map<string, { due: number; last: string; work: boolean }>();
     for (const e of entries) {
-      const s = stats.get(e.customerId) ?? { due: 0, last: "" };
+      const s = stats.get(e.customerId) ?? { due: 0, last: "", work: false };
       s.due += entryDelta(e);
       if (e.date > s.last) s.last = e.date;
+      if (e.type === "work") s.work = true;
       stats.set(e.customerId, s);
     }
-    return customers.map((c) => ({ c, due: stats.get(c.id)?.due ?? 0, last: stats.get(c.id)?.last ?? "" }));
+    return customers.map((c) => ({ c, due: stats.get(c.id)?.due ?? 0, last: stats.get(c.id)?.last ?? "", work: stats.get(c.id)?.work ?? false }));
   }, [customers, entries]);
 
   const counts = useMemo(
@@ -128,9 +129,14 @@ export default function CustomersScreen() {
                   <Text style={styles.last} numberOfLines={1}>आख़िरी एंट्री: {item.last === today ? "आज" : formatDateShort(item.last)}</Text>
                 ) : null}
               </View>
-              <Text style={[styles.dueAmt, { color: item.due > 0 ? colors.error : item.due < 0 ? colors.success : colors.muted }]}>
-                {item.due === 0 ? "क्लियर" : item.due < 0 ? `+${formatINR(-item.due)}` : formatINR(item.due)}
-              </Text>
+              <View style={{ alignItems: "flex-end" }}>
+                <Text style={[styles.dueAmt, { color: item.due > 0 ? colors.error : item.due < 0 ? (item.work ? colors.success : colors.warning) : colors.muted }]}>
+                  {item.due === 0 ? "क्लियर" : formatINR(Math.abs(item.due))}
+                </Text>
+                {item.due !== 0 ? (
+                  <Text style={styles.dueTag}>{item.due > 0 ? "लेने हैं" : item.work ? "एडवांस" : "देने हैं"}</Text>
+                ) : null}
+              </View>
             </Pressable>
           )}
           ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border }} />}
@@ -163,6 +169,7 @@ const styles = StyleSheet.create({
   sub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   last: { fontSize: 11, color: colors.muted, marginTop: 2 },
   dueAmt: { fontSize: 15, fontWeight: "700" },
+  dueTag: { fontSize: 11, color: colors.muted, marginTop: 2 },
   empty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },
   emptyTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   emptySub: { fontSize: 13, color: colors.muted },

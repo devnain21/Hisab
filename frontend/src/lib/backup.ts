@@ -22,7 +22,7 @@ export function buildBackupCsv(customers: Customer[], entries: Entry[], jobs: Jo
     .forEach((e) => {
       const c = byId.get(e.customerId);
       const paid = e.type === "work" ? e.paid ?? 0 : 0;
-      const kind = e.type === "payment" ? "जमा" : paid >= e.amount ? "नकद काम" : paid > 0 ? "आंशिक" : "उधार काम";
+      const kind = e.type === "payment" ? "मिले" : e.type === "given" ? "दिए" : paid >= e.amount ? "नकद काम" : paid > 0 ? "आंशिक" : "उधार काम";
       lines.push(row([e.date, c?.name ?? "", c?.phone ?? "", kind, e.description, e.amount, e.type === "work" ? paid : "", e.type === "work" ? e.amount - paid : "", e.notes]));
     });
 
@@ -37,7 +37,7 @@ export function buildBackupCsv(customers: Customer[], entries: Entry[], jobs: Jo
   const status = { pending: "बाकी", doing: "चल रहा", done: "पूरा" } as const;
   [...jobs]
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
-    .forEach((j) => lines.push(row([j.dueDate, byId.get(j.customerId)?.name ?? "", j.title, status[j.status], j.estimatedAmount, j.notes])));
+    .forEach((j) => lines.push(row([j.dueDate, j.customerId ? byId.get(j.customerId)?.name ?? "" : "खुद का", j.title, status[j.status], j.estimatedAmount, j.notes])));
 
   if (aeps.length) {
     lines.push("");

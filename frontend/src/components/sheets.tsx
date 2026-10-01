@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Modal,
   View,
@@ -14,7 +14,7 @@ import {
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
-import { useCustomers, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
+import { advanceOf, useCustomers, useEntries, useJobs, type Entry, type EntryType, type Job } from "@/src/lib/data";
 import { buildLedger, jobForWork, linkedPayment, removeEntryWithLinks, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
@@ -133,86 +133,146 @@ export function DateField({ label, value, onChange, future, testID }: { label: s
 }
 
 const NEW_CUSTOMER = "__new__";
+const SELF = "__self__";
 
-// Lets a sheet either pick an existing customer or create one inline before saving.
+// Lets a sheet pick an existing customer (searchable, most recent first), create one from the
+// typed name, or — for jobs — mark it as the shopkeeper's own task.
 function useCustomerChoice(visible: boolean, fixedCustomerId?: string) {
   const customers = useCustomers().data ?? [];
+  const entries = useEntries().data ?? [];
   const [customerId, setCustomerId] = useState("");
-  const [newName, setNewName] = useState("");
+  const [query, setQuery] = useState("");
   const [newPhone, setNewPhone] = useState("");
 
   useEffect(() => {
     if (visible) {
-      setCustomerId(fixedCustomerId ?? customers[0]?.id ?? NEW_CUSTOMER);
-      setNewName("");
+      setCustomerId(fixedCustomerId ?? "");
+      setQuery("");
       setNewPhone("");
     }
-  }, [visible, fixedCustomerId, customers.length]);
+  }, [visible, fixedCustomerId]);
+
+  const recent = useMemo(() => {
+    const last = new Map<string, string>();
+    entries.forEach((e) => {
+      if ((last.get(e.customerId) ?? "") < e.createdAt) last.set(e.customerId, e.createdAt);
+    });
+    return [...customers].sort((a, b) => (last.get(b.id) ?? b.createdAt).localeCompare(last.get(a.id) ?? a.createdAt));
+  }, [customers, entries]);
+
+  const needle = query.trim().toLowerCase();
+  const matches = (needle ? recent.filter((c) => c.name.toLowerCase().includes(needle) || c.phone.includes(needle)) : recent).slice(0, 12);
+  const exact = !!needle && recent.some((c) => c.name.trim().toLowerCase() === needle);
 
   const isNew = customerId === NEW_CUSTOMER;
-  const ready = isNew ? !!newName.trim() : !!customerId;
+  const isSelf = customerId === SELF;
+  const ready = isNew ? !!needle && !exact : !!customerId;
+  const existingId = customerId && !isNew && !isSelf ? customerId : "";
 
   const resolve = async (): Promise<string> => {
+    if (isSelf) return "";
     if (!isNew) return customerId;
-    const c = await store.createCustomer({ name: newName.trim(), phone: newPhone.trim(), address: "", notes: "" });
+    const c = store.createCustomer({ name: query.trim(), phone: newPhone.trim(), address: "", notes: "" });
     setCustomerId(c.id);
     return c.id;
   };
 
-  return { customers, customerId, setCustomerId, isNew, newName, setNewName, newPhone, setNewPhone, ready, resolve };
+  return { recent, matches, exact, customerId, setCustomerId, existingId, isNew, isSelf, query, setQuery, newPhone, setNewPhone, ready, resolve };
 }
 
-function CustomerPicker({ choice, testPrefix }: { choice: ReturnType<typeof useCustomerChoice>; testPrefix: string }) {
-  const { customers, customerId, setCustomerId, isNew } = choice;
+function CustomerPicker({ choice, label = "ग्राहक", allowSelf, testPrefix }: { choice: ReturnType<typeof useCustomerChoice>; label?: string; allowSelf?: boolean; testPrefix: string }) {
+  const { recent, matches, exact, customerId, setCustomerId, isNew, isSelf, query, setQuery } = choice;
+  const picked = recent.find((c) => c.id === customerId);
+
+  if (picked || isSelf) {
+    return (
+      <Field label={label}>
+        <View style={styles.pickedRow}>
+          <MaterialIcon name={isSelf ? "account-circle-outline" : "account"} size={20} color={colors.brandPrimary} />
+          <Text style={styles.pickedName} numberOfLines={1}>{isSelf ? "खुद का काम" : picked!.name}</Text>
+          <Pressable onPress={() => setCustomerId("")} hitSlop={8} testID={`${testPrefix}-change`}>
+            <Text style={styles.changeText}>बदलें</Text>
+          </Pressable>
+        </View>
+      </Field>
+    );
+  }
+
+  const typed = query.trim();
   return (
-    <Field label="ग्राहक">
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.sm, paddingRight: spacing.md }}>
-        <Chip label="नया ग्राहक" icon="account-plus-outline" active={isNew} onPress={() => setCustomerId(NEW_CUSTOMER)} testID={`${testPrefix}-new`} />
-        {customers.map((c) => (
-          <Chip key={c.id} label={c.name} active={customerId === c.id} onPress={() => setCustomerId(c.id)} testID={`${testPrefix}-${c.id}`} />
+    <Field label={label}>
+      <TextInput
+        style={inputStyle}
+        value={query}
+        onChangeText={(t) => {
+          setQuery(t);
+          if (isNew && !t.trim()) setCustomerId("");
+        }}
+        placeholder="नाम या फ़ोन"
+        placeholderTextColor={colors.muted}
+        testID={`${testPrefix}-search`}
+      />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.sm, paddingRight: spacing.md }}>
+        {allowSelf && !typed ? <Chip label="खुद का काम" icon="account-circle-outline" active={false} onPress={() => setCustomerId(SELF)} testID={`${testPrefix}-self`} /> : null}
+        {typed && !exact ? (
+          <Chip label={`नया: ${typed}`} icon="account-plus-outline" active={isNew} onPress={() => setCustomerId(NEW_CUSTOMER)} testID={`${testPrefix}-new`} />
+        ) : null}
+        {matches.map((c) => (
+          <Chip key={c.id} label={c.name} active={false} onPress={() => { setCustomerId(c.id); setQuery(""); }} testID={`${testPrefix}-${c.id}`} />
         ))}
       </ScrollView>
-      {isNew && (
-        <View style={styles.newCustomerBox}>
-          <TextInput style={inputStyle} value={choice.newName} onChangeText={choice.setNewName} placeholder="नए ग्राहक का नाम" placeholderTextColor={colors.muted} testID="input-new-cust-name" />
-          <TextInput style={[inputStyle, { marginTop: spacing.sm }]} value={choice.newPhone} onChangeText={choice.setNewPhone} placeholder="फ़ोन (वैकल्पिक)" placeholderTextColor={colors.muted} keyboardType="phone-pad" testID="input-new-cust-phone" />
-        </View>
-      )}
+      {isNew ? (
+        <TextInput style={[inputStyle, { marginTop: spacing.sm }]} value={choice.newPhone} onChangeText={choice.setNewPhone} placeholder="फ़ोन (वैकल्पिक)" placeholderTextColor={colors.muted} keyboardType="phone-pad" testID="input-new-cust-phone" />
+      ) : null}
     </Field>
   );
 }
 
-type PayMode = "cash" | "udhaar" | "partial";
+// advance: paid 0 now, the work is covered by money the customer left earlier.
+type PayMode = "cash" | "udhaar" | "partial" | "advance";
 
-function PaymentPicker({ mode, onMode, paid, onPaid, total }: { mode: PayMode; onMode: (m: PayMode) => void; paid: string; onPaid: (v: string) => void; total: number }) {
+function PaymentPicker({ mode, onMode, paid, onPaid, total, advance = 0 }: { mode: PayMode; onMode: (m: PayMode) => void; paid: string; onPaid: (v: string) => void; total: number; advance?: number }) {
   const paidNum = parseFloat(paid) || 0;
+  const due = mode === "cash" ? 0 : mode === "partial" ? Math.max(total - paidNum, 0) : total;
+  const fromAdvance = Math.min(advance, due);
   return (
     <Field label="पैसे का हिसाब">
       <View style={styles.chipRow}>
         <Chip label="नकद मिला" icon="cash" active={mode === "cash"} onPress={() => onMode("cash")} tone={colors.success} testID="pay-cash" />
         <Chip label="उधार" icon="book-clock-outline" active={mode === "udhaar"} onPress={() => onMode("udhaar")} tone={colors.error} testID="pay-udhaar" />
-        <Chip label="कुछ जमा" icon="cash-minus" active={mode === "partial"} onPress={() => onMode("partial")} tone={colors.warning} testID="pay-partial" />
+        <Chip label="अलग रकम" icon="cash-edit" active={mode === "partial"} onPress={() => onMode("partial")} tone={colors.warning} testID="pay-partial" />
+        {advance > 0 ? <Chip label={`एडवांस से (${formatINR(advance)})`} icon="wallet-outline" active={mode === "advance"} onPress={() => onMode("advance")} tone={colors.success} testID="pay-advance" /> : null}
       </View>
       {mode === "partial" && (
-        <>
-          <TextInput style={[inputStyle, { marginTop: spacing.sm }]} value={paid} onChangeText={onPaid} placeholder="अभी कितना मिला (₹)" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-paid" />
-          {total > 0 && paidNum > 0 && paidNum < total ? (
-            <Text style={styles.hint}>{formatINR(total - paidNum)} उधार में जुड़ेगा</Text>
-          ) : null}
-        </>
+        <TextInput style={[inputStyle, { marginTop: spacing.sm }]} value={paid} onChangeText={onPaid} placeholder="कितने मिले (₹)" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-paid" />
       )}
+      {total > 0 && mode === "partial" && paidNum > total ? (
+        <Text style={[styles.hint, { color: colors.success }]}>{formatINR(paidNum - total)} एडवांस जमा रहेगा</Text>
+      ) : null}
+      {total > 0 && fromAdvance > 0 ? <Text style={[styles.hint, { color: colors.success }]}>{formatINR(fromAdvance)} एडवांस से कटेगा</Text> : null}
+      {total > 0 && due - fromAdvance > 0 && mode !== "udhaar" ? (
+        <Text style={[styles.hint, { color: colors.error }]}>{formatINR(due - fromAdvance)} उधार में जुड़ेगा</Text>
+      ) : null}
     </Field>
   );
 }
 
 const paidFor = (mode: PayMode, amount: number, paid: number) =>
-  mode === "cash" ? amount : mode === "partial" ? Math.min(Math.max(paid, 0), amount) : 0;
+  mode === "cash" ? amount : mode === "partial" ? Math.max(paid, 0) : 0;
 const settleDescription = (title: string) => `${title} — भुगतान`;
 
-// One row per piece of work: `paid` is the cash taken now, the rest is udhaar.
+/** Money taken beyond the work amount stays with us as a separate advance row. */
+function bookAdvance(customerId: string, extra: number, date: string, title: string) {
+  if (extra <= 0) return;
+  store.createEntry({ customerId, type: "payment", date, description: "एडवांस", amount: extra, notes: `${title} के साथ` });
+}
+
+// One row per piece of work: `paid` is the cash taken now (capped at the amount), the rest is udhaar.
 function recordWork({ customerId, title, amount, mode, paid, date, notes }: { customerId: string; title: string; amount: number; mode: PayMode; paid: number; date: string; notes: string }): string {
   if (amount <= 0) return "";
-  const work = store.createEntry({ customerId, type: "work", date, description: title, amount, paid: paidFor(mode, amount, paid), notes });
+  const taken = paidFor(mode, amount, paid);
+  const work = store.createEntry({ customerId, type: "work", date, description: title, amount, paid: Math.min(taken, amount), notes });
+  bookAdvance(customerId, taken - amount, date, title);
   return work.id;
 }
 
@@ -282,8 +342,16 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
   );
 }
 
-export function AddEntrySheet({ visible, type, onClose, customerId: fixedCustomerId, initial }: { visible: boolean; type: "work" | "payment"; onClose: () => void; customerId?: string; initial?: Entry }) {
+const ENTRY_UI: Record<EntryType, { title: string; icon: string; color: string; placeholder: string }> = {
+  work: { title: "उधार काम", icon: "briefcase-outline", color: colors.error, placeholder: "जैसे पासपोर्ट फोटो 8 प्रति" },
+  payment: { title: "पैसे मिले", icon: "arrow-bottom-left", color: colors.success, placeholder: "जैसे उधार वापस, UPI" },
+  given: { title: "पैसे दिए", icon: "arrow-top-right", color: colors.error, placeholder: "जैसे उधार दिए" },
+};
+
+/** Plain khata row. With `kinds`, the sheet lets you switch between them (e.g. मिले / दिए). */
+export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixedCustomerId, initial }: { visible: boolean; type: EntryType; kinds?: EntryType[]; onClose: () => void; customerId?: string; initial?: Entry }) {
   const choice = useCustomerChoice(visible, fixedCustomerId ?? initial?.customerId);
+  const [kind, setKind] = useState<EntryType>(type);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(todayISO());
@@ -292,20 +360,23 @@ export function AddEntrySheet({ visible, type, onClose, customerId: fixedCustome
 
   useEffect(() => {
     if (!visible) return;
+    setKind(initial?.type ?? type);
     setDescription(initial?.description ?? "");
     setAmount(initial ? String(initial.amount) : "");
     setDate(initial?.date ?? todayISO());
     setNotes(initial?.notes ?? "");
-  }, [visible, initial]);
+  }, [visible, initial, type]);
 
+  const ui = ENTRY_UI[kind];
   const amt = parseFloat(amount);
-  const valid = (initial ? true : choice.ready) && !!description.trim() && isFinite(amt) && amt > 0;
+  const needsDescription = kind === "work";
+  const valid = (initial ? true : choice.ready) && (!needsDescription || !!description.trim()) && isFinite(amt) && amt > 0;
 
   const save = async () => {
     if (!valid) return;
     setSaving(true);
     try {
-      const body = { type, date, description: description.trim(), amount: amt, notes: notes.trim() };
+      const body = { type: kind, date, description: description.trim(), amount: amt, notes: notes.trim() };
       if (initial) await store.updateEntry(initial.id, body);
       else {
         const customerId = await choice.resolve();
@@ -316,21 +387,31 @@ export function AddEntrySheet({ visible, type, onClose, customerId: fixedCustome
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title={initial ? "एंट्री बदलें" : type === "work" ? "उधार काम जोड़ें" : "जमा लिखें"} testID={`sheet-entry-${type}`}>
-      {!initial && !fixedCustomerId && <CustomerPicker choice={choice} testPrefix="chip-cust" />}
-      <Field label="विवरण">
-        <TextInput style={inputStyle} value={description} onChangeText={setDescription} placeholder={type === "work" ? "जैसे पासपोर्ट फोटो 8 प्रति" : "आंशिक जमा"} placeholderTextColor={colors.muted} testID="input-entry-desc" />
-      </Field>
+    <SheetShell visible={visible} onClose={onClose} title={initial ? "एंट्री बदलें" : kinds ? "लेन-देन" : ui.title} testID={`sheet-entry-${kind}`}>
+      {kinds && !initial ? (
+        <View style={styles.segment}>
+          {kinds.map((k) => (
+            <Pressable key={k} onPress={() => setKind(k)} style={[styles.segmentBtn, kind === k && { backgroundColor: ENTRY_UI[k].color }]} testID={`entry-kind-${k}`}>
+              <MaterialIcon name={ENTRY_UI[k].icon as any} size={16} color={kind === k ? "#fff" : colors.onSurface} />
+              <Text style={[styles.segmentText, kind === k && { color: "#fff" }]}>{ENTRY_UI[k].title}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+      {!initial && !fixedCustomerId && <CustomerPicker choice={choice} label={kind === "work" ? "ग्राहक" : kind === "payment" ? "किससे मिले" : "किसको दिए"} testPrefix="chip-cust" />}
       <Field label="रकम (₹)">
         <TextInput style={inputStyle} value={amount} onChangeText={setAmount} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-entry-amount" />
+      </Field>
+      <Field label={needsDescription ? "विवरण" : "किस लिए (वैकल्पिक)"}>
+        <TextInput style={inputStyle} value={description} onChangeText={setDescription} placeholder={ui.placeholder} placeholderTextColor={colors.muted} testID="input-entry-desc" />
       </Field>
       <DateField label="तारीख" value={date} onChange={setDate} testID="input-entry-date" />
       <Field label="नोट (वैकल्पिक)">
         <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-entry-notes" />
       </Field>
       <PrimaryButton
-        label={initial ? "बदलाव सेव करें" : type === "work" ? "उधार जोड़ें" : "जमा जोड़ें"}
-        color={type === "work" ? colors.error : colors.success}
+        label={initial ? "बदलाव सेव करें" : `${ui.title} — सेव करें`}
+        color={ui.color}
         onPress={save}
         disabled={!valid}
         saving={saving}
@@ -345,7 +426,8 @@ function DeleteEntryLink({ entry, onDone }: { entry: Entry; onDone: () => void }
   const entries = useEntries().data ?? [];
   const jobs = useJobs().data ?? [];
   const remove = () => {
-    confirmAction("एंट्री हटाएँ?", `${entry.description} · ${formatINR(entry.amount)}\nइसके साथ लिखी जमा और काम कार्ड भी हटेंगे।`, "हटा दें", () => {
+    const extra = entry.type === "work" ? "\nइसके साथ लिखी जमा और काम कार्ड भी हटेंगे।" : entry.type === "given" ? "\nइसके वापस मिले पैसे भी हटेंगे।" : "";
+    confirmAction("एंट्री हटाएँ?", `${entry.description || ENTRY_UI[entry.type].title} · ${formatINR(entry.amount)}${extra}`, "हटा दें", () => {
       removeEntryWithLinks(entry, entries, jobs);
       onDone();
     });
@@ -410,8 +492,9 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
     try {
       const t = title.trim();
       const paidNum = parseFloat(paid) || 0;
-      const paidNow = paidFor(pay, amt, paidNum);
-      store.updateEntry(entry.id, { type: "work", date, description: t, amount: amt, paid: paidNow, notes: notes.trim() });
+      const taken = paidFor(pay, amt, paidNum);
+      store.updateEntry(entry.id, { type: "work", date, description: t, amount: amt, paid: Math.min(taken, amt), notes: notes.trim() });
+      bookAdvance(entry.customerId, taken - amt, date, t);
       // Old two-row cash records: the same-day jama is now carried by `paid`.
       if (link && !(entry.paid ?? 0)) store.deleteEntry(link.id);
       if (job) {
@@ -511,10 +594,12 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
       <Field label="क्या काम">
         <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholderTextColor={colors.muted} testID="input-edit-job-title" />
       </Field>
-      <Field label="अनुमानित रकम (₹, वैकल्पिक)">
-        <TextInput style={inputStyle} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.muted} testID="input-edit-job-amount" />
-      </Field>
-      <DateField label={status === "done" ? "तारीख" : "डिलीवरी तारीख"} value={date} onChange={setDate} future={status !== "done"} testID="input-edit-job-date" />
+      {job?.customerId ? (
+        <Field label="अनुमानित रकम (₹, वैकल्पिक)">
+          <TextInput style={inputStyle} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.muted} testID="input-edit-job-amount" />
+        </Field>
+      ) : null}
+      <DateField label={status === "done" ? "तारीख" : job?.customerId ? "डिलीवरी तारीख" : "कब करना है"} value={date} onChange={setDate} future={status !== "done"} testID="input-edit-job-date" />
       <Field label="नोट / रिमार्क">
         <TextInput style={[inputStyle, { minHeight: 56 }]} value={notes} onChangeText={setNotes} multiline placeholderTextColor={colors.muted} testID="input-edit-job-notes" />
       </Field>
@@ -538,10 +623,11 @@ export function EditRecordSheet({ entry, job, onClose }: { entry?: Entry | null;
     if (!work) plainJob = job;
   } else if (entry) {
     if (entry.type === "work") work = entry;
+    else if (entry.type === "given") plainEntry = entry;
     else {
       // Same-day jama from old two-row cash records belongs to the work; later settlements are their own event.
       const w = workForPayment(entry, entries);
-      if (w && w.date === entry.date) work = w;
+      if (w && w.type === "work" && w.date === entry.date) work = w;
       else plainEntry = entry;
     }
   }
@@ -581,16 +667,16 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
     if (!work || !valid) return;
     setSaving(true);
     try {
-      store.createEntry({ customerId: work.customerId, type: "payment", date, description: settleDescription(work.description), amount: amt, notes: notes.trim(), linkId: work.id });
+      store.createEntry({ customerId: work.customerId, type: "payment", date, description: settleDescription(work.description || ENTRY_UI[work.type].title), amount: amt, notes: notes.trim(), linkId: work.id });
       onClose();
     } finally { setSaving(false); }
   };
 
   return (
-    <SheetShell visible={!!work} onClose={onClose} title="पैसे मिले" testID="sheet-settle">
+    <SheetShell visible={!!work} onClose={onClose} title={work?.type === "given" ? "पैसे वापस मिले" : "पैसे मिले"} testID="sheet-settle">
       {work ? (
         <View style={styles.settleSummary}>
-          <Text style={styles.jobName}>{work.description}</Text>
+          <Text style={styles.jobName}>{work.description || ENTRY_UI[work.type].title}</Text>
           <Text style={styles.hint}>
             कुल {formatINR(work.amount)} · मिल चुके {formatINR(status?.received ?? 0)} ·{" "}
             <Text style={{ color: colors.error, fontWeight: "700" }}>बाकी {formatINR(remaining)}</Text>
@@ -649,8 +735,13 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
     setDate(m === "now" ? todayISO() : todayISO(1));
   };
 
-  const amt = parseFloat(amount) || 0;
-  const valid = choice.ready && !!title.trim() && (mode === "later" || amt > 0);
+  const entries = useEntries().data ?? [];
+  const self = choice.isSelf;
+  const amt = self ? 0 : parseFloat(amount) || 0;
+  const advance = choice.existingId ? advanceOf(entries, choice.existingId) : 0;
+  const payMode: PayMode = pay === "advance" && advance <= 0 ? "cash" : pay;
+  const valid = choice.ready && !!title.trim();
+  const saveLabel = mode === "later" ? "आगे का काम जोड़ें" : self ? "सेव करें" : amt > 0 ? "काम सेव करें" : "मुफ़्त काम सेव करें";
 
   const save = async () => {
     if (!valid) return;
@@ -660,7 +751,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       const t = title.trim();
       if (mode === "now") {
         const paidNum = parseFloat(paid) || 0;
-        const entryId = recordWork({ customerId, title: t, amount: amt, mode: pay, paid: paidNum, date, notes: remark.trim() });
+        const entryId = recordWork({ customerId, title: t, amount: amt, mode: payMode, paid: paidNum, date, notes: remark.trim() });
         store.createJob({ customerId, title: t, dueDate: date, status: "done", estimatedAmount: amt, notes: remark.trim(), entryId });
         if (remark.trim()) {
           await store.createJob({ customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
@@ -683,17 +774,19 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
         ))}
       </View>
 
-      {!fixedCustomerId && <CustomerPicker choice={choice} testPrefix="chip-job-cust" />}
+      {!fixedCustomerId && <CustomerPicker choice={choice} allowSelf testPrefix="chip-job-cust" />}
       <Field label="क्या काम">
-        <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholder={mode === "now" ? "जैसे पासपोर्ट फोटो, फोटोकॉपी 20 पेज" : "जैसे शादी एलबम"} placeholderTextColor={colors.muted} testID="input-job-title" />
+        <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholder={self ? "जैसे पेपर मँगवाना, बिजली बिल भरना" : mode === "now" ? "जैसे पासपोर्ट फोटो, फोटोकॉपी 20 पेज" : "जैसे शादी एलबम"} placeholderTextColor={colors.muted} testID="input-job-title" />
       </Field>
-      <Field label={mode === "now" ? "रकम (₹)" : "अनुमानित रकम (₹, वैकल्पिक)"}>
-        <TextInput style={inputStyle} value={amount} onChangeText={setAmount} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-amount" />
-      </Field>
+      {self ? null : (
+        <Field label={mode === "now" ? "रकम (₹) — मुफ़्त हो तो खाली" : "अनुमानित रकम (₹, वैकल्पिक)"}>
+          <TextInput style={inputStyle} value={amount} onChangeText={setAmount} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-amount" />
+        </Field>
+      )}
 
       {mode === "now" ? (
         <>
-          <PaymentPicker mode={pay} onMode={setPay} paid={paid} onPaid={setPaid} total={amt} />
+          {amt > 0 ? <PaymentPicker mode={payMode} onMode={setPay} paid={paid} onPaid={setPaid} total={amt} advance={advance} /> : null}
           <DateField label="तारीख" value={date} onChange={setDate} testID="input-job-date" />
           <Field label="आगे का रिमार्क (वैकल्पिक)">
             <TextInput style={[inputStyle, { minHeight: 64 }]} value={remark} onChangeText={setRemark} multiline placeholder="जैसे कल प्रिंट देने हैं, बाकी पैसे शनिवार को" placeholderTextColor={colors.muted} testID="input-job-remark" />
@@ -702,14 +795,14 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
         </>
       ) : (
         <>
-          <DateField label="डिलीवरी तारीख" value={date} onChange={setDate} future testID="input-job-date" />
+          <DateField label={self ? "कब करना है" : "डिलीवरी तारीख"} value={date} onChange={setDate} future testID="input-job-date" />
           <Field label="नोट (वैकल्पिक)">
             <TextInput style={inputStyle} value={remark} onChangeText={setRemark} placeholderTextColor={colors.muted} testID="input-job-notes" />
           </Field>
         </>
       )}
 
-      <PrimaryButton label={mode === "now" ? "काम सेव करें" : "आगे का काम जोड़ें"} onPress={save} disabled={!valid} saving={saving} testID="save-job-btn" />
+      <PrimaryButton label={saveLabel} onPress={save} disabled={!valid} saving={saving} testID="save-job-btn" />
     </SheetShell>
   );
 }
@@ -750,6 +843,8 @@ export function ShopNameSheet({ visible, onClose }: { visible: boolean; onClose:
 }
 
 export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: () => void }) {
+  const entries = useEntries().data ?? [];
+  const advance = job?.customerId ? advanceOf(entries, job.customerId) : 0;
   const [amount, setAmount] = useState("");
   const [pay, setPay] = useState<PayMode>("cash");
   const [paid, setPaid] = useState("");
@@ -763,7 +858,8 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
     }
   }, [job]);
 
-  const amt = parseFloat(amount) || 0;
+  const amt = job?.customerId ? parseFloat(amount) || 0 : 0;
+  const payMode: PayMode = pay === "advance" && advance <= 0 ? "cash" : pay;
 
   const save = async () => {
     if (!job) return;
@@ -771,7 +867,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
     try {
       const paidNum = parseFloat(paid) || 0;
       const date = todayISO();
-      const entryId = recordWork({ customerId: job.customerId, title: job.title, amount: amt, mode: pay, paid: paidNum, date, notes: "काम पूरा" });
+      const entryId = recordWork({ customerId: job.customerId, title: job.title, amount: amt, mode: payMode, paid: paidNum, date, notes: "काम पूरा" });
       store.updateJob(job.id, { status: "done", dueDate: date, estimatedAmount: amt, entryId });
       onClose();
     } finally { setSaving(false); }
@@ -780,11 +876,13 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
   return (
     <SheetShell visible={!!job} onClose={onClose} title="काम पूरा करें" testID="sheet-complete-job">
       {job ? <Text style={styles.jobName}>{job.title}</Text> : null}
-      <Field label="रकम (₹) — खाली छोड़ें अगर पैसा नहीं लेना">
-        <TextInput style={inputStyle} value={amount} onChangeText={setAmount} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-complete-amount" />
-      </Field>
-      {amt > 0 ? <PaymentPicker mode={pay} onMode={setPay} paid={paid} onPaid={setPaid} total={amt} /> : null}
-      <PrimaryButton label="पूरा हुआ" color={colors.success} onPress={save} saving={saving} testID="save-complete-btn" />
+      {job?.customerId ? (
+        <Field label="रकम (₹) — मुफ़्त हो तो खाली">
+          <TextInput style={inputStyle} value={amount} onChangeText={setAmount} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-complete-amount" />
+        </Field>
+      ) : null}
+      {amt > 0 ? <PaymentPicker mode={payMode} onMode={setPay} paid={paid} onPaid={setPaid} total={amt} advance={advance} /> : null}
+      <PrimaryButton label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"} color={colors.success} onPress={save} saving={saving} testID="save-complete-btn" />
     </SheetShell>
   );
 }
@@ -801,7 +899,9 @@ const styles = StyleSheet.create({
   primaryBtn: { backgroundColor: colors.brandPrimary, borderRadius: radius.md, paddingVertical: 15, alignItems: "center", marginTop: spacing.md, minHeight: 52, justifyContent: "center" },
   primaryText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "700" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  newCustomerBox: { marginTop: spacing.sm, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.border },
+  pickedRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 48, paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.border },
+  pickedName: { flex: 1, fontSize: 15, fontWeight: "700", color: colors.onSurface },
+  changeText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
   chip: { flexDirection: "row", gap: 6, paddingHorizontal: spacing.md, height: 36, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   chipText: { fontSize: 13, color: colors.onSurface, fontWeight: "600" },
   segment: { flexDirection: "row", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: 4, marginBottom: spacing.lg, borderWidth: 1, borderColor: colors.border },

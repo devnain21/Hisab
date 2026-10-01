@@ -171,6 +171,17 @@ class TestEntriesCRUD:
         assert r.status_code == 200
         TestEntriesCRUD.entry_ids.append(r.json()["id"])
 
+    def test_given_entry(self, session_a, api_url):
+        base = {"customerId": TestEntriesCRUD.customer_id, "type": "given", "date": "2026-01-16", "description": "TEST loan", "amount": 300}
+        r = session_a.post(f"{api_url}/entries", json=base)
+        assert r.status_code == 200, r.text
+        assert r.json()["type"] == "given" and r.json()["paid"] == 0
+        assert session_a.post(f"{api_url}/entries", json={**base, "paid": 100}).status_code == 422
+        eid = r.json()["id"]
+        u = session_a.put(f"{api_url}/entries/{eid}", json={**base, "amount": 350, "paid": 0})
+        assert u.status_code == 200 and u.json()["amount"] == 350
+        session_a.delete(f"{api_url}/entries/{eid}")
+
     def test_create_invalid_entry_type_rejected(self, session_a, api_url):
         r = session_a.post(f"{api_url}/entries", json={
             "customerId": TestEntriesCRUD.customer_id,

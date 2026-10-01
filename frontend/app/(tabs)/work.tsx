@@ -8,6 +8,7 @@ import { colors, spacing, radius } from "@/src/theme";
 import { useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
 import { formatDate, formatINR, todayISO } from "@/src/lib/format";
 import { buildAllLedgers, workForJob, type WorkStatus } from "@/src/lib/records";
+import { store } from "@/src/lib/store";
 import { AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
 import { SlowServerHint } from "@/src/components/slow-server-hint";
@@ -60,7 +61,9 @@ export default function WorkScreen() {
     if (params.filter && FILTERS.includes(params.filter)) setFilter(params.filter);
   }, [params.filter, params.t]);
 
-  const nameOf = (id: string) => customers.find((c) => c.id === id)?.name ?? "ग्राहक";
+  const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? "ग्राहक" : "खुद का काम");
+  // Own tasks have no money side, so finishing one is a single tap.
+  const complete = (j: Job) => (j.customerId ? setCompleting(j) : store.updateJob(j.id, { status: "done", dueDate: today }));
 
   const counts = useMemo(() => {
     const c = {} as Record<Filter, number>;
@@ -152,7 +155,7 @@ export default function WorkScreen() {
                 <Pressable style={[styles.jobCard, overdue && { borderLeftWidth: 4, borderLeftColor: colors.error }]} onPress={() => setEditing(j)} testID={`job-card-${j.id}`}>
                   <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
                     <Text style={[styles.jobTitle, { flex: 1 }]} numberOfLines={2}>{j.title}</Text>
-                    {pay ? <PayPill pay={pay} /> : <StatusPill status={j.status} />}
+                    {pay ? <PayPill pay={pay} /> : <StatusPill status={j.status} free={j.status === "done" && !!j.customerId && !work} />}
                   </View>
                   <Text style={[styles.jobSub, overdue && { color: colors.error }]}>
                     {nameOf(j.customerId)} · {j.dueDate === today ? "आज" : formatDate(j.dueDate)}{overdue ? " (देर)" : ""}
@@ -165,7 +168,7 @@ export default function WorkScreen() {
                       <Text style={[styles.smBtnText, { color: "#fff" }]}>पैसे मिले · {formatINR(pay.remaining)}</Text>
                     </Pressable>
                   ) : j.status !== "done" ? (
-                    <Pressable style={[styles.wideBtn, { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary }]} onPress={() => setCompleting(j)} testID={`complete-${j.id}`}>
+                    <Pressable style={[styles.wideBtn, { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary }]} onPress={() => complete(j)} testID={`complete-${j.id}`}>
                       <MaterialIcon name="check" size={16} color={colors.onBrandPrimary} />
                       <Text style={[styles.smBtnText, { color: colors.onBrandPrimary }]}>पूरा करें</Text>
                     </Pressable>
@@ -213,11 +216,11 @@ function PayPill({ pay }: { pay: WorkStatus }) {
   );
 }
 
-function StatusPill({ status }: { status: Job["status"] }) {
+function StatusPill({ status, free }: { status: Job["status"]; free?: boolean }) {
   const map = {
     pending: { bg: colors.surfaceTertiary, fg: colors.onSurfaceTertiary, label: "बाकी" },
     doing: { bg: colors.errorSoft, fg: colors.error, label: "चल रहा" },
-    done: { bg: colors.successSoft, fg: colors.success, label: "पूरा" },
+    done: { bg: colors.successSoft, fg: colors.success, label: free ? "मुफ़्त" : "पूरा" },
   } as const;
   const s = map[status];
   return (

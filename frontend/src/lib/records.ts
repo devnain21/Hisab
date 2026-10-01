@@ -3,9 +3,10 @@
 // recordWork used to name them.
 import { useEffect, useRef } from "react";
 import { store } from "@/src/lib/store";
-import { useEntries, type Entry, type Job } from "@/src/lib/data";
+import { isDebt, useEntries, type Entry, type Job } from "@/src/lib/data";
 
 const isLegacyPairFor = (work: Entry, e: Entry) =>
+  work.type === "work" &&
   e.type === "payment" &&
   !e.linkId &&
   e.customerId === work.customerId &&
@@ -51,8 +52,13 @@ export function workForJob(job: Job, entries: Entry[]): Entry | undefined {
 
 /** Removes a khata entry together with the rows that were booked with it. */
 export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]) {
+  if (entry.type === "given") {
+    store.deleteEntry(entry.id);
+    settlementsFor(entry, entries).forEach((p) => store.deleteEntry(p.id));
+    return;
+  }
   const work = entry.type === "work" ? entry : workForPayment(entry, entries);
-  if (!work || (entry.type === "payment" && entry.date !== work.date)) {
+  if (!work || work.type !== "work" || (entry.type === "payment" && entry.date !== work.date)) {
     // A later settlement is its own event; removing it just re-opens the udhaar.
     store.deleteEntry(entry.id);
     return;
@@ -153,7 +159,8 @@ const byTime = (a: Entry, b: Entry) => (a.date !== b.date ? a.date.localeCompare
  * so the status can never disagree with the balance.
  */
 export function buildLedger(entries: Entry[]): Ledger {
-  const works = entries.filter((e) => e.type === "work").sort(byTime);
+  // "works" covers every debt row: work done and money given.
+  const works = entries.filter(isDebt).sort(byTime);
   const work = new Map<string, WorkStatus>();
   const nested = new Set<string>();
 

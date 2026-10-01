@@ -3,9 +3,12 @@ import { api } from "@/src/lib/api";
 import { withPending } from "@/src/lib/store";
 
 export type Customer = { id: string; name: string; phone: string; address: string; notes: string; createdAt: string };
+// work: service done · payment: money received from them · given: money handed to them (loan).
 // paid: cash taken when the work was booked (work rows only, 0..amount).
-// linkId: a payment that settles a specific work entry points at that work entry.
-export type Entry = { id: string; customerId: string; type: "work" | "payment"; date: string; description: string; amount: number; paid?: number; notes: string; linkId?: string; createdAt: string };
+// linkId: a payment that settles a specific work/given entry points at that entry.
+export type EntryType = "work" | "payment" | "given";
+export type Entry = { id: string; customerId: string; type: EntryType; date: string; description: string; amount: number; paid?: number; notes: string; linkId?: string; createdAt: string };
+// customerId "" = the shopkeeper's own task (no customer, no money).
 // entryId: the work entry booked when this job was completed.
 export type Job = { id: string; customerId: string; title: string; dueDate: string; status: "pending" | "doing" | "done"; estimatedAmount: number; notes: string; entryId?: string; createdAt: string };
 
@@ -53,12 +56,22 @@ export function computeBalance(entries: Entry[], customerId?: string): number {
   return list.reduce((s, e) => s + entryDelta(e), 0);
 }
 
-/** How much this row moves the customer's balance: udhaar part of work up, payments down. */
+/** How much this row moves the customer's balance: udhaar part of work and money given up, payments down. */
 export function entryDelta(e: Entry): number {
-  return e.type === "work" ? e.amount - (e.paid ?? 0) : -e.amount;
+  if (e.type === "work") return e.amount - (e.paid ?? 0);
+  return e.type === "given" ? e.amount : -e.amount;
 }
 
 /** Cash that came in with this row (for day totals). */
 export function cashIn(e: Entry): number {
-  return e.type === "work" ? e.paid ?? 0 : e.amount;
+  if (e.type === "work") return e.paid ?? 0;
+  return e.type === "payment" ? e.amount : 0;
+}
+
+/** Rows the customer owes on (payments settle these, oldest first). */
+export const isDebt = (e: Entry) => e.type !== "payment";
+
+/** Unlinked money already with us from this customer (negative balance), or 0. */
+export function advanceOf(entries: Entry[], customerId: string): number {
+  return Math.max(0, -computeBalance(entries, customerId));
 }

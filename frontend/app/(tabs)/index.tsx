@@ -10,7 +10,7 @@ import { colors, spacing, radius } from "@/src/theme";
 import { cashIn, useAeps, useCustomers, useEntries, useJobs, computeBalance, type Job } from "@/src/lib/data";
 import { aepsTotals } from "@/src/lib/aeps";
 import { formatDateShort, formatINR, formatWeekdayDate, todayISO } from "@/src/lib/format";
-import { AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
+import { AddEntrySheet, AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
 import { useAuth } from "@/src/context/AuthContext";
 import { usePendingCount } from "@/src/lib/store";
 
@@ -22,6 +22,7 @@ export default function Home() {
   const jobsQ = useJobs();
   const aeps = useAeps().data ?? [];
   const [jobSheet, setJobSheet] = useState(false);
+  const [moneySheet, setMoneySheet] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const { user } = useAuth();
   const pending = usePendingCount();
@@ -32,8 +33,9 @@ export default function Home() {
   const jobs = jobsQ.data ?? [];
 
   const stats = useMemo(() => {
-    const dueCustomers = customers.filter((c) => computeBalance(entries, c.id) > 0).length;
-    const totalDue = computeBalance(entries);
+    const dues = customers.map((c) => computeBalance(entries, c.id)).filter((d) => d > 0);
+    const dueCustomers = dues.length;
+    const totalDue = dues.reduce((s, d) => s + d, 0);
     const todayWork = entries.filter((e) => e.date === today && e.type === "work");
     const todayPay = entries.filter((e) => e.date === today && cashIn(e) > 0);
     const open = jobs.filter((j) => j.status !== "done");
@@ -58,7 +60,7 @@ export default function Home() {
 
   const loading = customersQ.isLoading || entriesQ.isLoading || jobsQ.isLoading;
   const loadFailed = !loading && (customersQ.isError || entriesQ.isError) && customersQ.data == null;
-  const nameOf = (id: string) => customers.find((c) => c.id === id)?.name ?? "ग्राहक";
+  const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? "ग्राहक" : "खुद का काम");
   // The nonce makes the target tab re-apply the filter even if it was already open with it.
   const go = (pathname: string, params: Record<string, string>) =>
     router.navigate({ pathname: pathname as any, params: { ...params, t: String(Date.now()) } });
@@ -133,10 +135,16 @@ export default function Home() {
               />
             </View>
 
-            <Pressable style={styles.primaryAction} onPress={() => setJobSheet(true)} testID="quick-work">
-              <MaterialIcon name="briefcase-plus-outline" size={20} color={colors.onBrandPrimary} />
-              <Text style={styles.primaryActionText}>काम लिखें</Text>
-            </Pressable>
+            <View style={styles.actionRow}>
+              <Pressable style={styles.primaryAction} onPress={() => setJobSheet(true)} testID="quick-work">
+                <MaterialIcon name="briefcase-plus-outline" size={20} color={colors.onBrandPrimary} />
+                <Text style={styles.primaryActionText}>काम लिखें</Text>
+              </Pressable>
+              <Pressable style={styles.secondaryAction} onPress={() => setMoneySheet(true)} testID="quick-money">
+                <MaterialIcon name="swap-vertical" size={20} color={colors.brandPrimary} />
+                <Text style={styles.secondaryActionText}>लेन-देन</Text>
+              </Pressable>
+            </View>
 
             <Pressable style={styles.aepsLine} onPress={() => go("/(tabs)/aeps", { range: "today" })} testID="home-aeps-card">
               <MaterialIcon name="fingerprint" size={16} color={colors.brandPrimary} />
@@ -187,6 +195,7 @@ export default function Home() {
       </ScrollView>
 
       <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />
+      <AddEntrySheet visible={moneySheet} type="payment" kinds={["payment", "given"]} onClose={() => setMoneySheet(false)} />
       <EditRecordSheet job={editingJob} onClose={() => setEditingJob(null)} />
     </View>
   );
@@ -226,8 +235,11 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 22, fontWeight: "700", marginTop: spacing.xs },
   statBottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xs },
   statHint: { fontSize: 12, color: colors.muted, flexShrink: 1 },
-  primaryAction: { marginTop: spacing.lg, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
+  actionRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },
+  primaryAction: { flex: 3, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
   primaryActionText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "700" },
+  secondaryAction: { flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.surface },
+  secondaryActionText: { color: colors.brandPrimary, fontSize: 16, fontWeight: "700" },
   aepsLine: { marginTop: spacing.sm, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 10, paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary },
   aepsLineText: { flex: 1, fontSize: 13, fontWeight: "600", color: colors.onSurface },
   sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xl, marginBottom: spacing.md },

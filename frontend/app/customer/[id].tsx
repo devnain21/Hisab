@@ -5,7 +5,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { computeBalance, useCustomers, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
+import { computeBalance, useCustomers, useEntries, useJobs, type Entry, type EntryType, type Job } from "@/src/lib/data";
 import { formatDate, formatINR, formatPhone, initials, waNumber } from "@/src/lib/format";
 import { store } from "@/src/lib/store";
 import { buildLedger, type WorkState, type WorkStatus } from "@/src/lib/records";
@@ -20,7 +20,7 @@ export default function CustomerDetail() {
   const customersQ = useCustomers();
   const entriesQ = useEntries();
   const jobsQ = useJobs();
-  const [entrySheet, setEntrySheet] = useState<"work" | "payment" | null>(null);
+  const [entrySheet, setEntrySheet] = useState<EntryType | null>(null);
   const [jobSheet, setJobSheet] = useState<"now" | "later" | null>(null);
   const [editSheet, setEditSheet] = useState(false);
   const [completing, setCompleting] = useState<Job | null>(null);
@@ -64,6 +64,9 @@ export default function CustomerDetail() {
   });
 
   const due = computeBalance(entries);
+  // Money left with us by a customer is an advance; with a personal contact it's money we owe back.
+  const isCustomer = entries.some((e) => e.type === "work") || jobs.length > 0;
+  const balanceLabel = due > 0 ? "लेने हैं" : due < 0 ? (isCustomer ? "एडवांस जमा" : "देने हैं") : "हिसाब";
   const openJobs = jobs.filter((j) => j.status !== "done");
   const showMoreFilters = rows.length > 8;
 
@@ -87,12 +90,12 @@ export default function CustomerDetail() {
       return;
     }
     const shop = user?.shop_name || "बही खाता";
-    const status = due > 0 ? `बाकी: ${formatINR(due)}` : due < 0 ? `एडवांस: ${formatINR(Math.abs(due))}` : "खाता क्लियर है";
+    const status = due > 0 ? `बाकी: ${formatINR(due)}` : due < 0 ? `${isCustomer ? "एडवांस" : "आपके"}: ${formatINR(Math.abs(due))}` : "खाता क्लियर है";
     const pending = rows
-      .filter((e) => e.type === "work" && (ledger.work.get(e.id)?.remaining ?? 0) > 0)
+      .filter((e) => e.type !== "payment" && (ledger.work.get(e.id)?.remaining ?? 0) > 0)
       .reverse()
-      .map((e) => `• ${formatDate(e.date)}  ${e.description}  ${formatINR(ledger.work.get(e.id)!.remaining)}`);
-    const text = [`*${shop}*`, customer.name, status, ...(pending.length ? ["", "बाकी काम:", ...pending] : []), "", "धन्यवाद 🙏"].join("\n");
+      .map((e) => `• ${formatDate(e.date)}  ${e.description || "उधार दिए"}  ${formatINR(ledger.work.get(e.id)!.remaining)}`);
+    const text = [`*${shop}*`, customer.name, status, ...(pending.length ? ["", "बाकी:", ...pending] : []), "", "धन्यवाद 🙏"].join("\n");
     Linking.openURL(`https://wa.me/${wa}?text=${encodeURIComponent(text)}`).catch(() => {
       Alert.alert("WhatsApp नहीं खुला", "इस फ़ोन पर WhatsApp नहीं मिला।");
     });
@@ -126,8 +129,8 @@ export default function CustomerDetail() {
 
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}>
         <View style={styles.balanceCard}>
-          <Text style={styles.balanceLabel}>अभी बाकी</Text>
-          <Text style={[styles.balanceValue, { color: due > 0 ? colors.error : due < 0 ? colors.success : colors.onSurface }]}>
+          <Text style={styles.balanceLabel}>{balanceLabel}</Text>
+          <Text style={[styles.balanceValue, { color: due > 0 ? colors.error : due < 0 ? (isCustomer ? colors.success : colors.warning) : colors.onSurface }]}>
             {due === 0 ? "क्लियर" : formatINR(Math.abs(due))}
           </Text>
           {customer.notes ? <Text style={styles.notes}>{customer.notes}</Text> : null}
@@ -138,20 +141,23 @@ export default function CustomerDetail() {
             </Pressable>
             <Pressable style={[styles.actionBtn, { backgroundColor: colors.success }]} onPress={() => setEntrySheet("payment")} testID="add-jama-btn">
               <MaterialIcon name="arrow-bottom-left" size={16} color="#fff" />
-              <Text style={styles.actionText}>जमा</Text>
+              <Text style={styles.actionText}>मिले</Text>
             </Pressable>
-            {openJobs.length > 0 ? (
-              <Pressable style={[styles.actionBtn, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }]} onPress={() => setJobSheet("later")} testID="add-job-btn">
-                <MaterialIcon name="calendar-clock" size={16} color={colors.onSurface} />
-                <Text style={[styles.actionText, { color: colors.onSurface }]}>आगे का</Text>
-              </Pressable>
-            ) : null}
+            <Pressable style={[styles.actionBtn, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.error }]} onPress={() => setEntrySheet("given")} testID="add-given-btn">
+              <MaterialIcon name="arrow-top-right" size={16} color={colors.error} />
+              <Text style={[styles.actionText, { color: colors.error }]}>दिए</Text>
+            </Pressable>
           </View>
         </View>
 
         {openJobs.length > 0 && (
           <>
-            <Text style={styles.sectionHead}>आगे का काम / रिमार्क</Text>
+            <View style={styles.sectionRow}>
+              <Text style={[styles.sectionHead, { marginTop: 0, marginBottom: 0 }]}>आगे का काम / रिमार्क</Text>
+              <Pressable onPress={() => setJobSheet("later")} hitSlop={8} testID="add-job-btn">
+                <MaterialIcon name="plus-circle-outline" size={22} color={colors.brandPrimary} />
+              </Pressable>
+            </View>
             <View style={{ gap: spacing.sm }}>
               {openJobs.map((j) => (
                 <Pressable key={j.id} style={styles.jobRow} onPress={() => setEditingJob(j)} testID={`cust-job-${j.id}`}>
@@ -202,7 +208,7 @@ export default function CustomerDetail() {
           <View style={{ gap: spacing.sm }}>
             {visible.map((e, i) => (
               <Animated.View key={e.id} entering={FadeInDown.delay(Math.min(i, 8) * 40).duration(250)}>
-                {e.type === "work" ? (
+                {e.type !== "payment" ? (
                   <WorkCard entry={e} status={ledger.work.get(e.id)!} onPress={() => setEditing(e)} onSettle={() => setSettling(e)} />
                 ) : (
                   <JamaCard entry={e} onPress={() => setEditing(e)} />
@@ -230,7 +236,15 @@ export default function CustomerDetail() {
 
 type LedgerFilter = "all" | "due" | "settled" | "cash" | "jama";
 const LEDGER_FILTERS: LedgerFilter[] = ["all", "due", "settled", "cash", "jama"];
-const LEDGER_FILTER_LABEL: Record<LedgerFilter, string> = { all: "सभी", due: "उधार बाकी", settled: "चुकता", cash: "नकद", jama: "जमा" };
+const LEDGER_FILTER_LABEL: Record<LedgerFilter, string> = { all: "सभी", due: "बाकी", settled: "चुकता", cash: "नकद", jama: "मिले" };
+
+// Money handed over (personal loan): same settle flow as udhaar work, different wording.
+const GIVEN_UI: Record<WorkState, { label: string; icon: string; fg: string; bg: string }> = {
+  cash: { label: "वापस मिले", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
+  pending: { label: "वापस लेने हैं", icon: "arrow-top-right", fg: colors.error, bg: colors.errorSoft },
+  partial: { label: "आंशिक", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
+  settled: { label: "वापस मिले", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
+};
 
 const STATE_UI: Record<WorkState, { label: string; icon: string; fg: string; bg: string }> = {
   cash: { label: "नकद", icon: "cash", fg: colors.success, bg: colors.successSoft },
@@ -240,7 +254,8 @@ const STATE_UI: Record<WorkState, { label: string; icon: string; fg: string; bg:
 };
 
 function WorkCard({ entry, status, onPress, onSettle }: { entry: Entry; status: WorkStatus; onPress: () => void; onSettle: () => void }) {
-  const ui = STATE_UI[status.state];
+  const given = entry.type === "given";
+  const ui = (given ? GIVEN_UI : STATE_UI)[status.state];
   const open = status.state === "pending" || status.state === "partial";
   const laterPaid = status.received - status.paidAtBooking;
   return (
@@ -254,7 +269,7 @@ function WorkCard({ entry, status, onPress, onSettle }: { entry: Entry; status: 
           <MaterialIcon name={ui.icon as any} size={18} color={ui.fg} />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.jobTitle} numberOfLines={2}>{entry.description}</Text>
+          <Text style={styles.jobTitle} numberOfLines={2}>{entry.description || (given ? "पैसे दिए" : "काम")}</Text>
           <Text style={styles.sub}>{formatDate(entry.date)}{entry.notes ? ` · ${entry.notes}` : ""}</Text>
         </View>
         <View style={{ alignItems: "flex-end" }}>
@@ -278,7 +293,7 @@ function WorkCard({ entry, status, onPress, onSettle }: { entry: Entry; status: 
       {open ? (
         <Pressable style={styles.settleBtn} onPress={onSettle} testID={`settle-${entry.id}`}>
           <MaterialIcon name="cash-check" size={16} color="#fff" />
-          <Text style={styles.settleText}>पैसे मिले{status.state === "partial" ? ` · ${formatINR(status.remaining)}` : ""}</Text>
+          <Text style={styles.settleText}>{given ? "पैसे वापस मिले" : "पैसे मिले"}{status.state === "partial" ? ` · ${formatINR(status.remaining)}` : ""}</Text>
         </Pressable>
       ) : null}
     </Pressable>
@@ -293,13 +308,13 @@ function JamaCard({ entry, onPress }: { entry: Entry; onPress: () => void }) {
           <MaterialIcon name="arrow-bottom-left" size={18} color={colors.success} />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.jobTitle} numberOfLines={2}>{entry.description || "जमा"}</Text>
+          <Text style={styles.jobTitle} numberOfLines={2}>{entry.description || "पैसे मिले"}</Text>
           <Text style={styles.sub}>{formatDate(entry.date)}{entry.notes ? ` · ${entry.notes}` : ""}</Text>
         </View>
         <View style={{ alignItems: "flex-end" }}>
           <Text style={[styles.amount, { color: colors.success }]}>−{formatINR(entry.amount)}</Text>
           <View style={[styles.statePill, { backgroundColor: colors.successSoft }]}>
-            <Text style={[styles.stateText, { color: colors.success }]}>जमा</Text>
+            <Text style={[styles.stateText, { color: colors.success }]}>मिले</Text>
           </View>
         </View>
       </View>
@@ -319,7 +334,8 @@ const styles = StyleSheet.create({
   actionsRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },
   actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 11, borderRadius: radius.md },
   actionText: { color: "#fff", fontWeight: "700", fontSize: 13 },
-  sectionHead: { fontSize: 17, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xl, marginBottom: spacing.md },  jobRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
+  sectionHead: { fontSize: 17, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xl, marginBottom: spacing.md },
+  sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xl, marginBottom: spacing.md },  jobRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   jobTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   pillBtn: { paddingHorizontal: spacing.md, paddingVertical: 7, backgroundColor: colors.brandPrimary, borderRadius: radius.pill },
   pillBtnText: { color: colors.onBrandPrimary, fontWeight: "700", fontSize: 12 },

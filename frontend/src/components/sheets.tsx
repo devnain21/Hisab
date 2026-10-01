@@ -14,7 +14,7 @@ import {
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
-import { advanceOf, useCustomers, useEntries, useJobs, type Entry, type EntryType, type Job } from "@/src/lib/data";
+import { advanceOf, computeBalance, useCustomers, useEntries, useJobs, type Entry, type EntryType, type Job } from "@/src/lib/data";
 import { buildLedger, jobForWork, linkedPayment, removeEntryWithLinks, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
@@ -228,37 +228,89 @@ function CustomerPicker({ choice, label = "ग्राहक", allowSelf, testP
   );
 }
 
-// advance: paid 0 now, the work is covered by money the customer left earlier.
-type PayMode = "cash" | "udhaar" | "partial" | "advance";
+/**
+ * "कुल रकम" + "अभी मिले". Received follows the total until the user edits it, so the common
+ * cash case is just typing the amount.
+ */
+function useMoneyInput() {
+  const [total, setTotalRaw] = useState("");
+  const [received, setReceivedRaw] = useState("");
+  const [touched, setTouched] = useState(false);
+  return {
+    total,
+    received,
+    totalNum: Math.max(parseFloat(total) || 0, 0),
+    receivedNum: Math.max(parseFloat(received) || 0, 0),
+    setTotal: (t: string) => {
+      setTotalRaw(t);
+      if (!touched) setReceivedRaw(t);
+    },
+    setReceived: (r: string) => {
+      setTouched(true);
+      setReceivedRaw(r);
+    },
+    reset: (t: string, r?: string) => {
+      setTotalRaw(t);
+      setReceivedRaw(r ?? t);
+      setTouched(r !== undefined);
+    },
+  };
+}
 
-function PaymentPicker({ mode, onMode, paid, onPaid, total, advance = 0 }: { mode: PayMode; onMode: (m: PayMode) => void; paid: string; onPaid: (v: string) => void; total: number; advance?: number }) {
-  const paidNum = parseFloat(paid) || 0;
-  const due = mode === "cash" ? 0 : mode === "partial" ? Math.max(total - paidNum, 0) : total;
-  const fromAdvance = Math.min(advance, due);
+type MoneyInput = ReturnType<typeof useMoneyInput>;
+
+function MoneyFields({ money, advance = 0, totalLabel = "कुल रकम (₹)", receivedLabel = "अभी कितने मिले (₹)", freeAllowed }: { money: MoneyInput; advance?: number; totalLabel?: string; receivedLabel?: string; freeAllowed?: boolean }) {
+  const t = money.totalNum;
+  const r = money.receivedNum;
   return (
-    <Field label="पैसे का हिसाब">
-      <View style={styles.chipRow}>
-        <Chip label="नकद मिला" icon="cash" active={mode === "cash"} onPress={() => onMode("cash")} tone={colors.success} testID="pay-cash" />
-        <Chip label="उधार" icon="book-clock-outline" active={mode === "udhaar"} onPress={() => onMode("udhaar")} tone={colors.error} testID="pay-udhaar" />
-        <Chip label="अलग रकम" icon="cash-edit" active={mode === "partial"} onPress={() => onMode("partial")} tone={colors.warning} testID="pay-partial" />
-        {advance > 0 ? <Chip label={`एडवांस से (${formatINR(advance)})`} icon="wallet-outline" active={mode === "advance"} onPress={() => onMode("advance")} tone={colors.success} testID="pay-advance" /> : null}
-      </View>
-      {mode === "partial" && (
-        <TextInput style={[inputStyle, { marginTop: spacing.sm }]} value={paid} onChangeText={onPaid} placeholder="कितने मिले (₹)" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-paid" />
-      )}
-      {total > 0 && mode === "partial" && paidNum > total ? (
-        <Text style={[styles.hint, { color: colors.success }]}>{formatINR(paidNum - total)} एडवांस जमा रहेगा</Text>
+    <>
+      <Field label={totalLabel}>
+        <TextInput style={inputStyle} value={money.total} onChangeText={money.setTotal} placeholder={freeAllowed ? "0 = मुफ़्त" : "0"} placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-money-total" />
+      </Field>
+      {t > 0 ? (
+        <Field label={receivedLabel}>
+          <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
+            <Chip label={`पूरे ${formatINR(t)}`} active={r === t} onPress={() => money.setReceived(String(t))} tone={colors.success} testID="money-full" />
+            {advance > 0 ? (
+              <Chip label={`एडवांस काटकर ${formatINR(Math.max(t - advance, 0))}`} active={r === Math.max(t - advance, 0) && r !== t} onPress={() => money.setReceived(String(Math.max(t - advance, 0)))} tone={colors.success} testID="money-advance" />
+            ) : null}
+            <Chip label="कुछ नहीं" active={money.received !== "" && r === 0} onPress={() => money.setReceived("0")} tone={colors.error} testID="money-none" />
+          </View>
+          <TextInput style={inputStyle} value={money.received} onChangeText={money.setReceived} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-money-received" />
+        </Field>
       ) : null}
-      {total > 0 && fromAdvance > 0 ? <Text style={[styles.hint, { color: colors.success }]}>{formatINR(fromAdvance)} एडवांस से कटेगा</Text> : null}
-      {total > 0 && due - fromAdvance > 0 && mode !== "udhaar" ? (
-        <Text style={[styles.hint, { color: colors.error }]}>{formatINR(due - fromAdvance)} उधार में जुड़ेगा</Text>
-      ) : null}
-    </Field>
+      <MoneyResult total={t} received={r} advance={advance} freeAllowed={freeAllowed} />
+    </>
   );
 }
 
-const paidFor = (mode: PayMode, amount: number, paid: number) =>
-  mode === "cash" ? amount : mode === "partial" ? Math.max(paid, 0) : 0;
+/** One line that says exactly what will be booked. */
+function MoneyResult({ total, received, advance, freeAllowed }: { total: number; received: number; advance: number; freeAllowed?: boolean }) {
+  let text = "";
+  let tone: string = colors.success;
+  if (total <= 0) {
+    if (!freeAllowed) return null;
+    text = "मुफ़्त काम";
+    tone = colors.onSurfaceSecondary;
+  } else if (received >= total) {
+    text = received > total ? `✔ पूरे मिले · ${formatINR(received - total)} एडवांस जमा होगा` : "✔ पूरे पैसे मिले";
+  } else {
+    const due = total - received;
+    const fromAdvance = Math.min(advance, due);
+    const left = due - fromAdvance;
+    const parts = [];
+    if (fromAdvance > 0) parts.push(`${formatINR(fromAdvance)} एडवांस से कटेगा`);
+    if (left > 0) parts.push(`${formatINR(left)} उधार बाकी`);
+    text = parts.join(" · ");
+    tone = left > 0 ? colors.error : colors.success;
+  }
+  return (
+    <View style={[styles.resultBox, { borderColor: tone }]} testID="money-result">
+      <Text style={[styles.resultText, { color: tone }]}>{text}</Text>
+    </View>
+  );
+}
+
 const settleDescription = (title: string) => `${title} — भुगतान`;
 
 /** Money taken beyond the work amount stays with us as a separate advance row. */
@@ -268,11 +320,10 @@ function bookAdvance(customerId: string, extra: number, date: string, title: str
 }
 
 // One row per piece of work: `paid` is the cash taken now (capped at the amount), the rest is udhaar.
-function recordWork({ customerId, title, amount, mode, paid, date, notes }: { customerId: string; title: string; amount: number; mode: PayMode; paid: number; date: string; notes: string }): string {
+function recordWork({ customerId, title, amount, received, date, notes }: { customerId: string; title: string; amount: number; received: number; date: string; notes: string }): string {
   if (amount <= 0) return "";
-  const taken = paidFor(mode, amount, paid);
-  const work = store.createEntry({ customerId, type: "work", date, description: title, amount, paid: Math.min(taken, amount), notes });
-  bookAdvance(customerId, taken - amount, date, title);
+  const work = store.createEntry({ customerId, type: "work", date, description: title, amount, paid: Math.min(received, amount), notes });
+  bookAdvance(customerId, received - amount, date, title);
   return work.id;
 }
 
@@ -367,6 +418,9 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
     setNotes(initial?.notes ?? "");
   }, [visible, initial, type]);
 
+  const entries = useEntries().data ?? [];
+  const personId = initial ? "" : choice.existingId;
+  const due = personId ? computeBalance(entries, personId) : 0;
   const ui = ENTRY_UI[kind];
   const amt = parseFloat(amount);
   const needsDescription = kind === "work";
@@ -400,7 +454,17 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
       ) : null}
       {!initial && !fixedCustomerId && <CustomerPicker choice={choice} label={kind === "work" ? "ग्राहक" : kind === "payment" ? "किससे मिले" : "किसको दिए"} testPrefix="chip-cust" />}
       <Field label="रकम (₹)">
+        {kind === "payment" && due > 0 ? (
+          <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
+            <Chip label={`पूरा बाकी ${formatINR(due)}`} active={amt === due} onPress={() => setAmount(String(due))} tone={colors.success} testID="entry-full-due" />
+          </View>
+        ) : null}
         <TextInput style={inputStyle} value={amount} onChangeText={setAmount} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-entry-amount" />
+        {kind === "payment" && due > 0 && amt > 0 ? (
+          <Text style={[styles.hint, { color: amt >= due ? colors.success : colors.error }]}>
+            {amt > due ? `✔ हिसाब बराबर · ${formatINR(amt - due)} एडवांस` : amt === due ? "✔ हिसाब बराबर" : `${formatINR(due - amt)} फिर भी बाकी`}
+          </Text>
+        ) : null}
       </Field>
       <Field label={needsDescription ? "विवरण" : "किस लिए (वैकल्पिक)"}>
         <TextInput style={inputStyle} value={description} onChangeText={setDescription} placeholder={ui.placeholder} placeholderTextColor={colors.muted} testID="input-entry-desc" />
@@ -444,21 +508,13 @@ export function DangerLink({ label, onPress, testID }: { label: string; onPress:
   );
 }
 
-function payModeOf(amount: number, paid: number): { mode: PayMode; paid: string } {
-  if (paid <= 0) return { mode: "udhaar", paid: "" };
-  if (paid >= amount) return { mode: "cash", paid: "" };
-  return { mode: "partial", paid: String(paid) };
-}
-
 /** Edits a finished piece of work: the work entry, the money taken with it and its job card. */
 export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose: () => void }) {
   const entries = useEntries().data ?? [];
   const jobs = useJobs().data ?? [];
   const later = entry ? settlementsFor(entry, entries).filter((p) => p.date !== entry.date) : [];
   const [title, setTitle] = useState("");
-  const [amount, setAmount] = useState("");
-  const [pay, setPay] = useState<PayMode>("udhaar");
-  const [paid, setPaid] = useState("");
+  const money = useMoneyInput();
   const [date, setDate] = useState(todayISO());
   const [notes, setNotes] = useState("");
   const [remark, setRemark] = useState("");
@@ -470,11 +526,8 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
 
   useEffect(() => {
     if (!entry) return;
-    const p = payModeOf(entry.amount, (entry.paid ?? 0) || (link?.amount ?? 0));
     setTitle(entry.description);
-    setAmount(String(entry.amount));
-    setPay(p.mode);
-    setPaid(p.paid);
+    money.reset(String(entry.amount), String((entry.paid ?? 0) || (link?.amount ?? 0)));
     setDate(entry.date);
     setNotes(entry.notes);
     setRemark("");
@@ -483,7 +536,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entry?.id]);
 
-  const amt = parseFloat(amount) || 0;
+  const amt = money.totalNum;
   const valid = !!title.trim() && amt > 0;
 
   const save = () => {
@@ -491,8 +544,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
     setSaving(true);
     try {
       const t = title.trim();
-      const paidNum = parseFloat(paid) || 0;
-      const taken = paidFor(pay, amt, paidNum);
+      const taken = money.receivedNum;
       store.updateEntry(entry.id, { type: "work", date, description: t, amount: amt, paid: Math.min(taken, amt), notes: notes.trim() });
       bookAdvance(entry.customerId, taken - amt, date, t);
       // Old two-row cash records: the same-day jama is now carried by `paid`.
@@ -512,10 +564,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       <Field label="क्या काम">
         <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholderTextColor={colors.muted} testID="input-edit-work-title" />
       </Field>
-      <Field label="रकम (₹)">
-        <TextInput style={inputStyle} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.muted} testID="input-edit-work-amount" />
-      </Field>
-      <PaymentPicker mode={pay} onMode={setPay} paid={paid} onPaid={setPaid} total={amt} />
+      <MoneyFields money={money} receivedLabel="काम के दिन कितने मिले (₹)" />
       {later.length > 0 ? (
         <Field label="बाद में मिले पैसे">
           {later.map((p) => (
@@ -709,9 +758,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   const choice = useCustomerChoice(visible, fixedCustomerId);
   const [mode, setMode] = useState<JobMode>(initialMode);
   const [title, setTitle] = useState("");
-  const [amount, setAmount] = useState("");
-  const [pay, setPay] = useState<PayMode>("cash");
-  const [paid, setPaid] = useState("");
+  const money = useMoneyInput();
   const [date, setDate] = useState(todayISO());
   const [remark, setRemark] = useState("");
   const [remarkDate, setRemarkDate] = useState(todayISO(1));
@@ -721,13 +768,12 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
     if (visible) {
       setMode(initialMode);
       setTitle("");
-      setAmount("");
-      setPay("cash");
-      setPaid("");
+      money.reset("");
       setDate(initialMode === "now" ? todayISO() : todayISO(1));
       setRemark("");
       setRemarkDate(todayISO(1));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initialMode]);
 
   const switchMode = (m: JobMode) => {
@@ -737,9 +783,8 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
 
   const entries = useEntries().data ?? [];
   const self = choice.isSelf;
-  const amt = self ? 0 : parseFloat(amount) || 0;
+  const amt = self ? 0 : money.totalNum;
   const advance = choice.existingId ? advanceOf(entries, choice.existingId) : 0;
-  const payMode: PayMode = pay === "advance" && advance <= 0 ? "cash" : pay;
   const valid = choice.ready && !!title.trim();
   const saveLabel = mode === "later" ? "आगे का काम जोड़ें" : self ? "सेव करें" : amt > 0 ? "काम सेव करें" : "मुफ़्त काम सेव करें";
 
@@ -750,8 +795,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       const customerId = await choice.resolve();
       const t = title.trim();
       if (mode === "now") {
-        const paidNum = parseFloat(paid) || 0;
-        const entryId = recordWork({ customerId, title: t, amount: amt, mode: payMode, paid: paidNum, date, notes: remark.trim() });
+        const entryId = recordWork({ customerId, title: t, amount: amt, received: money.receivedNum, date, notes: remark.trim() });
         store.createJob({ customerId, title: t, dueDate: date, status: "done", estimatedAmount: amt, notes: remark.trim(), entryId });
         if (remark.trim()) {
           await store.createJob({ customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
@@ -778,15 +822,16 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       <Field label="क्या काम">
         <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholder={self ? "जैसे पेपर मँगवाना, बिजली बिल भरना" : mode === "now" ? "जैसे पासपोर्ट फोटो, फोटोकॉपी 20 पेज" : "जैसे शादी एलबम"} placeholderTextColor={colors.muted} testID="input-job-title" />
       </Field>
-      {self ? null : (
-        <Field label={mode === "now" ? "रकम (₹) — मुफ़्त हो तो खाली" : "अनुमानित रकम (₹, वैकल्पिक)"}>
-          <TextInput style={inputStyle} value={amount} onChangeText={setAmount} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-amount" />
+      {self ? null : mode === "now" ? (
+        <MoneyFields money={money} advance={advance} freeAllowed />
+      ) : (
+        <Field label="अनुमानित रकम (₹, वैकल्पिक)">
+          <TextInput style={inputStyle} value={money.total} onChangeText={money.setTotal} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-amount" />
         </Field>
       )}
 
       {mode === "now" ? (
         <>
-          {amt > 0 ? <PaymentPicker mode={payMode} onMode={setPay} paid={paid} onPaid={setPaid} total={amt} advance={advance} /> : null}
           <DateField label="तारीख" value={date} onChange={setDate} testID="input-job-date" />
           <Field label="आगे का रिमार्क (वैकल्पिक)">
             <TextInput style={[inputStyle, { minHeight: 64 }]} value={remark} onChangeText={setRemark} multiline placeholder="जैसे कल प्रिंट देने हैं, बाकी पैसे शनिवार को" placeholderTextColor={colors.muted} testID="input-job-remark" />
@@ -807,24 +852,30 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   );
 }
 
-export function ShopNameSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const { user, setShopName } = useAuth();
+export function ShopProfileSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const { user, setShop } = useAuth();
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [gst, setGst] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (visible) {
       setName(user?.shop_name ?? "");
+      setPhone(user?.shop_phone ?? "");
+      setAddress(user?.shop_address ?? "");
+      setGst(user?.shop_gst ?? "");
       setError(null);
     }
-  }, [visible, user?.shop_name]);
+  }, [visible, user?.shop_name, user?.shop_phone, user?.shop_address, user?.shop_gst]);
 
   const save = async () => {
     setSaving(true);
     setError(null);
     try {
-      await setShopName(name.trim());
+      await setShop({ shop_name: name.trim(), shop_phone: phone.trim(), shop_address: address.trim(), shop_gst: gst.trim().toUpperCase() });
       onClose();
     } catch {
       setError("सेव नहीं हुआ, दोबारा कोशिश करें।");
@@ -832,9 +883,18 @@ export function ShopNameSheet({ visible, onClose }: { visible: boolean; onClose:
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title="दुकान का नाम" testID="sheet-shop-name">
-      <Field label="आपकी दुकान / बिज़नेस का नाम">
-        <TextInput style={inputStyle} value={name} onChangeText={setName} placeholder="जैसे नैन फोटो स्टेट" placeholderTextColor={colors.muted} maxLength={60} autoFocus testID="input-shop-name" />
+    <SheetShell visible={visible} onClose={onClose} title="दुकान की जानकारी" testID="sheet-shop-name">
+      <Field label="दुकान / बिज़नेस का नाम">
+        <TextInput style={inputStyle} value={name} onChangeText={setName} placeholder="जैसे नैन फोटो स्टेट" placeholderTextColor={colors.muted} maxLength={60} testID="input-shop-name" />
+      </Field>
+      <Field label="फ़ोन (रसीद पर छपेगा)">
+        <TextInput style={inputStyle} value={phone} onChangeText={setPhone} keyboardType="phone-pad" maxLength={20} placeholderTextColor={colors.muted} testID="input-shop-phone" />
+      </Field>
+      <Field label="पता (वैकल्पिक)">
+        <TextInput style={inputStyle} value={address} onChangeText={setAddress} maxLength={120} placeholderTextColor={colors.muted} testID="input-shop-address" />
+      </Field>
+      <Field label="GST नंबर (वैकल्पिक)">
+        <TextInput style={inputStyle} value={gst} onChangeText={setGst} autoCapitalize="characters" maxLength={20} placeholderTextColor={colors.muted} testID="input-shop-gst" />
       </Field>
       {error ? <Text style={[styles.hint, { color: colors.error }]}>{error}</Text> : null}
       <PrimaryButton label="सेव करें" onPress={save} disabled={!name.trim()} saving={saving} testID="save-shop-name-btn" />
@@ -845,29 +905,22 @@ export function ShopNameSheet({ visible, onClose }: { visible: boolean; onClose:
 export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: () => void }) {
   const entries = useEntries().data ?? [];
   const advance = job?.customerId ? advanceOf(entries, job.customerId) : 0;
-  const [amount, setAmount] = useState("");
-  const [pay, setPay] = useState<PayMode>("cash");
-  const [paid, setPaid] = useState("");
+  const money = useMoneyInput();
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (job) {
-      setAmount(job.estimatedAmount > 0 ? String(job.estimatedAmount) : "");
-      setPay("cash");
-      setPaid("");
-    }
+    if (job) money.reset(job.estimatedAmount > 0 ? String(job.estimatedAmount) : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job]);
 
-  const amt = job?.customerId ? parseFloat(amount) || 0 : 0;
-  const payMode: PayMode = pay === "advance" && advance <= 0 ? "cash" : pay;
+  const amt = job?.customerId ? money.totalNum : 0;
 
   const save = async () => {
     if (!job) return;
     setSaving(true);
     try {
-      const paidNum = parseFloat(paid) || 0;
       const date = todayISO();
-      const entryId = recordWork({ customerId: job.customerId, title: job.title, amount: amt, mode: payMode, paid: paidNum, date, notes: "काम पूरा" });
+      const entryId = recordWork({ customerId: job.customerId, title: job.title, amount: amt, received: money.receivedNum, date, notes: "काम पूरा" });
       store.updateJob(job.id, { status: "done", dueDate: date, estimatedAmount: amt, entryId });
       onClose();
     } finally { setSaving(false); }
@@ -876,12 +929,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
   return (
     <SheetShell visible={!!job} onClose={onClose} title="काम पूरा करें" testID="sheet-complete-job">
       {job ? <Text style={styles.jobName}>{job.title}</Text> : null}
-      {job?.customerId ? (
-        <Field label="रकम (₹) — मुफ़्त हो तो खाली">
-          <TextInput style={inputStyle} value={amount} onChangeText={setAmount} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-complete-amount" />
-        </Field>
-      ) : null}
-      {amt > 0 ? <PaymentPicker mode={payMode} onMode={setPay} paid={paid} onPaid={setPaid} total={amt} advance={advance} /> : null}
+      {job?.customerId ? <MoneyFields money={money} advance={advance} freeAllowed /> : null}
       <PrimaryButton label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"} color={colors.success} onPress={save} saving={saving} testID="save-complete-btn" />
     </SheetShell>
   );
@@ -899,6 +947,8 @@ const styles = StyleSheet.create({
   primaryBtn: { backgroundColor: colors.brandPrimary, borderRadius: radius.md, paddingVertical: 15, alignItems: "center", marginTop: spacing.md, minHeight: 52, justifyContent: "center" },
   primaryText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "700" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  resultBox: { marginBottom: spacing.md, paddingVertical: spacing.sm, paddingHorizontal: spacing.md, borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed" },
+  resultText: { fontSize: 14, fontWeight: "700" },
   pickedRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 48, paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.border },
   pickedName: { flex: 1, fontSize: 15, fontWeight: "700", color: colors.onSurface },
   changeText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },

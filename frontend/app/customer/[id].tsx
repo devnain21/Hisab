@@ -1,17 +1,19 @@
 import { useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Linking, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Linking } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { computeBalance, useCustomers, useEntries, useJobs, type Entry, type EntryType, type Job } from "@/src/lib/data";
-import { formatDate, formatINR, formatPhone, initials, waNumber } from "@/src/lib/format";
+import { formatDate, formatINR, formatPhone, initials } from "@/src/lib/format";
 import { store } from "@/src/lib/store";
 import { buildLedger, type WorkState, type WorkStatus } from "@/src/lib/records";
 import { AddEntrySheet, AddJobSheet, AddCustomerSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
+import { ReceiptSheet } from "@/src/components/receipt-sheet";
+import { receiptDoc, statementDoc, type ShareDoc } from "@/src/lib/receipt";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -34,6 +36,7 @@ export default function CustomerDetail() {
   const ledger = useMemo(() => buildLedger(entries), [entries]);
   const [filter, setFilter] = useState<LedgerFilter>("all");
   const [settling, setSettling] = useState<Entry | null>(null);
+  const [shareDoc, setShareDoc] = useState<ShareDoc | null>(null);
 
   const rows = useMemo(
     () =>
@@ -64,6 +67,15 @@ export default function CustomerDetail() {
   });
 
   const due = computeBalance(entries);
+  const totals = useMemo(() => {
+    let work = 0, given = 0, got = 0;
+    for (const e of entries) {
+      if (e.type === "work") { work += e.amount; got += e.paid ?? 0; }
+      else if (e.type === "given") given += e.amount;
+      else got += e.amount;
+    }
+    return { work, given, got, debt: work + given };
+  }, [entries]);
   // Money left with us by a customer is an advance; with a personal contact it's money we owe back.
   const isCustomer = entries.some((e) => e.type === "work") || jobs.length > 0;
   const balanceLabel = due > 0 ? "लेने हैं" : due < 0 ? (isCustomer ? "एडवांस जमा" : "देने हैं") : "हिसाब";
@@ -82,25 +94,8 @@ export default function CustomerDetail() {
     );
   }
 
-  const shareWhatsApp = () => {
-    const wa = waNumber(customer.phone);
-    if (!wa) {
-      Alert.alert("फ़ोन जोड़ें", "WhatsApp पर भेजने के लिए इस ग्राहक का फ़ोन नंबर चाहिए।");
-      setEditSheet(true);
-      return;
-    }
-    const shop = user?.shop_name || "बही खाता";
-    const status = due > 0 ? `बाकी: ${formatINR(due)}` : due < 0 ? `${isCustomer ? "एडवांस" : "आपके"}: ${formatINR(Math.abs(due))}` : "खाता क्लियर है";
-    const pending = rows
-      .filter((e) => e.type !== "payment" && (ledger.work.get(e.id)?.remaining ?? 0) > 0)
-      .reverse()
-      .map((e) => `• ${formatDate(e.date)}  ${e.description || "उधार दिए"}  ${formatINR(ledger.work.get(e.id)!.remaining)}`);
-    const text = [`*${shop}*`, customer.name, status, ...(pending.length ? ["", "बाकी:", ...pending] : []), "", "धन्यवाद 🙏"].join("\n");
-    Linking.openURL(`https://wa.me/${wa}?text=${encodeURIComponent(text)}`).catch(() => {
-      Alert.alert("WhatsApp नहीं खुला", "इस फ़ोन पर WhatsApp नहीं मिला।");
-    });
-  };
-
+  const openReceipt = (e: Entry) => setShareDoc(receiptDoc(e, ledger.work.get(e.id), customer, due, isCustomer, user ?? {}));
+  const openStatement = () => setShareDoc(statementDoc(entries, ledger, customer, isCustomer, user ?? {}));
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, flexDirection: "row", alignItems: "center", gap: spacing.md }}>
@@ -119,7 +114,7 @@ export default function CustomerDetail() {
             <MaterialIcon name="phone-outline" size={22} color={colors.onSurface} />
           </Pressable>
         ) : null}
-        <Pressable onPress={shareWhatsApp} hitSlop={8} testID="share-whatsapp-btn">
+        <Pressable onPress={openStatement} hitSlop={8} testID="share-whatsapp-btn">
           <MaterialIcon name="whatsapp" size={22} color="#128C7E" />
         </Pressable>
         <Pressable onPress={() => setEditSheet(true)} hitSlop={10} testID="edit-cust-btn">
@@ -133,6 +128,15 @@ export default function CustomerDetail() {
           <Text style={[styles.balanceValue, { color: due > 0 ? colors.error : due < 0 ? (isCustomer ? colors.success : colors.warning) : colors.onSurface }]}>
             {due === 0 ? "क्लियर" : formatINR(Math.abs(due))}
           </Text>
+          {totals.debt > 0 || totals.got > 0 ? (
+            <Text style={styles.breakdown}>
+              {[
+                totals.work > 0 ? `काम ${formatINR(totals.work)}` : "",
+                totals.given > 0 ? `दिए ${formatINR(totals.given)}` : "",
+                `मिले ${formatINR(totals.got)}`,
+              ].filter(Boolean).join(" · ")}
+            </Text>
+          ) : null}
           {customer.notes ? <Text style={styles.notes}>{customer.notes}</Text> : null}
           <View style={styles.actionsRow}>
             <Pressable style={[styles.actionBtn, { backgroundColor: colors.brandPrimary }]} onPress={() => setJobSheet("now")} testID="add-work-btn">
@@ -148,6 +152,13 @@ export default function CustomerDetail() {
               <Text style={[styles.actionText, { color: colors.error }]}>दिए</Text>
             </Pressable>
           </View>
+          {entries.length > 0 ? (
+            <Pressable style={styles.statementBtn} onPress={openStatement} testID="share-statement-btn">
+              <MaterialIcon name="file-document-outline" size={18} color={colors.brandPrimary} />
+              <Text style={styles.statementText}>पूरा हिसाब भेजें</Text>
+              <Text style={styles.statementHint}>PDF / WhatsApp</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {openJobs.length > 0 && (
@@ -176,7 +187,8 @@ export default function CustomerDetail() {
           </>
         )}
 
-        <Text style={styles.sectionHead}>खाता</Text>        {rows.length > 0 ? (
+        <Text style={styles.sectionHead}>खाता</Text>
+        {rows.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.md }}>
             {LEDGER_FILTERS.filter((f) => {
               if (f === "all") return true;
@@ -209,9 +221,9 @@ export default function CustomerDetail() {
             {visible.map((e, i) => (
               <Animated.View key={e.id} entering={FadeInDown.delay(Math.min(i, 8) * 40).duration(250)}>
                 {e.type !== "payment" ? (
-                  <WorkCard entry={e} status={ledger.work.get(e.id)!} onPress={() => setEditing(e)} onSettle={() => setSettling(e)} />
+                  <WorkCard entry={e} status={ledger.work.get(e.id)!} onPress={() => setEditing(e)} onSettle={() => setSettling(e)} onReceipt={() => openReceipt(e)} />
                 ) : (
-                  <JamaCard entry={e} onPress={() => setEditing(e)} />
+                  <JamaCard entry={e} onPress={() => setEditing(e)} onReceipt={() => openReceipt(e)} />
                 )}
               </Animated.View>
             ))}
@@ -230,6 +242,7 @@ export default function CustomerDetail() {
         onDelete={() => { store.deleteCustomer(customer.id); router.back(); }}
       />
       <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
+      <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
     </View>
   );
 }
@@ -242,18 +255,26 @@ const LEDGER_FILTER_LABEL: Record<LedgerFilter, string> = { all: "सभी", du
 const GIVEN_UI: Record<WorkState, { label: string; icon: string; fg: string; bg: string }> = {
   cash: { label: "वापस मिले", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
   pending: { label: "वापस लेने हैं", icon: "arrow-top-right", fg: colors.error, bg: colors.errorSoft },
-  partial: { label: "आंशिक", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
+  partial: { label: "कुछ बाकी", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
   settled: { label: "वापस मिले", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
 };
 
 const STATE_UI: Record<WorkState, { label: string; icon: string; fg: string; bg: string }> = {
   cash: { label: "नकद", icon: "cash", fg: colors.success, bg: colors.successSoft },
   pending: { label: "उधार बाकी", icon: "clock-alert-outline", fg: colors.error, bg: colors.errorSoft },
-  partial: { label: "आंशिक", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
+  partial: { label: "कुछ बाकी", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
   settled: { label: "चुकता", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
 };
 
-function WorkCard({ entry, status, onPress, onSettle }: { entry: Entry; status: WorkStatus; onPress: () => void; onSettle: () => void }) {
+function ReceiptButton({ entryId, onPress }: { entryId: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} hitSlop={10} style={styles.receiptBtn} testID={`receipt-${entryId}`}>
+      <MaterialIcon name="receipt-text-outline" size={20} color={colors.brandPrimary} />
+    </Pressable>
+  );
+}
+
+function WorkCard({ entry, status, onPress, onSettle, onReceipt }: { entry: Entry; status: WorkStatus; onPress: () => void; onSettle: () => void; onReceipt: () => void }) {
   const given = entry.type === "given";
   const ui = (given ? GIVEN_UI : STATE_UI)[status.state];
   const open = status.state === "pending" || status.state === "partial";
@@ -279,14 +300,22 @@ function WorkCard({ entry, status, onPress, onSettle }: { entry: Entry; status: 
             <Text style={[styles.stateText, { color: ui.fg }]}>{ui.label}</Text>
           </View>
         </View>
+        <ReceiptButton entryId={entry.id} onPress={onReceipt} />
       </View>
 
-      {status.state === "partial" || status.state === "settled" ? (
+      {status.state !== "cash" ? (
         <View style={styles.moneyLine}>
-          {status.paidAtBooking > 0 ? <Text style={styles.moneyText}>उसी दिन {formatINR(status.paidAtBooking)}</Text> : null}
-          {laterPaid > 0 ? <Text style={styles.moneyText}>बाद में {formatINR(laterPaid)}{status.fromJama > 0 && status.settlements.length === 0 ? " (जमा से)" : ""}</Text> : null}
-          {status.state === "settled" && status.settledOn ? <Text style={[styles.moneyText, { color: colors.success, fontWeight: "700" }]}>✔ {formatDate(status.settledOn)} को चुकता</Text> : null}
-          {status.state === "partial" ? <Text style={[styles.moneyText, { color: colors.error, fontWeight: "700" }]}>बाकी {formatINR(status.remaining)}</Text> : null}
+          <Text style={styles.moneyText}>कुल {formatINR(entry.amount)}</Text>
+          <Text style={styles.moneyText}>
+            मिले {formatINR(status.received)}
+            {status.paidAtBooking > 0 && laterPaid > 0 ? ` (उसी दिन ${formatINR(status.paidAtBooking)} + बाद में ${formatINR(laterPaid)})` : ""}
+            {status.fromJama > 0 && status.settlements.length === 0 ? " (पुरानी जमा से)" : ""}
+          </Text>
+          {status.state === "settled" ? (
+            <Text style={[styles.moneyText, { color: colors.success, fontWeight: "700" }]}>✔ {status.settledOn ? `${formatDate(status.settledOn)} को ` : ""}चुकता</Text>
+          ) : (
+            <Text style={[styles.moneyText, { color: colors.error, fontWeight: "800" }]}>बाकी {formatINR(status.remaining)}</Text>
+          )}
         </View>
       ) : null}
 
@@ -300,7 +329,7 @@ function WorkCard({ entry, status, onPress, onSettle }: { entry: Entry; status: 
   );
 }
 
-function JamaCard({ entry, onPress }: { entry: Entry; onPress: () => void }) {
+function JamaCard({ entry, onPress, onReceipt }: { entry: Entry; onPress: () => void; onReceipt: () => void }) {
   return (
     <Pressable style={styles.card} onPress={onPress} testID={`entry-${entry.id}`}>
       <View style={styles.cardTop}>
@@ -317,6 +346,7 @@ function JamaCard({ entry, onPress }: { entry: Entry; onPress: () => void }) {
             <Text style={[styles.stateText, { color: colors.success }]}>मिले</Text>
           </View>
         </View>
+        <ReceiptButton entryId={entry.id} onPress={onReceipt} />
       </View>
     </Pressable>
   );
@@ -331,9 +361,13 @@ const styles = StyleSheet.create({
   balanceLabel: { fontSize: 12, color: colors.muted, fontWeight: "700", textTransform: "uppercase" },
   balanceValue: { fontSize: 36, fontWeight: "800", marginTop: spacing.xs },
   notes: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: spacing.sm },
+  breakdown: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: spacing.xs, fontWeight: "600" },
   actionsRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },
   actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 11, borderRadius: radius.md },
   actionText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  statementBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, marginTop: spacing.sm, paddingVertical: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.surface },
+  statementText: { color: colors.brandPrimary, fontWeight: "700", fontSize: 13 },
+  statementHint: { color: colors.muted, fontSize: 11 },
   sectionHead: { fontSize: 17, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xl, marginBottom: spacing.md },
   sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xl, marginBottom: spacing.md },  jobRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   jobTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
@@ -343,6 +377,7 @@ const styles = StyleSheet.create({
   filterText: { fontSize: 12, fontWeight: "700", color: colors.onSurface },
   card: { padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   cardTop: { flexDirection: "row", gap: spacing.md, alignItems: "flex-start" },
+  receiptBtn: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center", backgroundColor: colors.brandTertiary },
   iconBadge: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   amount: { fontSize: 16, fontWeight: "800", color: colors.onSurface },
   statePill: { flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.pill, marginTop: 4 },

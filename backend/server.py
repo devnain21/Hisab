@@ -71,10 +71,16 @@ class UserOut(BaseModel):
     name: str
     picture: Optional[str] = None
     shop_name: str = ""
+    shop_phone: str = ""
+    shop_address: str = ""
+    shop_gst: str = ""
 
 
 class ProfileUpdate(BaseModel):
     shop_name: str = Field(max_length=60)
+    shop_phone: Optional[str] = Field(default=None, max_length=20)
+    shop_address: Optional[str] = Field(default=None, max_length=120)
+    shop_gst: Optional[str] = Field(default=None, max_length=20)
 
 
 class AuthResponse(BaseModel):
@@ -321,6 +327,9 @@ def _user_out(user: dict) -> UserOut:
         name=user.get("name", ""),
         picture=user.get("picture"),
         shop_name=user.get("shop_name", ""),
+        shop_phone=user.get("shop_phone", ""),
+        shop_address=user.get("shop_address", ""),
+        shop_gst=user.get("shop_gst", ""),
     )
 
 
@@ -331,9 +340,9 @@ async def me(user: dict = Depends(get_current_user)):
 
 @api_router.put("/auth/me", response_model=UserOut)
 async def update_me(payload: ProfileUpdate, user: dict = Depends(get_current_user)):
-    shop_name = payload.shop_name.strip()
-    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"shop_name": shop_name}})
-    user["shop_name"] = shop_name
+    patch = {k: v.strip() for k, v in payload.model_dump(exclude_none=True).items()}
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": patch})
+    user.update(patch)
     return _user_out(user)
 
 

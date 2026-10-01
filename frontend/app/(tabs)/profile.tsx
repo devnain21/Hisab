@@ -7,7 +7,7 @@ import { colors, spacing, radius } from "@/src/theme";
 import { useAeps, useCustomers, useEntries, useJobs, computeBalance } from "@/src/lib/data";
 import { formatINR } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
-import { ShopNameSheet } from "@/src/components/sheets";
+import { ShopProfileSheet } from "@/src/components/sheets";
 import { PinSetupModal, useAppLock } from "@/src/components/app-lock";
 import { biometricAvailable, disableLock, lockSupported, setBiometric, setPin } from "@/src/lib/app-lock";
 import { buildBackupCsv, shareBackup } from "@/src/lib/backup";
@@ -104,8 +104,10 @@ export default function Profile() {
       <Pressable style={styles.row} onPress={() => setShopSheet(true)} testID="profile-shop-name">
         <MaterialIcon name="storefront-outline" size={22} color={colors.brandPrimary} />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.rowLabel}>दुकान का नाम</Text>
-          <Text style={[styles.rowValue, !user?.shop_name && { color: colors.muted }]} numberOfLines={1}>{user?.shop_name || "अभी सेट नहीं है"}</Text>
+          <Text style={styles.rowLabel}>दुकान की जानकारी</Text>
+          <Text style={[styles.rowValue, !user?.shop_name && { color: colors.muted }]} numberOfLines={1}>
+            {user?.shop_name ? [user.shop_name, user.shop_phone].filter(Boolean).join(" · ") : "अभी सेट नहीं है"}
+          </Text>
         </View>
         <MaterialIcon name="pencil-outline" size={18} color={colors.muted} />
       </Pressable>
@@ -185,7 +187,7 @@ export default function Profile() {
       </Pressable>
 
       <Text style={styles.footer}>{user?.shop_name ? `${user.shop_name} — ` : ""}बही खाता · v1.0</Text>
-      <ShopNameSheet visible={shopSheet} onClose={() => setShopSheet(false)} />
+      <ShopProfileSheet visible={shopSheet} onClose={() => setShopSheet(false)} />
       <PinSetupModal visible={pinSetup} onClose={() => setPinSetup(false)} onDone={onPinSet} />
     </ScrollView>
   );

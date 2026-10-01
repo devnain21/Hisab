@@ -20,13 +20,14 @@ if (Platform.OS !== "web") {
   if (webClientId) GoogleSignin.configure({ webClientId });
 }
 
-type User = { user_id: string; email: string; name: string; picture?: string | null; shop_name?: string };
+export type ShopProfile = { shop_name: string; shop_phone: string; shop_address: string; shop_gst: string };
+type User = { user_id: string; email: string; name: string; picture?: string | null } & Partial<ShopProfile>;
 type AuthState = { status: "loading" | "authenticated" | "unauthenticated"; user: User | null };
 
 type Ctx = AuthState & {
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
-  setShopName: (name: string) => Promise<void>;
+  setShop: (shop: ShopProfile) => Promise<void>;
 };
 
 const AuthContext = createContext<Ctx | null>(null);
@@ -160,15 +161,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState({ status: "unauthenticated", user: null });
   }, []);
 
-  const setShopName = useCallback(async (name: string) => {
-    const me = await api.updateMe({ shop_name: name });
-    setState((s) => (s.user ? { ...s, user: { ...s.user, shop_name: me.shop_name } } : s));
+  const setShop = useCallback(async (shop: ShopProfile) => {
+    const me = await api.updateMe(shop);
+    setState((s) => (s.user ? { ...s, user: { ...s.user, ...me } } : s));
     const uid = getFirebaseAuth().currentUser?.uid;
     if (uid) writeCachedProfile(uid, me);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ ...state, signIn, signOut, setShopName }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ ...state, signIn, signOut, setShop }}>{children}</AuthContext.Provider>
   );
 }
 

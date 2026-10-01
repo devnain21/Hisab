@@ -50,6 +50,16 @@ class TestAuthEndpoints:
         assert r.json()["shop_name"] == "TEST Shop"
         assert session_a.get(f"{api_url}/auth/me").json()["shop_name"] == "TEST Shop"
 
+    def test_update_shop_details_keeps_unsent_fields(self, session_a, api_url):
+        r = session_a.put(f"{api_url}/auth/me", json={"shop_name": "TEST Shop", "shop_phone": " 9876543210 ", "shop_address": "Main Bazar", "shop_gst": ""})
+        assert r.status_code == 200
+        assert r.json()["shop_phone"] == "9876543210"
+        r = session_a.put(f"{api_url}/auth/me", json={"shop_name": "TEST Shop 2"})
+        data = session_a.get(f"{api_url}/auth/me").json()
+        assert data["shop_name"] == "TEST Shop 2"
+        assert data["shop_phone"] == "9876543210"
+        assert data["shop_address"] == "Main Bazar"
+
     def test_update_shop_name_requires_auth(self, anon_session, api_url):
         r = anon_session.put(f"{api_url}/auth/me", json={"shop_name": "x"})
         assert r.status_code == 401

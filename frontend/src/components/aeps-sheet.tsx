@@ -3,8 +3,8 @@ import { View, Text, TextInput, StyleSheet, ScrollView } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
 import { store } from "@/src/lib/store";
-import { useAeps, type AepsCash, type AepsStatus, type AepsTxn, type AepsType } from "@/src/lib/data";
-import { AEPS_META, AEPS_TYPES, BANKS, BILLERS, FIELD_LABEL, OPERATORS, STATUS_META, drawerSentence, type AepsField, type CashFlow } from "@/src/lib/aeps";
+import { useAeps, type AepsCash, type AepsCommissionMode, type AepsStatus, type AepsTxn, type AepsType } from "@/src/lib/data";
+import { AEPS_META, AEPS_TYPES, BANKS, BILLERS, COMMISSION_MODES, FIELD_LABEL, OPERATORS, STATUS_META, cashLegDate, isLater, moneyLines, type AepsField, type CashFlow } from "@/src/lib/aeps";
 import { nowHM, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { Chip, DateField, Field, PrimaryButton, SheetShell, inputStyle } from "@/src/components/sheets";
@@ -29,10 +29,24 @@ type Line = {
   billAccount: string;
   reference: string;
   commission: string;
-  status: AepsStatus;
+  commissionMode: Exclude<AepsCommissionMode, "">;
+  status: LineStatus;
+  /** For pending rows: the counter cash already changed hands. */
+  cashTaken: boolean;
+  dueDate: string;
   notes: string;
   more: boolean;
 };
+
+type LineStatus = AepsStatus | "later";
+const LINE_STATUS: { id: LineStatus; label: string; icon: string; color: string }[] = [
+  { id: "success", label: "हो गया", icon: "check-circle", color: STATUS_META.success.color },
+  { id: "pending", label: "पेंडिंग", icon: "clock-outline", color: STATUS_META.pending.color },
+  { id: "later", label: "बाद में भेजनी है", icon: "calendar-clock", color: colors.info },
+  { id: "failed", label: "फेल", icon: "close-circle", color: STATUS_META.failed.color },
+];
+
+const TONE = { in: colors.success, out: colors.error, wait: colors.warning, muted: colors.muted } as const;
 
 const lineKey = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
@@ -53,7 +67,10 @@ const emptyLine = (type: AepsType = "withdrawal"): Line => ({
   billAccount: "",
   reference: "",
   commission: "",
+  commissionMode: "cash",
   status: "success",
+  cashTaken: AEPS_META[type].cash === "in",
+  dueDate: todayISO(1),
   notes: "",
   more: false,
 });
@@ -74,9 +91,12 @@ const lineFrom = (t: AepsTxn): Line => ({
   billAccount: t.billAccount,
   reference: t.reference,
   commission: t.commission > 0 ? String(t.commission) : "",
-  status: t.status,
+  commissionMode: t.commissionMode || "app",
+  status: isLater(t) ? "later" : t.status,
+  cashTaken: !!cashLegDate(t),
+  dueDate: t.dueDate || todayISO(1),
   notes: t.notes,
-  more: t.commission > 0 || !!t.reference || !!t.notes || t.status !== "success",
+  more: !!t.reference || !!t.notes,
 });
 
 const digits = (v: string, max: number) => v.replace(/\D/g, "").slice(0, max);
@@ -119,7 +139,23 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
   const patch = (key: string, partial: Partial<Line>) => setLines((rows) => rows.map((r) => (r.key === key ? { ...r, ...partial } : r)));
 
   const needsAmount = (t: AepsType) => t !== "balance";
-  const valid = !!name.trim() && lines.every((l) => !needsAmount(l.type) || (parseFloat(l.amount) || 0) > 0);
+  const valid = !!name.trim() && lines.every((l) => (!needsAmount(l.type) || (parseFloat(l.amount) || 0) > 0) && (l.status !== "later" || l.dueDate > date));
+
+  /** Status fields for the server. Editing keeps the original days a side already settled on. */
+  const statusFields = (line: Line, i: number) => {
+    const prev = initial && i === 0 ? initial : null;
+    const status: AepsStatus = line.status === "later" ? "pending" : line.status;
+    const prevCash = prev ? cashLegDate(prev) : null;
+    const flow = (line.cash || AEPS_META[line.type].cash) as CashFlow;
+    const cashNow = status === "success" || (status === "pending" && (line.cashTaken || flow === "none"));
+    return {
+      status,
+      cashDate: status === "failed" || !cashNow ? "" : prevCash || date,
+      doneDate: status === "success" ? prev?.doneDate || date : "",
+      dueDate: line.status === "later" ? line.dueDate : "",
+      commissionMode: (parseFloat(line.commission) || 0) > 0 ? line.commissionMode : ("" as AepsCommissionMode),
+    };
+  };
 
   const save = () => {
     if (!valid) return;
@@ -137,7 +173,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
           bankName: line.bankName.trim(),
           amount: parseFloat(line.amount) || 0,
           commission: parseFloat(line.commission) || 0,
-          status: line.status,
+          ...statusFields(line, i),
           reference: line.reference.trim(),
           operator: line.operator.trim(),
           rechargeNumber: line.rechargeNumber.trim(),
@@ -161,7 +197,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
         if (!keep.has("rechargeNumber")) payload.rechargeNumber = "";
         if (!keep.has("billerName")) payload.billerName = "";
         if (!keep.has("billAccount")) payload.billAccount = "";
-        if (!keep.has("commission")) payload.commission = 0;
+        if (!keep.has("commission")) { payload.commission = 0; payload.commissionMode = ""; }
         if (!keep.has("reference")) payload.reference = "";
         if (line.type !== "upi" && line.type !== "other") payload.cash = "";
         if (line.type === "upi" && flow === "in") payload.cash = "";
@@ -201,7 +237,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
                 const m = AEPS_META[t];
                 const active = line.type === t;
                 return (
-                  <Pressable key={t} onPress={() => patch(line.key, { type: t, cash: "" })} style={[styles.serviceChip, active && { backgroundColor: m.color, borderColor: m.color }]} testID={`aeps-type-${t}`}>
+                  <Pressable key={t} onPress={() => patch(line.key, { type: t, cash: "", cashTaken: AEPS_META[t].cash === "in" })} style={[styles.serviceChip, active && { backgroundColor: m.color, borderColor: m.color }]} testID={`aeps-type-${t}`}>
                     <MaterialIcon name={m.icon as any} size={16} color={active ? "#fff" : m.color} />
                     <Text style={[styles.typeText, active && { color: "#fff" }]}>{m.short}</Text>
                   </Pressable>
@@ -215,10 +251,6 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
                 <Chip label="सिर्फ़ UPI" active={flow === "none"} onPress={() => patch(line.key, { cash: "none" })} testID="aeps-upi-none" />
               </View>
             ) : null}
-
-            <View style={styles.drawer}>
-              <Text style={styles.drawerText}>{drawerSentence(line.type, amt, flow, line.status)}</Text>
-            </View>
 
             {has("amount") ? (
               <Field label={meta.amountLabel}>
@@ -282,29 +314,71 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
               </Field>
             ) : null}
 
+            {has("commission") ? (
+              <View style={styles.block}>
+                <Text style={styles.blockTitle}>कमीशन</Text>
+                <TextInput style={inputStyle} value={line.commission} onChangeText={(v) => patch(line.key, { commission: v })} placeholder="₹ 0 (नहीं मिला तो खाली)" placeholderTextColor={colors.muted} keyboardType="numeric" testID="aeps-input-commission" />
+                {(parseFloat(line.commission) || 0) > 0 ? (
+                  <View style={[styles.chipRow, { marginTop: spacing.sm }]}>
+                    {COMMISSION_MODES.map((m) => (
+                      <Chip key={m.id} label={m.label} active={line.commissionMode === m.id} onPress={() => patch(line.key, { commissionMode: m.id })} testID={`aeps-comm-${m.id}`} />
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
+            <View style={styles.block}>
+              <Text style={styles.blockTitle}>स्थिति</Text>
+              <View style={styles.chipRow}>
+                {LINE_STATUS.map((s) => (
+                  <Chip key={s.id} label={s.label} icon={s.icon} active={line.status === s.id} tone={s.color} onPress={() => patch(line.key, { status: s.id })} testID={`aeps-status-${s.id}`} />
+                ))}
+              </View>
+              {(line.status === "pending" || line.status === "later") && flow !== "none" ? (
+                <View style={[styles.chipRow, { marginTop: spacing.sm }]}>
+                  <Chip label={flow === "in" ? "कैश ले लिया" : "कैश दे दिया"} icon="cash-check" active={line.cashTaken} tone={colors.success} onPress={() => patch(line.key, { cashTaken: true })} testID="aeps-cash-yes" />
+                  <Chip label={flow === "in" ? "कैश अभी नहीं लिया" : "कैश अभी नहीं दिया"} active={!line.cashTaken} onPress={() => patch(line.key, { cashTaken: false })} testID="aeps-cash-no" />
+                </View>
+              ) : null}
+              {line.status === "later" ? (
+                <View style={{ marginTop: spacing.sm }}>
+                  <DateField label="कब भेजनी है" value={line.dueDate} onChange={(v) => patch(line.key, { dueDate: v })} testID="aeps-input-due" />
+                  {line.dueDate <= date ? <Text style={styles.warn}>आगे की तारीख चुनें</Text> : null}
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.preview}>
+              {moneyLines({
+                type: line.type,
+                date,
+                cash: line.cash,
+                amount: amt,
+                commission: parseFloat(line.commission) || 0,
+                commissionMode: line.commissionMode,
+                status: line.status === "later" ? "pending" : line.status,
+                cashDate: line.status === "success" || ((line.status === "pending" || line.status === "later") && line.cashTaken) ? date : "",
+                doneDate: line.status === "success" ? date : "",
+              }).map((r) => (
+                <View key={r.label} style={styles.previewRow}>
+                  <Text style={styles.previewLabel}>{r.label}</Text>
+                  <Text style={[styles.previewValue, { color: TONE[r.tone] }]}>{r.value}</Text>
+                </View>
+              ))}
+            </View>
+
             <Pressable onPress={() => patch(line.key, { more: !line.more })} style={styles.moreBtn} testID="aeps-more">
-              <Text style={styles.moreText}>{line.more ? "कम दिखाएँ" : "कमीशन, रसीद नंबर, स्थिति"}</Text>
+              <Text style={styles.moreText}>{line.more ? "कम दिखाएँ" : "Txn ID, नोट"}</Text>
               <MaterialIcon name={line.more ? "chevron-up" : "chevron-down"} size={18} color={colors.brandPrimary} />
             </Pressable>
             {line.more ? (
               <>
-                {has("commission") ? (
-                  <Field label={FIELD_LABEL.commission}>
-                    <TextInput style={inputStyle} value={line.commission} onChangeText={(v) => patch(line.key, { commission: v })} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="aeps-input-commission" />
-                  </Field>
-                ) : null}
                 {has("reference") ? (
                   <Field label={FIELD_LABEL.reference}>
                     <TextInput style={inputStyle} value={line.reference} onChangeText={(v) => patch(line.key, { reference: v })} placeholder="रसीद / SMS में लिखा नंबर" placeholderTextColor={colors.muted} autoCapitalize="characters" testID="aeps-input-reference" />
                   </Field>
                 ) : null}
-                <Field label="स्थिति">
-                  <View style={styles.chipRow}>
-                    {(Object.keys(STATUS_META) as AepsStatus[]).map((s) => (
-                      <Chip key={s} label={STATUS_META[s].label} icon={STATUS_META[s].icon} active={line.status === s} tone={STATUS_META[s].color} onPress={() => patch(line.key, { status: s })} testID={`aeps-status-${s}`} />
-                    ))}
-                  </View>
-                </Field>
                 <Field label="नोट (वैकल्पिक)">
                   <TextInput style={[inputStyle, { minHeight: 56 }]} value={line.notes} onChangeText={(v) => patch(line.key, { notes: v })} multiline placeholderTextColor={colors.muted} testID="aeps-input-notes" />
                 </Field>
@@ -348,8 +422,13 @@ const styles = StyleSheet.create({
   serviceChip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   typeText: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  drawer: { marginTop: spacing.sm, marginBottom: spacing.sm, padding: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: colors.surface },
-  drawerText: { fontSize: 13, fontWeight: "700", color: colors.onSurface, textAlign: "center" },
+  block: { marginBottom: spacing.md },
+  blockTitle: { fontSize: 13, fontWeight: "700", color: colors.onSurfaceSecondary, marginBottom: spacing.sm },
+  warn: { fontSize: 12, color: colors.error, marginTop: -spacing.sm },
+  preview: { marginBottom: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: colors.surface },
+  previewRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 },
+  previewLabel: { fontSize: 13, color: colors.onSurfaceSecondary },
+  previewValue: { fontSize: 14, fontWeight: "800" },
   amountInput: { fontSize: 22, fontWeight: "700" },
   privacy: { fontSize: 11, color: colors.muted, marginTop: -spacing.sm, marginBottom: spacing.md },
   moreBtn: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: spacing.sm },

@@ -9,7 +9,7 @@ import { useCustomers, type Entry } from "@/src/lib/data";
 import { formatINR, formatWeekdayDate, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { EditRecordSheet } from "@/src/components/sheets";
-import { drawerSentence, cashOf } from "@/src/lib/aeps";
+import { AEPS_META, bankLegDate, cashLegDate, moneyLines } from "@/src/lib/aeps";
 import { deleteExpense, expensePersona } from "@/src/lib/expenses";
 import { AddExpenseSheet } from "@/src/components/expense-sheet";
 import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet";
@@ -94,7 +94,13 @@ export default function DayScreen() {
   const paymentOnline = flows.bank.received;
 
   const dayExpenses = useMemo(() => book.expenses.filter((x) => x.date === date && expensePersona(x) === persona), [book.expenses, date, persona]);
-  const dayAeps = useMemo(() => (isPersonal ? [] : book.aeps.filter((t) => t.date === date && t.status === "success")), [book.aeps, date, isPersonal]);
+  const dayAeps = useMemo(
+    () =>
+      isPersonal
+        ? []
+        : book.aeps.filter((t) => t.status !== "failed" && (t.date === date || cashLegDate(t) === date || bankLegDate(t) === date)),
+    [book.aeps, date, isPersonal]
+  );
 
   const countedNum = countedCash ? parseInt(countedCash, 10) || 0 : null;
   const diff = countedNum !== null ? countedNum - expectedCash : null;
@@ -359,20 +365,16 @@ export default function DayScreen() {
           {dayAeps.length > 0 ? (
             <View style={{ marginTop: spacing.lg }}>
               <Text style={styles.sectionTitle}>काउंटर ({dayAeps.length})</Text>
-              {dayAeps.map((t) => {
-                const dir = cashOf(t);
-                return (
-                  <View key={t.id} style={styles.aepsRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.aepsName}>{t.customerName || "काउंटर ग्राहक"}</Text>
-                      <Text style={styles.aepsDesc}>{drawerSentence(t.type, t.amount, dir, t.status)}</Text>
-                    </View>
-                    <Text style={[styles.aepsAmount, { color: dir === "in" ? colors.success : dir === "out" ? colors.error : colors.muted }]}>
-                      {dir === "in" ? `+${formatINR(t.amount)}` : dir === "out" ? `-${formatINR(t.amount)}` : formatINR(t.amount)}
+              {dayAeps.map((t) => (
+                <View key={t.id} style={styles.aepsRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.aepsName}>{t.customerName || "काउंटर ग्राहक"} · {AEPS_META[t.type].short} {formatINR(t.amount)}</Text>
+                    <Text style={styles.aepsDesc}>
+                      {moneyLines(t).map((r) => `${r.label} ${r.value}`).join("  ·  ")}
                     </Text>
                   </View>
-                );
-              })}
+                </View>
+              ))}
             </View>
           ) : null}
         </ScrollView>

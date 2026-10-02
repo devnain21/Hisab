@@ -5,8 +5,10 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { useAeps, type AepsTxn } from "@/src/lib/data";
-import { AEPS_META, FIELD_LABEL, STATUS_META, cashOf, drawerSentence, receiptText, type AepsField } from "@/src/lib/aeps";
-import { formatDate, formatINR, formatPhone } from "@/src/lib/format";
+import { AEPS_META, FIELD_LABEL, STATUS_META, cashLegDate, cashOf, commissionModeLabel, isLater, moneyLines, statusLabel, type AepsField } from "@/src/lib/aeps";
+import { formatDate, formatINR, formatPhone, todayISO } from "@/src/lib/format";
+
+const TONE = { in: colors.success, out: colors.error, wait: colors.warning, muted: colors.muted } as const;
 import { shareMessage } from "@/src/lib/share-text";
 import { store } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
@@ -52,6 +54,21 @@ export default function AepsDetail() {
 
   const meta = AEPS_META[t.type];
   const st = STATUS_META[t.status];
+  const later = isLater(t);
+  const cashPending = t.status === "pending" && cashOf(t) !== "none" && !cashLegDate(t);
+  const { id: _id, createdAt: _c, ...body } = t;
+
+  const markDone = () => {
+    const today = todayISO();
+    confirmAction("ट्रांज़ैक्शन हो गया?", `${t.customerName} · ${formatINR(t.amount)} · आज की तारीख में जुड़ेगा`, "हाँ, हो गया", () =>
+      store.updateAeps(t.id, { ...body, status: "success", doneDate: today, cashDate: cashLegDate(t) || today, dueDate: "" })
+    );
+  };
+  const markCash = () => store.updateAeps(t.id, { ...body, cashDate: todayISO() });
+  const markFailed = () =>
+    confirmAction("फेल मार्क करें?", cashLegDate(t) ? "लिया हुआ कैश वापस कर दें, गल्ले से हट जाएगा।" : "हिसाब में नहीं जुड़ेगा।", "फेल करें", () =>
+      store.updateAeps(t.id, { ...body, status: "failed", cashDate: "", doneDate: "", dueDate: "" })
+    );
   const details = DETAIL_ORDER.map((f) => ({ f, v: displayValue(t, f) })).filter((d) => d.v);
 
   const share = async () => {
@@ -105,13 +122,41 @@ export default function AepsDetail() {
           </View>
           <Text style={[styles.heroType, { color: meta.color }]}>{meta.label}</Text>
           {t.amount > 0 ? <Text style={styles.heroAmount}>{formatINR(t.amount)}</Text> : null}
-          <View style={[styles.statusPill, { backgroundColor: st.soft }]}>
-            <MaterialIcon name={st.icon as any} size={14} color={st.color} />
-            <Text style={[styles.statusText, { color: st.color }]}>{st.label}</Text>
+          <View style={[styles.statusPill, { backgroundColor: later ? colors.infoSoft : st.soft }]}>
+            <MaterialIcon name={(later ? "calendar-clock" : st.icon) as any} size={14} color={later ? colors.info : st.color} />
+            <Text style={[styles.statusText, { color: later ? colors.info : st.color }]}>{statusLabel(t)}</Text>
           </View>
           <Text style={styles.heroDate}>{formatDate(t.date)}{t.time ? ` · ${t.time}` : ""}</Text>
-          <Text style={styles.cashNote}>{drawerSentence(t.type, t.amount, cashOf(t), t.status)}</Text>
+          {t.doneDate && t.doneDate !== t.date ? <Text style={styles.cashNote}>पूरी हुई: {formatDate(t.doneDate)}</Text> : null}
         </View>
+
+        <View style={[styles.card, { marginTop: spacing.lg }]}>
+          {moneyLines(t).map((r) => (
+            <View key={r.label} style={styles.row}>
+              <Text style={styles.rowLabel}>{r.label}</Text>
+              <Text style={[styles.rowValue, { color: TONE[r.tone] }]}>{r.value}</Text>
+            </View>
+          ))}
+        </View>
+
+        {t.status === "pending" ? (
+          <View style={styles.actions}>
+            <Pressable style={[styles.actBtn, { backgroundColor: colors.success }]} onPress={markDone} testID="aeps-mark-done">
+              <MaterialIcon name="check-circle" size={18} color="#fff" />
+              <Text style={styles.actText}>आज हो गया</Text>
+            </Pressable>
+            {cashPending ? (
+              <Pressable style={[styles.actBtn, { backgroundColor: colors.brandPrimary }]} onPress={markCash} testID="aeps-mark-cash">
+                <MaterialIcon name="cash-check" size={18} color="#fff" />
+                <Text style={styles.actText}>{cashOf(t) === "in" ? "कैश मिल गया" : "कैश दे दिया"}</Text>
+              </Pressable>
+            ) : null}
+            <Pressable style={[styles.actBtn, styles.actGhost]} onPress={markFailed} testID="aeps-mark-failed">
+              <MaterialIcon name="close-circle-outline" size={18} color={colors.error} />
+              <Text style={[styles.actText, { color: colors.error }]}>फेल</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         <Text style={styles.sectionHead}>{t.type === "transfer" ? "भेजने वाला" : "ग्राहक"}</Text>
         <View style={styles.card}>
@@ -125,7 +170,7 @@ export default function AepsDetail() {
           <>
             <Text style={styles.sectionHead}>और जानकारी</Text>
             <View style={styles.card}>
-              {t.commission > 0 ? <Row label="मेरा कमीशन / चार्ज" value={formatINR(t.commission)} /> : null}
+              {t.commission > 0 ? <Row label="कमीशन" value={`${formatINR(t.commission)} · ${commissionModeLabel(t.commissionMode)}`} /> : null}
               {t.notes ? <Row label="नोट" value={t.notes} /> : null}
             </View>
           </>
@@ -186,6 +231,10 @@ const styles = StyleSheet.create({
   statusText: { fontSize: 12, fontWeight: "700" },
   heroDate: { fontSize: 13, color: colors.muted, marginTop: spacing.sm },
   cashNote: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 2 },
+  actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.md },
+  actBtn: { flexGrow: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, paddingHorizontal: spacing.md, borderRadius: radius.md },
+  actGhost: { borderWidth: 1, borderColor: colors.error, backgroundColor: colors.surface },
+  actText: { color: "#fff", fontWeight: "800", fontSize: 14 },
   sectionHead: { fontSize: 16, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xl, marginBottom: spacing.sm },
   card: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.md },
   row: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },

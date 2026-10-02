@@ -147,10 +147,13 @@ export function computeFlows(book: Book, persona: Persona, keep: (date: string) 
   }
 
   if (persona === "business") {
-    const t = aepsTotals(book.aeps.filter((a) => keep(a.date)));
+    const t = aepsTotals(book.aeps, keep);
     f.cash.counterIn += t.cashIn;
     f.cash.counterOut += t.cashOut;
-    f.bank.commission += t.commission;
+    f.cash.commission += t.commissionCash;
+    f.bank.counterIn += t.bankIn;
+    f.bank.counterOut += t.bankOut;
+    f.bank.commission += t.commissionBank;
   }
 
   for (const x of book.expenses) {

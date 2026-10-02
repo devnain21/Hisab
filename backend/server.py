@@ -239,6 +239,14 @@ class AepsFields(BaseModel):
     upiId: str = ""
     # Empty means the service decides. "other" stores which way the drawer moved.
     cash: Literal["", "in", "out", "none"] = ""
+    # Where the commission landed: customer paid it in cash / online, or the AEPS app credited it.
+    commissionMode: Literal["", "cash", "online", "app"] = ""
+    # Day the counter cash changed hands; "" means not yet. None on rows saved before this field existed.
+    cashDate: Optional[str] = None
+    # Day the bank side went through. "" while pending.
+    doneDate: str = ""
+    # Pending row the customer asked to be sent on a later day.
+    dueDate: str = ""
     notes: str = ""
 
 

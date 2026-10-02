@@ -42,6 +42,7 @@ export type Job = { id: string; customerId: string; title: string; dueDate: stri
 export type AepsType = "withdrawal" | "cash" | "deposit" | "transfer" | "upi" | "balance" | "recharge" | "bill" | "other";
 export type AepsCash = "" | "in" | "out" | "none";
 export type AepsStatus = "success" | "pending" | "failed";
+export type AepsCommissionMode = "" | "cash" | "online" | "app";
 export type AepsTxn = {
   id: string;
   type: AepsType;
@@ -65,6 +66,13 @@ export type AepsTxn = {
   upiId?: string;
   /** Set only when type is "other"; otherwise the service decides the drawer. */
   cash?: AepsCash;
+  commissionMode?: AepsCommissionMode;
+  /** Day the counter cash changed hands; "" = not yet, null/undefined = older row (follows status). */
+  cashDate?: string | null;
+  /** Day the bank side went through; "" while pending. */
+  doneDate?: string;
+  /** Pending row to be sent on this day. */
+  dueDate?: string;
   notes: string;
   createdAt: string;
 };

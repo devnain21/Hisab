@@ -4,8 +4,9 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
-import { useAeps, type AepsType } from "@/src/lib/data";
-import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, cashOf } from "@/src/lib/aeps";
+import { useAeps, type AepsTxn, type AepsType } from "@/src/lib/data";
+import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, cashLegDate, cashOf, isLater } from "@/src/lib/aeps";
+import { store } from "@/src/lib/store";
 import { formatDateShort, formatINR, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { SlowServerHint } from "@/src/components/slow-server-hint";
@@ -38,13 +39,21 @@ export default function AepsScreen() {
   const yesterday = todayISO(-1);
   const monthPrefix = today.slice(0, 7);
 
-  const inRange = useMemo(
-    () =>
-      txns.filter((t) =>
-        range === "today" ? t.date === today : range === "yesterday" ? t.date === yesterday : range === "month" ? t.date.startsWith(monthPrefix) : true,
-      ),
-    [txns, range, today, yesterday, monthPrefix],
+  const inRangeDate = useMemo(
+    () => (d: string) => (range === "today" ? d === today : range === "yesterday" ? d === yesterday : range === "month" ? d.startsWith(monthPrefix) : true),
+    [range, today, yesterday, monthPrefix],
   );
+  const inRange = useMemo(() => txns.filter((t) => inRangeDate(t.date)), [txns, inRangeDate]);
+
+  const pending = useMemo(
+    () => txns.filter((t) => t.status === "pending").sort((a, b) => (a.dueDate || a.date).localeCompare(b.dueDate || b.date)),
+    [txns],
+  );
+  const completeNow = (t: AepsTxn) => {
+    const { id, createdAt, ...body } = t;
+    const d = todayISO();
+    store.updateAeps(id, { ...body, status: "success", doneDate: d, cashDate: cashLegDate(t) || d, dueDate: "" });
+  };
 
   const countByType = useMemo(() => {
     const m: Partial<Record<AepsType, number>> = {};
@@ -71,7 +80,8 @@ export default function AepsScreen() {
       .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : (b.time || b.createdAt).localeCompare(a.time || a.createdAt)));
   }, [inRange, type, search, typesInRange.length]);
 
-  const totals = useMemo(() => aepsTotals(rows), [rows]);
+  const totals = useMemo(() => aepsTotals(txns, inRangeDate), [txns, inRangeDate]);
+  const signed = (n: number) => `${n < 0 ? "−" : "+"}${formatINR(Math.abs(n))}`;
 
   const header = (
       <View style={{ paddingTop: insets.top + spacing.md }}>
@@ -85,10 +95,40 @@ export default function AepsScreen() {
           ))}
         </View>
 
-        <Text style={styles.summaryLine} testID="aeps-summary">
-          अलग हिसाब · नकद दिया {formatINR(totals.cashOut)} · नकद मिला {formatINR(totals.cashIn)} · कमीशन {formatINR(totals.commission)}
-        </Text>
-        <Text style={styles.summaryNote}>{totals.count} सफल · पेंडिंग और फेल हिसाब में नहीं जुड़ते</Text>
+        <View style={styles.statRow} testID="aeps-summary">
+          <Stat label="गल्ला" value={signed(totals.cashNet)} sub={`आए ${formatINR(totals.cashIn)} · गए ${formatINR(totals.cashOut)}`} tone={totals.cashNet < 0 ? colors.error : colors.success} />
+          <Stat label="बैंक" value={signed(totals.bankNet)} sub={`आए ${formatINR(totals.bankIn)} · गए ${formatINR(totals.bankOut)}`} tone={totals.bankNet < 0 ? colors.error : colors.success} />
+          <Stat label="कमीशन" value={formatINR(totals.commission)} sub={`कैश ${formatINR(totals.commissionCash)} · बैंक ${formatINR(totals.commissionBank)}`} tone={colors.brandSecondary} />
+        </View>
+
+        {pending.length > 0 ? (
+          <View style={styles.pendingBox} testID="aeps-pending">
+            <View style={styles.pendingHead}>
+              <MaterialIcon name="clock-outline" size={18} color={colors.warning} />
+              <Text style={styles.pendingTitle}>पेंडिंग ({pending.length})</Text>
+              <Text style={styles.pendingSum}>{formatINR(pending.reduce((s, t) => s + t.amount, 0))}</Text>
+            </View>
+            {pending.map((t) => {
+              const due = t.dueDate || "";
+              const late = due ? due < today : t.date < today;
+              const dueText = due ? (due === today ? "आज भेजनी है" : due < today ? `${formatDateShort(due)} की थी` : `${formatDateShort(due)} को`) : "पेंडिंग";
+              return (
+                <Pressable key={t.id} style={styles.pendingRow} onPress={() => router.push(`/aeps/${t.id}`)} testID={`aeps-pending-${t.id}`}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.name} numberOfLines={1}>{t.customerName} · {AEPS_META[t.type].short} {formatINR(t.amount)}</Text>
+                    <Text style={[styles.meta, (late || due === today) && { color: colors.error, fontWeight: "700" }]} numberOfLines={1}>
+                      {dueText}{cashLegDate(t) ? " · कैश मिल गया" : cashOf(t) !== "none" ? " · कैश बाकी" : ""}
+                    </Text>
+                  </View>
+                  <Pressable style={styles.doneBtn} onPress={() => completeNow(t)} hitSlop={6} testID={`aeps-done-${t.id}`}>
+                    <MaterialIcon name="check" size={16} color="#fff" />
+                    <Text style={styles.doneText}>हो गया</Text>
+                  </Pressable>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
 
         <View style={styles.searchWrap}>
           <MaterialIcon name="magnify" size={18} color={colors.muted} />
@@ -147,7 +187,7 @@ export default function AepsScreen() {
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                     <MaterialIcon name="file-pdf-box" size={16} color={colors.brandPrimary} />
                     {t.status !== "success" ? (
-                      <View style={[styles.statusPill, { backgroundColor: st.soft }]}><Text style={[styles.statusText, { color: st.color }]}>{st.label}</Text></View>
+                      <View style={[styles.statusPill, { backgroundColor: isLater(t) ? colors.infoSoft : st.soft }]}><Text style={[styles.statusText, { color: isLater(t) ? colors.info : st.color }]}>{isLater(t) ? `${formatDateShort(t.dueDate!)} को` : st.label}</Text></View>
                     ) : t.commission > 0 ? (
                       <Text style={styles.commission}>+{formatINR(t.commission)}</Text>
                     ) : (
@@ -169,6 +209,16 @@ export default function AepsScreen() {
   );
 }
 
+function Stat({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: string }) {
+  return (
+    <View style={styles.stat}>
+      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={[styles.statValue, { color: tone }]} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
+      <Text style={styles.statSub} numberOfLines={2}>{sub}</Text>
+    </View>
+  );
+}
+
 function TypeChip({ label, icon, color, active, onPress }: { label: string; icon?: string; color?: string; active: boolean; onPress: () => void }) {
   const bg = color ?? colors.brandPrimary;
   return (
@@ -186,8 +236,18 @@ const styles = StyleSheet.create({
   segmentBtn: { flex: 1, alignItems: "center", paddingVertical: 8, borderRadius: radius.sm },
   segmentActive: { backgroundColor: colors.brandPrimary },
   segmentText: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
-  summaryLine: { marginTop: spacing.md, fontSize: 14, fontWeight: "700", color: colors.onSurface, textAlign: "center" },
-  summaryNote: { fontSize: 11, color: colors.muted, marginTop: spacing.xs, textAlign: "center" },
+  statRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md },
+  stat: { flex: 1, padding: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  statLabel: { fontSize: 12, fontWeight: "700", color: colors.muted },
+  statValue: { fontSize: 17, fontWeight: "800", marginTop: 2 },
+  statSub: { fontSize: 10, color: colors.muted, marginTop: 2 },
+  pendingBox: { marginTop: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: "#F5D7A1", backgroundColor: "#FFFBF2", padding: spacing.md, gap: spacing.sm },
+  pendingHead: { flexDirection: "row", alignItems: "center", gap: 6 },
+  pendingTitle: { flex: 1, fontSize: 14, fontWeight: "800", color: colors.warning },
+  pendingSum: { fontSize: 14, fontWeight: "800", color: colors.onSurface },
+  pendingRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: "#F5E6C8" },
+  doneBtn: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: colors.success, paddingHorizontal: spacing.md, paddingVertical: 7, borderRadius: radius.pill },
+  doneText: { color: "#fff", fontSize: 12, fontWeight: "800" },
   searchWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44, borderWidth: 1, borderColor: colors.border, marginTop: spacing.md },
   search: { flex: 1, color: colors.onSurface, fontSize: 15 },
   chip: { flexDirection: "row", gap: 4, height: 32, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },

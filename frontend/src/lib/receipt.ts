@@ -6,7 +6,7 @@ import type { Customer, Entry, AepsTxn } from "@/src/lib/data";
 import type { Ledger, WorkStatus } from "@/src/lib/records";
 import { formatDate, formatDateShort, formatINR, formatPhone, todayISO } from "@/src/lib/format";
 import type { ShopProfile } from "@/src/context/AuthContext";
-import { AEPS_META, STATUS_META } from "@/src/lib/aeps";
+import { AEPS_META, STATUS_META, statusLabel } from "@/src/lib/aeps";
 import { accountName } from "@/src/lib/persona";
 
 type Tone = "due" | "ok";
@@ -327,7 +327,7 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
 export function aepsReceiptDoc(t: AepsTxn, shopIn: Partial<ShopProfile>): ShareDoc {
   const shop = fullShop(shopIn);
   const m = AEPS_META[t.type] || { label: "काउंटर सेवा", short: "काउंटर" };
-  const st = STATUS_META[t.status] || { label: "सफल" };
+  const st = { ...(STATUS_META[t.status] || { label: "सफल" }), label: STATUS_META[t.status] ? statusLabel(t) : "सफल" };
   const lines: Line[] = [
     { label: "सेवा का नाम", value: m.label },
     { label: "तारीख व समय", value: `${formatDate(t.date)}${t.time ? ` ${t.time}` : ""}` },

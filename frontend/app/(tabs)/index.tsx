@@ -97,7 +97,9 @@ export default function Home() {
     };
   }, [customers, entries, jobs, today, personaCustIds, isPersonal]);
 
-  const aepsToday = useMemo(() => aepsTotals(aeps.filter((t) => t.date === today)), [aeps, today]);
+  const aepsToday = useMemo(() => aepsTotals(aeps, (d) => d === today), [aeps, today]);
+  const aepsDue = useMemo(() => aeps.filter((t) => t.status === "pending" && (t.dueDate || t.date) <= today).length, [aeps, today]);
+  const signedINR = (n: number) => `${n < 0 ? "−" : "+"}${formatINR(Math.abs(n))}`;
 
   const upcoming = useMemo(
     () => jobs.filter((j) => j.status !== "done").sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 8),
@@ -345,9 +347,10 @@ export default function Home() {
             <Pressable style={styles.aepsLine} onPress={() => go("/(tabs)/aeps", { range: "today" })} testID="home-aeps-card">
               <MaterialIcon name="fingerprint" size={16} color={colors.brandPrimary} />
               <Text style={styles.aepsLineText} numberOfLines={2}>
-                {aepsToday.count === 0
+                {(aepsToday.count === 0
                   ? "काउंटर · आज कुछ नहीं"
-                  : `काउंटर · नकद दिया ${formatINR(aepsToday.cashOut)} · नकद मिला ${formatINR(aepsToday.cashIn)}${aepsToday.commission > 0 ? ` · कमीशन ${formatINR(aepsToday.commission)}` : ""}`}
+                  : `काउंटर · गल्ला ${signedINR(aepsToday.cashNet)} · बैंक ${signedINR(aepsToday.bankNet)}${aepsToday.commission > 0 ? ` · कमीशन ${formatINR(aepsToday.commission)}` : ""}`) +
+                  (aepsDue > 0 ? ` · ${aepsDue} भेजनी बाकी` : "")}
               </Text>
               <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
             </Pressable>

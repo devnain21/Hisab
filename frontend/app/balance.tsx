@@ -8,7 +8,7 @@ import { formatDateShort, formatINR, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { usePersona } from "@/src/lib/persona";
 import { accountKey, accountLabel, computeFlows, deleteMove, pocketNet, useMoneyBook } from "@/src/lib/wallet";
-import { BalancePocketCard, pocketTitle } from "@/src/components/pocket-card";
+import { PocketCard, pocketTitle } from "@/src/components/pocket-card";
 import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet";
 import { AddExpenseSheet } from "@/src/components/expense-sheet";
 import { confirmAction } from "@/src/lib/confirm";
@@ -22,10 +22,10 @@ export default function BalanceScreen() {
   const [move, setMove] = useState<MoveKind | null>(null);
   const [expense, setExpense] = useState(false);
 
-  const total = useMemo(() => computeFlows(book, persona, (d) => d <= today), [book, persona, today]);
+  const before = useMemo(() => computeFlows(book, persona, (d) => d < today), [book, persona, today]);
   const todayFlows = useMemo(() => computeFlows(book, persona, (d) => d === today), [book, persona, today]);
-  const cash = pocketNet(total.cash);
-  const bank = pocketNet(total.bank);
+  const cash = pocketNet(before.cash) + pocketNet(todayFlows.cash);
+  const bank = pocketNet(before.bank) + pocketNet(todayFlows.bank);
 
   const mine = useMemo(() => {
     const keys = [accountKey(persona, "cash"), accountKey(persona, "bank")];
@@ -76,8 +76,8 @@ export default function BalanceScreen() {
           ))}
         </View>
 
-        <BalancePocketCard persona={persona} pocket="cash" today={todayFlows.cash} total={total.cash} />
-        <BalancePocketCard persona={persona} pocket="bank" today={todayFlows.bank} total={total.bank} />
+        <PocketCard persona={persona} pocket="cash" opening={pocketNet(before.cash)} flow={todayFlows.cash} showBalance />
+        <PocketCard persona={persona} pocket="bank" opening={pocketNet(before.bank)} flow={todayFlows.bank} showBalance />
 
         {mine.length > 0 ? (
           <>

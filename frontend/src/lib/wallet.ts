@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import * as Crypto from "expo-crypto";
 import { api } from "./api";
 import { store, withPending } from "./store";
-import { todayISO } from "./format";
+import { isBackdated, todayISO } from "./format";
 import { useAeps, useCustomers, useEntries, type AepsTxn, type Customer, type Entry } from "./data";
 import { useExpenses, expensePersona, type Expense } from "./expenses";
 import { aepsTotals } from "./aeps";
@@ -123,7 +123,7 @@ export function computeFlows(book: Book, persona: Persona, keep: (date: string) 
   const pocketOf = (mode?: string): Pocket => (mode === "online" ? "bank" : "cash");
 
   for (const e of book.entries) {
-    if (!keep(e.date) || personaOfEntry(e, byId) !== persona) continue;
+    if (!keep(e.date) || isBackdated(e.date, e.createdAt) || personaOfEntry(e, byId) !== persona) continue;
     if (e.type === "work") {
       f[pocketOf(e.mode)].work += e.paid ?? 0;
       if ((e.fee ?? 0) > 0) f[e.feeMode === "cash" ? "cash" : "bank"].fee += e.fee ?? 0;
@@ -145,7 +145,7 @@ export function computeFlows(book: Book, persona: Persona, keep: (date: string) 
   }
 
   for (const x of book.expenses) {
-    if (!keep(x.date) || expensePersona(x) !== persona) continue;
+    if (!keep(x.date) || isBackdated(x.date, x.createdAt) || expensePersona(x) !== persona) continue;
     f[x.mode === "online" ? "bank" : "cash"].expense += x.amount;
   }
 

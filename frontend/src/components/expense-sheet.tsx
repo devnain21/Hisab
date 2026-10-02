@@ -5,7 +5,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { addExpense, EXPENSE_CATEGORIES, PERSONAL_EXPENSE_CATEGORIES, type ExpenseMode } from "@/src/lib/expenses";
 import { usePersona } from "@/src/lib/persona";
-import { todayISO } from "@/src/lib/format";
+import { formatDateShort, todayISO } from "@/src/lib/format";
 
 export function AddExpenseSheet({
   visible,
@@ -56,11 +56,17 @@ export function AddExpenseSheet({
       <View style={styles.overlay}>
         <View style={styles.sheet}>
           <View style={styles.header}>
-            <Text style={styles.title}>खर्च लिखें</Text>
+            <Text style={styles.title}>
+              खर्च लिखें{initialDate && initialDate < todayISO() ? ` · ${formatDateShort(initialDate)}` : ""}
+            </Text>
             <Pressable onPress={onClose} hitSlop={12} testID="expense-close">
               <MaterialIcon name="close" size={24} color={colors.onSurface} />
             </Pressable>
           </View>
+
+          {initialDate && initialDate < todayISO() ? (
+            <Text style={styles.oldNote}>पुरानी तारीख — गल्ला / बैंक नहीं बदलेगा</Text>
+          ) : null}
 
           {/* Amount Input */}
           <View style={styles.field}>
@@ -166,6 +172,7 @@ export function AddExpenseSheet({
 }
 
 const styles = StyleSheet.create({
+  oldNote: { fontSize: 12, fontWeight: "600", color: colors.warning, marginBottom: spacing.md },
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",

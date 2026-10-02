@@ -118,7 +118,8 @@ export function Chip({ label, active, onPress, icon, testID, tone }: { label: st
   );
 }
 
-export function DateField({ label, value, onChange, future, testID }: { label: string; value: string; onChange: (v: string) => void; future?: boolean; testID?: string }) {
+export function DateField({ label, value, onChange, future, money, testID }: { label: string; value: string; onChange: (v: string) => void; future?: boolean; money?: boolean; testID?: string }) {
+  const old = money && /^\d{4}-\d{2}-\d{2}$/.test(value) && value < todayISO();
   const presets = future
     ? [{ label: "आज", d: todayISO() }, { label: "कल", d: todayISO(1) }, { label: "परसों", d: todayISO(2) }, { label: "1 हफ़्ता", d: todayISO(7) }]
     : [{ label: "आज", d: todayISO() }, { label: "कल (बीता)", d: todayISO(-1) }];
@@ -130,6 +131,7 @@ export function DateField({ label, value, onChange, future, testID }: { label: s
         ))}
       </View>
       <TextInput style={[inputStyle, { marginTop: spacing.sm }]} value={value} onChangeText={onChange} placeholder="YYYY-MM-DD" placeholderTextColor={colors.muted} testID={testID} />
+      {old ? <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>पुरानी तारीख — खाते में जुड़ेगा, गल्ला / बैंक नहीं बदलेगा</Text> : null}
     </Field>
   );
 }
@@ -597,7 +599,7 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
       <Field label={needsDescription ? "विवरण" : "किस लिए (वैकल्पिक)"}>
         <TextInput style={inputStyle} value={description} onChangeText={setDescription} placeholder={ui.placeholder} placeholderTextColor={colors.muted} testID="input-entry-desc" />
       </Field>
-      <DateField label="तारीख" value={date} onChange={setDate} testID="input-entry-date" />
+      <DateField label="तारीख" value={date} onChange={setDate} money testID="input-entry-date" />
       <Field label="नोट (वैकल्पिक)">
         <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-entry-notes" />
       </Field>
@@ -900,7 +902,7 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
         {amt > remaining && remaining > 0 ? <Text style={styles.hint}>{formatINR(amt - remaining)} ज़्यादा, एडवांस में जुड़ेगा</Text> : null}
       </Field>
       <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} />
-      <DateField label="कब मिले" value={date} onChange={setDate} testID="input-settle-date" />
+      <DateField label="कब मिले" value={date} onChange={setDate} money testID="input-settle-date" />
       <Field label="नोट (वैकल्पिक)">
         <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-settle-notes" />
       </Field>
@@ -1033,7 +1035,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
           {(parseFloat(paidNow) || 0) > 0 ? (
             <>
               <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} />
-              <DateField label="कब मिले" value={paidDate} onChange={setPaidDate} testID="input-job-paid-date" />
+              <DateField label="कब मिले" value={paidDate} onChange={setPaidDate} money testID="input-job-paid-date" />
             </>
           ) : null}
         </>
@@ -1041,7 +1043,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
 
       {mode === "now" ? (
         <>
-          <DateField label="तारीख" value={date} onChange={setDate} testID="input-job-date" />
+          <DateField label="तारीख" value={date} onChange={setDate} money testID="input-job-date" />
           <Field label="आगे का रिमार्क (वैकल्पिक)">
             <TextInput style={[inputStyle, { minHeight: 64 }]} value={remark} onChangeText={setRemark} multiline placeholder="जैसे कल प्रिंट देने हैं, बाकी पैसे शनिवार को" placeholderTextColor={colors.muted} testID="input-job-remark" />
           </Field>
@@ -1209,7 +1211,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
         </>
       ) : null}
       <DateField label="काम की तारीख" value={workDate} onChange={(d) => { setWorkDate(d); setCashDate(d); }} testID="input-complete-date" />
-      {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDate} onChange={setCashDate} testID="input-complete-cash-date" /> : null}
+      {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDate} onChange={setCashDate} money testID="input-complete-cash-date" /> : null}
       <PrimaryButton label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"} color={colors.success} onPress={save} saving={saving} testID="save-complete-btn" />
     </SheetShell>
   );

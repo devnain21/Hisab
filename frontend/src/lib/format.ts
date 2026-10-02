@@ -1,5 +1,19 @@
 // Hindi (Devanagari) formatting helpers
 
+/** Local calendar day of an ISO timestamp, e.g. the day a row was typed in. */
+export function localDay(iso?: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** A row dated before the day it was typed is old history: it stays in the khata but never touches galla / bank. */
+export function isBackdated(date: string, createdAt?: string | null): boolean {
+  const typed = localDay(createdAt);
+  return !!typed && date < typed;
+}
+
 export function todayISO(offsetDays = 0): string {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);

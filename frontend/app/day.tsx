@@ -13,7 +13,7 @@ import { AEPS_META, bankLegDate, cashLegDate, moneyLines } from "@/src/lib/aeps"
 import { deleteExpense, expensePersona } from "@/src/lib/expenses";
 import { AddExpenseSheet } from "@/src/components/expense-sheet";
 import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet";
-import { DayPocketCard } from "@/src/components/pocket-card";
+import { PocketCard } from "@/src/components/pocket-card";
 import { DayCloseModal } from "@/src/components/day-close-modal";
 import { useAuth } from "@/src/context/AuthContext";
 import { usePersona } from "@/src/lib/persona";
@@ -87,11 +87,13 @@ export default function DayScreen() {
   const workTotal = workEntries.reduce((s, e) => s + e.amount, 0);
   const workFees = workEntries.reduce((s, e) => s + (e.fee ?? 0), 0);
   const workProfit = workTotal - workFees;
-  const workCash = flows.cash.work;
-  const workOnline = flows.bank.work;
+  // Khata totals include old (backdated) rows; only the galla / bank cards leave them out.
+  const workCash = workEntries.filter((e) => e.mode !== "online").reduce((s, e) => s + (e.paid ?? 0), 0);
+  const workOnline = workEntries.filter((e) => e.mode === "online").reduce((s, e) => s + (e.paid ?? 0), 0);
   const workUdhaar = workTotal - (workCash + workOnline);
-  const paymentCash = flows.cash.received;
-  const paymentOnline = flows.bank.received;
+  const dayPayments = dayEntries.filter((e) => e.type === "payment");
+  const paymentCash = dayPayments.filter((e) => e.mode !== "online").reduce((s, e) => s + e.amount, 0);
+  const paymentOnline = dayPayments.filter((e) => e.mode === "online").reduce((s, e) => s + e.amount, 0);
 
   const dayExpenses = useMemo(() => book.expenses.filter((x) => x.date === date && expensePersona(x) === persona), [book.expenses, date, persona]);
   const dayAeps = useMemo(
@@ -295,7 +297,7 @@ export default function DayScreen() {
             </Pressable>
           </View>
 
-          <DayPocketCard persona={persona} pocket="cash" opening={openingCash} flow={flows.cash}>
+          <PocketCard persona={persona} pocket="cash" opening={openingCash} flow={flows.cash} dayLabel={dateLabel}>
             <View style={[styles.drawerRow, { marginTop: spacing.md }]}>
               <Text style={styles.drawerLabel}>गिने हुए</Text>
               <View style={[styles.inputWrap, { borderColor: colors.brandPrimary, borderWidth: 1.5 }]}>
@@ -330,9 +332,9 @@ export default function DayScreen() {
                 </Text>
               </View>
             ) : null}
-          </DayPocketCard>
+          </PocketCard>
 
-          <DayPocketCard persona={persona} pocket="bank" opening={openingBank} flow={flows.bank} />
+          <PocketCard persona={persona} pocket="bank" opening={openingBank} flow={flows.bank} dayLabel={dateLabel} />
 
           {isPersonal ? null : (
             <Pressable style={[styles.gallaActionBtn, { backgroundColor: "#128C7E", borderColor: "#128C7E", marginBottom: spacing.lg }]} onPress={() => setDayCloseOpen(true)} testID="open-day-close-btn">

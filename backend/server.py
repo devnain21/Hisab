@@ -105,6 +105,8 @@ class Customer(BaseModel):
 
 class CustomerCreate(BaseModel):
     id: Optional[str] = None
+    # When the row was typed on the phone; offline rows can reach the server days later.
+    createdAt: Optional[str] = None
     name: str
     phone: str = ""
     address: str = ""
@@ -147,6 +149,8 @@ class Entry(BaseModel):
 
 class EntryCreate(BaseModel):
     id: Optional[str] = None
+    # When the row was typed on the phone; offline rows can reach the server days later.
+    createdAt: Optional[str] = None
     customerId: str
     type: EntryType
     date: str
@@ -195,6 +199,8 @@ class Job(BaseModel):
 
 class JobCreate(BaseModel):
     id: Optional[str] = None
+    # When the row was typed on the phone; offline rows can reach the server days later.
+    createdAt: Optional[str] = None
     customerId: str
     title: str
     dueDate: str
@@ -257,6 +263,8 @@ class AepsTxn(AepsFields):
 
 class AepsCreate(AepsFields):
     id: Optional[str] = None
+    # When the row was typed on the phone; offline rows can reach the server days later.
+    createdAt: Optional[str] = None
 
 
 class ExpenseFields(BaseModel):

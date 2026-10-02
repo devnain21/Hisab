@@ -1,5 +1,5 @@
 import type { AepsCash, AepsCommissionMode, AepsStatus, AepsTxn, AepsType } from "@/src/lib/data";
-import { formatDate, formatINR } from "@/src/lib/format";
+import { formatDate, formatINR, isBackdated } from "@/src/lib/format";
 
 export type AepsField =
   | "mobile"
@@ -188,9 +188,10 @@ export type AepsMoney = { cashIn: number; cashOut: number; bankIn: number; bankO
 export function aepsTotals(list: AepsTxn[], keep: (date: string) => boolean = () => true): AepsMoney & { cashNet: number; bankNet: number; commission: number } {
   const m: AepsMoney = { cashIn: 0, cashOut: 0, bankIn: 0, bankOut: 0, commissionCash: 0, commissionBank: 0, count: 0 };
   for (const t of list) {
-    const cd = cashLegDate(t);
-    const bd = bankLegDate(t);
-    const kd = commissionDate(t);
+    const live = (d: string | null) => (d && !isBackdated(d, t.createdAt) ? d : null);
+    const cd = live(cashLegDate(t));
+    const bd = live(bankLegDate(t));
+    const kd = live(commissionDate(t));
     let touched = false;
     if (cd && keep(cd)) {
       const dir = cashOf(t);

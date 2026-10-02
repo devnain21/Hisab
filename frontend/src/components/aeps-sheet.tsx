@@ -395,7 +395,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
         </Pressable>
       ) : null}
 
-      <DateField label="तारीख" value={date} onChange={setDate} testID="aeps-input-date" />
+      <DateField label="तारीख" value={date} onChange={setDate} money={!initial} testID="aeps-input-date" />
       <Field label="समय">
         <TextInput style={inputStyle} value={time} onChangeText={setTime} placeholder="HH:MM" placeholderTextColor={colors.muted} maxLength={5} testID="aeps-input-time" />
       </Field>

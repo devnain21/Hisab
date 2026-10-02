@@ -31,12 +31,15 @@ import { accountName, usePersona } from "@/src/lib/persona";
 import { RecycleBinModal } from "@/src/components/recycle-bin-sheet";
 import { getTrashList, subscribeTrash } from "@/src/lib/trash";
 import { shareMessage } from "@/src/lib/share-text";
+import { computeFlows, pocketNet, useMoneyBook } from "@/src/lib/wallet";
+import { router } from "expo-router";
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const { user, signOut } = useAuth();
-  const { persona, isPersonal, setPersona, labels } = usePersona();
+  const { persona, isPersonal, setPersona, labels, hasShop } = usePersona();
+  const [openShop, setOpenShop] = useState(false);
 
   // Modals & Sheets
   const [shopSheet, setShopSheet] = useState(false);
@@ -46,12 +49,26 @@ export default function Profile() {
   const [trashCount, setTrashCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
 
-  // Data queries
-  const customers = useCustomers().data ?? [];
-  const entries = useEntries().data ?? [];
+  // Each book (shop / personal) shows only its own people and money.
+  const allCustomers = useCustomers().data;
+  const allEntries = useEntries().data;
+  const customers = useMemo(
+    () => (allCustomers ?? []).filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal")),
+    [allCustomers, isPersonal]
+  );
+  const entries = useMemo(() => {
+    const mine = new Set(customers.map((c) => c.id));
+    return (allEntries ?? []).filter((e) => mine.has(e.customerId));
+  }, [allEntries, customers]);
+  const balances = useMemo(() => customers.map((c) => computeBalance(entries, c.id)), [customers, entries]);
+  const totalDue = balances.reduce((s, b) => s + (b > 0 ? b : 0), 0);
+  const totalWeOwe = balances.reduce((s, b) => s + (b < 0 ? -b : 0), 0);
   const jobs = useJobs().data ?? [];
   const aeps = useAeps().data ?? [];
-  const totalDue = computeBalance(entries);
+  const book = useMoneyBook();
+  const money = useMemo(() => computeFlows(book, persona, (d) => d <= todayISO()), [book, persona]);
+  const cashBal = pocketNet(money.cash);
+  const bankBal = pocketNet(money.bank);
   const pending = usePendingCount();
   const ownerName = user?.owner_name || user?.name || "";
 
@@ -168,8 +185,8 @@ export default function Profile() {
     setBackingUp(true);
     try {
       await exportFullLedgerCsv({
-        customers,
-        entries,
+        customers: allCustomers ?? [],
+        entries: allEntries ?? [],
         jobs,
         aeps,
         shop: user,
@@ -234,12 +251,12 @@ export default function Profile() {
         <View style={styles.cardTopRow}>
           <View style={styles.merchantBadge}>
             <MaterialIcon
-              name={isPersonal ? "account-check" : "shield-check"}
+              name={isPersonal ? "account" : "storefront"}
               size={13}
               color="#FCD34D"
             />
             <Text style={styles.merchantBadgeText}>
-              {isPersonal ? "सत्यापित खाता" : "प्रमाणित व्यापारी"}
+              {isPersonal ? "निजी खाता" : "दुकान खाता"}
             </Text>
           </View>
           <Pressable
@@ -279,7 +296,7 @@ export default function Profile() {
               </View>
             ) : null}
 
-            {user?.shop_gst ? (
+            {!isPersonal && user?.shop_gst ? (
               <View style={styles.cardDetailRow}>
                 <MaterialIcon name="card-account-details-outline" size={13} color="#94A3B8" />
                 <Text style={styles.cardDetailText} numberOfLines={1}>
@@ -337,138 +354,122 @@ export default function Profile() {
             testID="view-qr-btn"
           >
             <MaterialIcon name="qrcode" size={15} color="#F8FAFC" />
-            <Text style={styles.cardSecondaryBtnText}>पेमेंट QR कोड</Text>
+            <Text style={styles.cardSecondaryBtnText}>{isPersonal ? "मेरा QR" : "पेमेंट QR कोड"}</Text>
           </Pressable>
         </View>
       </LinearGradient>
 
-      {/* IMPROVEMENT 2: Instant Dual Persona Switcher */}
       <View style={styles.personaContainer}>
-        <Text style={styles.sectionMiniLabel}>खाता मोड</Text>
+        <Text style={styles.sectionMiniLabel}>खाता</Text>
         <View style={styles.personaSwitchRow}>
-          <Pressable
-            style={[styles.personaSegment, !isPersonal && styles.personaSegmentActive]}
-            onPress={() => handleSwitchPersona("business")}
-            testID="persona-business-btn"
-          >
-            <MaterialIcon
-              name="storefront"
-              size={17}
-              color={!isPersonal ? colors.brandPrimary : colors.muted}
-            />
-            <Text style={[styles.personaText, !isPersonal && styles.personaTextActive]}>
-              दुकान / व्यापार
-            </Text>
-          </Pressable>
-
           <Pressable
             style={[styles.personaSegment, isPersonal && styles.personaSegmentActive]}
             onPress={() => handleSwitchPersona("personal")}
             testID="persona-personal-btn"
           >
-            <MaterialIcon
-              name="account-tie"
-              size={17}
-              color={isPersonal ? colors.brandPrimary : colors.muted}
-            />
-            <Text style={[styles.personaText, isPersonal && styles.personaTextActive]}>
-              व्यक्तिगत खाता
-            </Text>
+            <MaterialIcon name="account" size={17} color={isPersonal ? colors.brandPrimary : colors.muted} />
+            <Text style={[styles.personaText, isPersonal && styles.personaTextActive]}>व्यक्तिगत</Text>
           </Pressable>
-        </View>
 
-        <Text style={styles.personaHelper}>
-          {isPersonal ? "दोस्तों, रिश्तेदारों का लेन-देन" : "ग्राहक, काम, काउंटर और गल्ला"}
-        </Text>
+          {hasShop ? (
+            <Pressable
+              style={[styles.personaSegment, !isPersonal && styles.personaSegmentActive]}
+              onPress={() => handleSwitchPersona("business")}
+              testID="persona-business-btn"
+            >
+              <MaterialIcon name="storefront" size={17} color={!isPersonal ? colors.brandPrimary : colors.muted} />
+              <Text style={[styles.personaText, !isPersonal && styles.personaTextActive]}>दुकान</Text>
+            </Pressable>
+          ) : (
+            <Pressable style={styles.personaSegment} onPress={() => setOpenShop(true)} testID="open-shop-btn">
+              <MaterialIcon name="plus-circle-outline" size={17} color={colors.brandPrimary} />
+              <Text style={[styles.personaText, { color: colors.brandPrimary }]}>दुकान खाता खोलें</Text>
+            </Pressable>
+          )}
+        </View>
       </View>
 
-      {/* IMPROVEMENT 3: Business & Ledger Health Analytics */}
+      <Pressable style={styles.balanceCard} onPress={() => router.push("/balance" as never)} testID="profile-total-balance">
+        <View style={[styles.iconCircle, { backgroundColor: colors.successSoft }]}>
+          <MaterialIcon name="wallet-outline" size={20} color={colors.success} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowLabel}>कुल बैलेंस</Text>
+          <Text style={styles.balanceVal}>{formatINR(cashBal + bankBal)}</Text>
+          <Text style={styles.rowLabel} numberOfLines={1}>
+            {labels.cash} {formatINR(cashBal)} · बैंक {formatINR(bankBal)}
+          </Text>
+        </View>
+        <MaterialIcon name="chevron-right" size={22} color={colors.muted} />
+      </Pressable>
+
       <View style={styles.analyticsSection}>
         <View style={styles.analyticsHeader}>
-          <Text style={styles.sectionHead}>
-            {isPersonal ? "व्यक्तिगत वित्तीय स्थिति" : "व्यापार स्वास्थ्य व वसूली रिपोर्ट"}
-          </Text>
-          <View
-            style={[
-              styles.healthChip,
-              recoveryRate >= 75
-                ? styles.healthChipGood
-                : recoveryRate >= 50
-                ? styles.healthChipAvg
-                : styles.healthChipLow,
-            ]}
-          >
-            <Text
+          <Text style={styles.sectionHead}>{isPersonal ? "मेरा हिसाब" : "दुकान का हिसाब"}</Text>
+          {!isPersonal ? (
+            <View
               style={[
-                styles.healthChipText,
-                recoveryRate >= 75
-                  ? styles.healthTextGood
-                  : recoveryRate >= 50
-                  ? styles.healthTextAvg
-                  : styles.healthTextLow,
+                styles.healthChip,
+                recoveryRate >= 75 ? styles.healthChipGood : recoveryRate >= 50 ? styles.healthChipAvg : styles.healthChipLow,
               ]}
             >
-              {recoveryRate >= 75 ? "उत्कृष्ट" : recoveryRate >= 50 ? "सामान्य" : "ध्यान दें"}
-            </Text>
-          </View>
+              <Text
+                style={[
+                  styles.healthChipText,
+                  recoveryRate >= 75 ? styles.healthTextGood : recoveryRate >= 50 ? styles.healthTextAvg : styles.healthTextLow,
+                ]}
+              >
+                {recoveryRate >= 75 ? "बढ़िया" : recoveryRate >= 50 ? "ठीक" : "ध्यान दें"}
+              </Text>
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.analyticsGrid}>
           <View style={styles.analyticsCard}>
             <View style={styles.analyticsCardTop}>
-              <Text style={styles.analyticsLabel}>सक्रिय खाते</Text>
+              <Text style={styles.analyticsLabel}>{isPersonal ? "लोग" : "ग्राहक"}</Text>
               <MaterialIcon name="account-group-outline" size={17} color={colors.brandPrimary} />
             </View>
             <Text style={styles.analyticsVal}>{customers.length}</Text>
-            <Text style={styles.analyticsSub}>कुल दर्ज लोग</Text>
           </View>
 
           <View style={styles.analyticsCard}>
             <View style={styles.analyticsCardTop}>
-              <Text style={styles.analyticsLabel}>बाज़ार में उधारी</Text>
-              <MaterialIcon name="cash-remove" size={17} color={colors.error} />
+              <Text style={styles.analyticsLabel}>{isPersonal ? "लेने हैं" : "बाज़ार में उधारी"}</Text>
+              <MaterialIcon name="arrow-bottom-left" size={17} color={colors.error} />
             </View>
-            <Text style={[styles.analyticsVal, { color: colors.error }]}>
-              {formatINR(Math.max(totalDue, 0))}
-            </Text>
-            <Text style={styles.analyticsSub}>लेने बाकी हैं</Text>
+            <Text style={[styles.analyticsVal, { color: colors.error }]}>{formatINR(totalDue)}</Text>
           </View>
 
           <View style={styles.analyticsCard}>
             <View style={styles.analyticsCardTop}>
-              <Text style={styles.analyticsLabel}>इस माह वसूली</Text>
+              <Text style={styles.analyticsLabel}>{isPersonal ? "देने हैं" : "एडवांस जमा"}</Text>
+              <MaterialIcon name="arrow-top-right" size={17} color={colors.warning} />
+            </View>
+            <Text style={[styles.analyticsVal, { color: colors.warning }]}>{formatINR(totalWeOwe)}</Text>
+          </View>
+
+          <View style={styles.analyticsCard}>
+            <View style={styles.analyticsCardTop}>
+              <Text style={styles.analyticsLabel}>{isPersonal ? "इस माह मिले" : "इस माह वसूली"}</Text>
               <MaterialIcon name="cash-check" size={17} color={colors.success} />
             </View>
-            <Text style={[styles.analyticsVal, { color: colors.success }]}>
-              {formatINR(monthPayments)}
-            </Text>
-            <Text style={styles.analyticsSub}>चालू कैलेंडर माह</Text>
+            <Text style={[styles.analyticsVal, { color: colors.success }]}>{formatINR(monthPayments)}</Text>
           </View>
+        </View>
 
-          <View style={styles.analyticsCard}>
-            <View style={styles.analyticsCardTop}>
-              <Text style={styles.analyticsLabel}>वसूली दर</Text>
-              <MaterialIcon name="chart-pie" size={17} color={colors.brandSecondary} />
+        {!isPersonal ? (
+          <View style={styles.progressBarWrapper}>
+            <View style={styles.progressBarBackground}>
+              <View style={[styles.progressBarFill, { width: `${recoveryRate}%` }]} />
             </View>
-            <Text style={[styles.analyticsVal, { color: colors.brandSecondary }]}>
-              {recoveryRate}%
-            </Text>
-            <Text style={styles.analyticsSub}>रिकवरी प्रतिशत</Text>
+            <View style={styles.progressTextRow}>
+              <Text style={styles.progressSubText}>वसूली: {recoveryRate}%</Text>
+              <Text style={styles.progressSubText}>बाकी: {formatINR(totalDue)}</Text>
+            </View>
           </View>
-        </View>
-
-        {/* Recovery Progress Bar */}
-        <View style={styles.progressBarWrapper}>
-          <View style={styles.progressBarBackground}>
-            <View style={[styles.progressBarFill, { width: `${recoveryRate}%` }]} />
-          </View>
-          <View style={styles.progressTextRow}>
-            <Text style={styles.progressSubText}>बाज़ार से रिकवरी: {recoveryRate}%</Text>
-            <Text style={styles.progressSubText}>
-              शेष उधारी: {formatINR(Math.max(totalDue, 0))}
-            </Text>
-          </View>
-        </View>
+        ) : null}
       </View>
 
       {/* IMPROVEMENT 5 (Top): Real-time Cloud Sync Card */}
@@ -502,7 +503,7 @@ export default function Profile() {
 
       {/* IMPROVEMENT 4: Grouped Professional Settings */}
       {/* Category 1: दुकान व बिलिंग सेटिंग्स */}
-      <Text style={styles.groupHead}>दुकान व बिलिंग सेटिंग्स</Text>
+      <Text style={styles.groupHead}>{isPersonal ? "मेरी सेटिंग्स" : "दुकान सेटिंग्स"}</Text>
       <View style={styles.card}>
         <Pressable
           style={styles.settingRow}
@@ -532,9 +533,9 @@ export default function Profile() {
             <MaterialIcon name="qrcode" size={20} color="#2563EB" />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.rowValue}>दुकान का पेमेंट QR कोड</Text>
+            <Text style={styles.rowValue}>{isPersonal ? "मेरा QR कोड" : "दुकान का QR कोड"}</Text>
             <Text style={styles.rowLabel} numberOfLines={1}>
-              {user?.shop_upi ? `UPI: ${user.shop_upi}` : "ग्राहक से पेमेंट लेने के लिए QR कोड देखें"}
+              {user?.shop_upi ? `UPI: ${user.shop_upi}` : "UPI ID जोड़ें"}
             </Text>
           </View>
           <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
@@ -637,7 +638,7 @@ export default function Profile() {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowValue}>सम्पूर्ण खाता Excel बैकअप (.csv)</Text>
-            <Text style={styles.rowLabel}>सभी ग्राहक, लेन-देन व काम की स्प्रेडशीट</Text>
+            <Text style={styles.rowLabel}>सारा हिसाब एक फ़ाइल में</Text>
           </View>
           {backingUp ? (
             <ActivityIndicator color={colors.brandPrimary} />
@@ -666,6 +667,7 @@ export default function Profile() {
 
       {/* Modals */}
       <ShopProfileSheet visible={shopSheet} onClose={() => setShopSheet(false)} />
+      <ShopProfileSheet visible={openShop} openShop onClose={() => setOpenShop(false)} />
       <PinSetupModal visible={pinSetup} onClose={() => setPinSetup(false)} onDone={onPinSet} />
       <RecycleBinModal visible={trashOpen} onClose={() => setTrashOpen(false)} />
 
@@ -737,7 +739,7 @@ function QrCodeModal({
             <View style={qrStyles.content}>
               <Text style={qrStyles.shopName}>{shopName}</Text>
               <Text style={qrStyles.subtitle}>
-                ग्राहक किसी भी UPI ऐप (PhonePe, GPay, Paytm) से स्कैन कर सकते हैं
+                किसी भी UPI ऐप (PhonePe, GPay, Paytm) से स्कैन करें
               </Text>
 
               <View style={qrStyles.qrFrame}>
@@ -970,6 +972,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
+
+  balanceCard: {
+    marginTop: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  balanceVal: { fontSize: 22, fontWeight: "800", color: colors.onSurface, marginVertical: 2 },
 
   // Persona Switcher
   personaContainer: {

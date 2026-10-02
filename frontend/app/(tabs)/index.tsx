@@ -40,16 +40,16 @@ export default function Home() {
   const recentIds = useRecentCustomerIds();
 
   const today = todayISO();
-  const todayExpenses = useExpenses(today);
+  const todayExpenses = useExpenses(today, isPersonal ? "personal" : "business");
   const allCustomers = customersQ.data ?? [];
   const entries = entriesQ.data ?? [];
-  const jobs = jobsQ.data ?? [];
-
   const customers = useMemo(() => {
     return allCustomers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal"));
   }, [allCustomers, isPersonal]);
 
   const personaCustIds = useMemo(() => new Set(customers.map((c) => c.id)), [customers]);
+  const allJobs = jobsQ.data;
+  const jobs = useMemo(() => (allJobs ?? []).filter((j) => !j.customerId || personaCustIds.has(j.customerId)), [allJobs, personaCustIds]);
 
   const recentCustomers = useMemo(() => {
     return recentIds
@@ -79,7 +79,8 @@ export default function Home() {
     const weOwe = balances.filter((d) => d < 0).map((d) => -d);
     const totalDue = dues.reduce((s, d) => s + d, 0);
     const totalWeOwe = weOwe.reduce((s, d) => s + d, 0);
-    const todayWork = entries.filter((e) => e.date === today && e.type === "work" && (!e.customerId || personaCustIds.has(e.customerId)));
+    // The personal book has no work; its day is everything given and received.
+    const todayWork = entries.filter((e) => e.date === today && (isPersonal || e.type === "work") && personaCustIds.has(e.customerId));
     const todayPay = entries.filter((e) => e.date === today && cashIn(e) > 0 && (!e.customerId || personaCustIds.has(e.customerId)));
     const open = jobs.filter((j) => j.status !== "done");
     return {
@@ -94,7 +95,7 @@ export default function Home() {
       openJobs: open.length,
       overdue: open.filter((j) => j.dueDate < today).length,
     };
-  }, [customers, entries, jobs, today, personaCustIds]);
+  }, [customers, entries, jobs, today, personaCustIds, isPersonal]);
 
   const aepsToday = useMemo(() => aepsTotals(aeps.filter((t) => t.date === today)), [aeps, today]);
 
@@ -105,7 +106,7 @@ export default function Home() {
 
   const loading = customersQ.isLoading || entriesQ.isLoading || jobsQ.isLoading;
   const loadFailed = !loading && (customersQ.isError || entriesQ.isError) && customersQ.data == null;
-  const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? "ग्राहक" : "खुद का काम");
+  const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? labels.customer : "खुद का काम");
   // The nonce makes the target tab re-apply the filter even if it was already open with it.
   const go = (pathname: string, params: Record<string, string>) =>
     router.navigate({ pathname: pathname as any, params: { ...params, t: String(Date.now()) } });
@@ -131,7 +132,7 @@ export default function Home() {
           <MaterialIcon name="magnify" size={20} color={colors.muted} />
           <TextInput
             style={styles.searchInput}
-            placeholder="ग्राहक, फ़ोन या काम खोजें..."
+            placeholder={isPersonal ? "नाम या फ़ोन खोजें" : "ग्राहक, फ़ोन या काम खोजें"}
             placeholderTextColor={colors.muted}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -170,7 +171,7 @@ export default function Home() {
                       {c.phone ? <Text style={styles.resultSub}>{formatPhone(c.phone)}</Text> : null}
                     </View>
                     <Text style={[styles.resultDue, { color: b > 0 ? colors.error : colors.success }]}>
-                      {b === 0 ? "क्लियर" : b > 0 ? `${formatINR(b)} लेने` : `${formatINR(-b)} एडवांस`}
+                      {b === 0 ? "क्लियर" : b > 0 ? `${formatINR(b)} लेने` : `${formatINR(-b)} ${labels.advance}`}
                     </Text>
                   </Pressable>
                 ))}

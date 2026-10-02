@@ -72,7 +72,7 @@ export function ReceiptSheet({ doc, onClose }: { doc: ShareDoc | null; onClose: 
         {making ? <ActivityIndicator color="#fff" /> : <MaterialIcon name="file-pdf-box" size={24} color="#fff" />}
         <View style={{ flex: 1 }}>
           <Text style={styles.optionTitle}>PDF {doc?.heading ?? "रसीद"}</Text>
-          <Text style={styles.optionSub}>{pdfSupported ? "WhatsApp चुनें, फिर ग्राहक चुनें" : "PDF के लिए ऐप का नया वर्ज़न इंस्टॉल करें"}</Text>
+          <Text style={styles.optionSub}>{pdfSupported ? "WhatsApp चुनें, फिर नाम चुनें" : "PDF के लिए ऐप का नया वर्ज़न इंस्टॉल करें"}</Text>
         </View>
       </Pressable>
     </SheetShell>

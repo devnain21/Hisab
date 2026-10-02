@@ -12,6 +12,7 @@ import { store } from "@/src/lib/store";
 import { AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
 import { SlowServerHint } from "@/src/components/slow-server-hint";
+import { usePersona } from "@/src/lib/persona";
 type Filter = "open" | "late" | "today" | "unpaid" | "done" | "all";
 const FILTERS: Filter[] = ["open", "late", "today", "unpaid", "done", "all"];
 const CHIPS: Filter[] = ["open", "done"];
@@ -32,8 +33,17 @@ export default function WorkScreen() {
   const customersQ = useCustomers();
   const jobsQ = useJobs();
   const entriesQ = useEntries();
-  const customers = customersQ.data ?? [];
-  const jobs = jobsQ.data ?? [];
+  const { isPersonal } = usePersona();
+  const allCustomers = customersQ.data;
+  const customers = useMemo(
+    () => (allCustomers ?? []).filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal")),
+    [allCustomers, isPersonal]
+  );
+  const allJobs = jobsQ.data;
+  const jobs = useMemo(() => {
+    const mine = new Set(customers.map((c) => c.id));
+    return (allJobs ?? []).filter((j) => !j.customerId || mine.has(j.customerId));
+  }, [allJobs, customers]);
   const entries = entriesQ.data ?? [];
   const [filter, setFilter] = useState<Filter>("open");
   const [open, setOpen] = useState(false);
@@ -61,7 +71,7 @@ export default function WorkScreen() {
     if (params.filter && FILTERS.includes(params.filter)) setFilter(params.filter);
   }, [params.filter, params.t]);
 
-  const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? "ग्राहक" : "खुद का काम");
+  const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? (isPersonal ? "व्यक्ति" : "ग्राहक") : "खुद का काम");
   // Own tasks have no money side, so finishing one is a single tap.
   const complete = (j: Job) => (j.customerId ? setCompleting(j) : store.updateJob(j.id, { status: "done", dueDate: today }));
 
@@ -96,7 +106,7 @@ export default function WorkScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.md }}>
-        <Text style={styles.h1}>काम</Text>
+        <Text style={styles.h1}>{isPersonal ? "लेन-देन" : "काम"}</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.md }}>
           {CHIPS.map((f) => {
             const active = filter === f;

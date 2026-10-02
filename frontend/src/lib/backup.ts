@@ -16,7 +16,7 @@ export function buildBackupCsv(customers: Customer[], entries: Entry[], jobs: Jo
   const lines: string[] = [];
 
   lines.push(row(["खाता (सभी एंट्री)"]));
-  lines.push(row(["तारीख", "ग्राहक", "फ़ोन", "प्रकार", "विवरण", "रकम", "मिले", "लेने हैं", "नोट"]));
+  lines.push(row(["तारीख", "नाम", "फ़ोन", "प्रकार", "विवरण", "रकम", "मिले", "लेने हैं", "नोट"]));
   [...entries]
     .sort((a, b) => (a.date !== b.date ? a.date.localeCompare(b.date) : a.createdAt.localeCompare(b.createdAt)))
     .forEach((e) => {
@@ -27,13 +27,13 @@ export function buildBackupCsv(customers: Customer[], entries: Entry[], jobs: Jo
     });
 
   lines.push("");
-  lines.push(row(["ग्राहक सारांश"]));
-  lines.push(row(["ग्राहक", "फ़ोन", "पता", "लेने हैं", "नोट"]));
+  lines.push(row(["खाता सारांश"]));
+  lines.push(row(["नाम", "फ़ोन", "पता", "लेने हैं", "नोट"]));
   customers.forEach((c) => lines.push(row([c.name, c.phone, c.address, computeBalance(entries, c.id), c.notes])));
 
   lines.push("");
   lines.push(row(["काम"]));
-  lines.push(row(["तारीख", "ग्राहक", "काम", "स्थिति", "रकम", "नोट"]));
+  lines.push(row(["तारीख", "नाम", "काम", "स्थिति", "रकम", "नोट"]));
   const status = { pending: "काम बाकी", doing: "चल रहा", done: "पूरा" } as const;
   [...jobs]
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
@@ -42,7 +42,7 @@ export function buildBackupCsv(customers: Customer[], entries: Entry[], jobs: Jo
   if (aeps.length) {
     lines.push("");
     lines.push(row(["AEPS / सेवाएँ"]));
-    lines.push(row(["तारीख", "समय", "सेवा", "स्थिति", "ग्राहक", "मोबाइल", "आधार (आख़िरी 4)", "बैंक", "पाने वाला", "UPI", "खाता", "IFSC", "ऑपरेटर", "नंबर", "बिल", "कंज़्यूमर नं.", "रकम", "कमीशन", "Txn ID", "नोट"]));
+    lines.push(row(["तारीख", "समय", "सेवा", "स्थिति", "नाम", "मोबाइल", "आधार (आख़िरी 4)", "बैंक", "पाने वाला", "UPI", "खाता", "IFSC", "ऑपरेटर", "नंबर", "बिल", "कंज़्यूमर नं.", "रकम", "कमीशन", "Txn ID", "नोट"]));
     [...aeps]
       .sort((a, b) => (a.date !== b.date ? a.date.localeCompare(b.date) : a.time.localeCompare(b.time)))
       .forEach((t) =>

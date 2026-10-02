@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "@/src/context/AuthContext";
+import { useCustomers } from "@/src/lib/data";
 
 export type Persona = "business" | "personal";
 
@@ -8,6 +9,7 @@ const KEY = "hisab_persona_v1";
 
 export function usePersona() {
   const { user, setShop } = useAuth();
+  const customers = useCustomers().data;
   const [stored, setStored] = useState<Persona | null>(null);
 
   useEffect(() => {
@@ -17,7 +19,9 @@ export function usePersona() {
     }).catch(() => {});
   }, [user?.persona]);
 
-  const persona: Persona = (user?.persona as Persona) || stored || "business";
+  // A shop exists once it has a name, or for older accounts that already keep shop customers.
+  const hasShop = !!user?.shop_name || (customers ?? []).some((c) => c.persona !== "personal");
+  const persona: Persona = hasShop ? (user?.persona as Persona) || stored || "business" : "personal";
 
   const setPersona = useCallback(
     async (next: Persona) => {
@@ -43,6 +47,7 @@ export function usePersona() {
   return {
     persona,
     isPersonal,
+    hasShop,
     setPersona,
     labels: {
       customer: isPersonal ? "व्यक्ति" : "ग्राहक",
@@ -55,6 +60,7 @@ export function usePersona() {
       shopName: isPersonal ? "आपका नाम" : "दुकान का नाम",
       shopAddress: isPersonal ? "पता (वैकल्पिक)" : "दुकान का पता (वैकल्पिक)",
       shopPhone: isPersonal ? "फ़ोन नंबर" : "दुकान का फ़ोन",
+      cash: isPersonal ? "कैश" : "गल्ला",
     },
   };
 }
@@ -62,6 +68,6 @@ export function usePersona() {
 /** The name to show and print for this account: the shop in business mode, the person in personal mode. */
 export function accountName(user: { name?: string; shop_name?: string; owner_name?: string; persona?: string } | null | undefined): string {
   if (!user) return "";
-  if (user.persona === "personal") return user.owner_name || user.name || "";
-  return user.shop_name || "";
+  if (user.persona === "personal" || !user.shop_name) return user.owner_name || user.name || "";
+  return user.shop_name;
 }

@@ -11,8 +11,12 @@ export type Expense = {
   mode: ExpenseMode; // "cash" = गल्ले से नकद, "online" = बैंक / UPI से
   date: string;
   notes?: string;
+  /** Missing on rows saved before the personal account had its own cash; those were shop expenses. */
+  persona?: "business" | "personal";
   createdAt: string;
 };
+
+export const expensePersona = (e: Expense) => e.persona ?? "business";
 
 const EXPENSES_KEY = "hisab_expenses_v1";
 
@@ -23,9 +27,10 @@ export const EXPENSE_CATEGORIES = [
   "बिजली बिल",
   "पेट्रोल / किराया",
   "सफ़ाई",
-  "घर का खर्च",
   "अन्य",
 ];
+
+export const PERSONAL_EXPENSE_CATEGORIES = ["घर का खर्च", "राशन", "बिजली बिल", "पेट्रोल", "किराया", "दवाई", "अन्य"];
 
 let cachedExpenses: Expense[] | null = null;
 const listeners = new Set<() => void>();
@@ -51,6 +56,7 @@ export async function addExpense(payload: {
   mode: ExpenseMode;
   date?: string;
   notes?: string;
+  persona: "business" | "personal";
 }): Promise<Expense> {
   const list = await getExpenses();
   const item: Expense = {
@@ -60,6 +66,7 @@ export async function addExpense(payload: {
     mode: payload.mode,
     date: payload.date || todayISO(),
     notes: payload.notes?.trim() || "",
+    persona: payload.persona,
     createdAt: new Date().toISOString(),
   };
 
@@ -78,7 +85,7 @@ export async function deleteExpense(id: string): Promise<void> {
   notify();
 }
 
-export function useExpenses(date?: string): { expenses: Expense[]; totalCash: number; totalOnline: number; totalAll: number } {
+export function useExpenses(date?: string, persona?: "business" | "personal"): { expenses: Expense[]; all: Expense[]; totalCash: number; totalOnline: number; totalAll: number } {
   const [list, setList] = useState<Expense[]>(cachedExpenses || []);
 
   useEffect(() => {
@@ -92,12 +99,13 @@ export function useExpenses(date?: string): { expenses: Expense[]; totalCash: nu
     };
   }, []);
 
-  const filtered = date ? list.filter((e) => e.date === date) : list;
+  const filtered = list.filter((e) => (!date || e.date === date) && (!persona || expensePersona(e) === persona));
   const totalCash = filtered.filter((e) => e.mode === "cash").reduce((s, e) => s + e.amount, 0);
   const totalOnline = filtered.filter((e) => e.mode === "online").reduce((s, e) => s + e.amount, 0);
 
   return {
     expenses: filtered,
+    all: list,
     totalCash,
     totalOnline,
     totalAll: totalCash + totalOnline,

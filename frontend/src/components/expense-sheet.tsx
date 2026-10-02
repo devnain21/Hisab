@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { View, Text, StyleSheet, TextInput, Modal } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
-import { addExpense, EXPENSE_CATEGORIES, type ExpenseMode } from "@/src/lib/expenses";
+import { addExpense, EXPENSE_CATEGORIES, PERSONAL_EXPENSE_CATEGORIES, type ExpenseMode } from "@/src/lib/expenses";
+import { usePersona } from "@/src/lib/persona";
 import { todayISO } from "@/src/lib/format";
 
 export function AddExpenseSheet({
@@ -15,8 +16,15 @@ export function AddExpenseSheet({
   onClose: () => void;
   initialDate?: string;
 }) {
+  const { persona, isPersonal, labels } = usePersona();
+  const categories = isPersonal ? PERSONAL_EXPENSE_CATEGORIES : EXPENSE_CATEGORIES;
   const [amount, setAmount] = useState("");
-  const [title, setTitle] = useState("चाय-नाश्ता");
+  const [title, setTitle] = useState(categories[0]);
+
+  useEffect(() => {
+    if (visible) setTitle(categories[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, isPersonal]);
   const [mode, setMode] = useState<ExpenseMode>("cash");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -33,6 +41,7 @@ export function AddExpenseSheet({
         mode,
         date: initialDate || todayISO(),
         notes,
+        persona,
       });
       setAmount("");
       setNotes("");
@@ -47,10 +56,7 @@ export function AddExpenseSheet({
       <View style={styles.overlay}>
         <View style={styles.sheet}>
           <View style={styles.header}>
-            <View>
-              <Text style={styles.title}>☕ खर्च दर्ज करें (Petty Expense)</Text>
-              <Text style={styles.subtitle}>दुकान या घर का दैनिक खर्च</Text>
-            </View>
+            <Text style={styles.title}>खर्च लिखें</Text>
             <Pressable onPress={onClose} hitSlop={12} testID="expense-close">
               <MaterialIcon name="close" size={24} color={colors.onSurface} />
             </Pressable>
@@ -76,7 +82,7 @@ export function AddExpenseSheet({
 
           {/* Source Mode: Cash Drawer vs Online/UPI */}
           <View style={styles.field}>
-            <Text style={styles.label}>कहाँ से दिया?</Text>
+            <Text style={styles.label}>कहाँ से दिया</Text>
             <View style={styles.modeRow}>
               <Pressable
                 style={[styles.modeBtn, mode === "cash" && styles.modeBtnActive]}
@@ -89,7 +95,7 @@ export function AddExpenseSheet({
                   color={mode === "cash" ? colors.onBrandPrimary : colors.onSurface}
                 />
                 <Text style={[styles.modeText, mode === "cash" && styles.modeTextActive]}>
-                  गल्ले से नकद
+                  {labels.cash} से
                 </Text>
               </Pressable>
               <Pressable
@@ -103,7 +109,7 @@ export function AddExpenseSheet({
                   color={mode === "online" ? colors.onBrandPrimary : colors.onSurface}
                 />
                 <Text style={[styles.modeText, mode === "online" && styles.modeTextActive]}>
-                  बैंक / UPI से
+                  बैंक से
                 </Text>
               </Pressable>
             </View>
@@ -113,7 +119,7 @@ export function AddExpenseSheet({
           <View style={styles.field}>
             <Text style={styles.label}>खर्च का प्रकार</Text>
             <View style={styles.chipsWrap}>
-              {EXPENSE_CATEGORIES.map((cat) => {
+              {categories.map((cat) => {
                 const active = title === cat;
                 return (
                   <Pressable
@@ -130,10 +136,10 @@ export function AddExpenseSheet({
 
           {/* Optional Note */}
           <View style={styles.field}>
-            <Text style={styles.label}>रिमार्क / विवरण (वैकल्पिक)</Text>
+            <Text style={styles.label}>नोट (वैकल्पिक)</Text>
             <TextInput
               style={styles.textInput}
-              placeholder="जैसे 2 कप चाय, समोसा"
+              placeholder=""
               placeholderTextColor={colors.muted}
               value={notes}
               onChangeText={setNotes}

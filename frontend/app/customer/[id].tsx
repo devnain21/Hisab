@@ -94,7 +94,7 @@ export default function CustomerDetail() {
     return (
       <View style={{ flex: 1, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center", padding: spacing.xl }}>
         <MaterialIcon name="account-question-outline" size={40} color={colors.muted} />
-        <Text style={{ marginTop: spacing.md, color: colors.onSurface }}>ग्राहक नहीं मिला</Text>
+        <Text style={{ marginTop: spacing.md, color: colors.onSurface }}>खाता नहीं मिला</Text>
         <Pressable onPress={() => router.back()} style={{ marginTop: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, backgroundColor: colors.brandPrimary, borderRadius: radius.md }}>
           <Text style={{ color: colors.onBrandPrimary, fontWeight: "600" }}>वापस</Text>
         </Pressable>

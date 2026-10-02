@@ -101,7 +101,7 @@ export default function CustomersScreen() {
         </ScrollView>
         {!loading && filter === "due" && totalDue > 0 ? (
           <Text style={styles.summary} testID="customers-summary">
-            कुल लेने हैं <Text style={{ color: colors.error, fontWeight: "800" }}>{formatINR(totalDue)}</Text> · {counts.due} ग्राहक
+            कुल लेने हैं <Text style={{ color: colors.error, fontWeight: "800" }}>{formatINR(totalDue)}</Text> · {counts.due} {labels.customers}
           </Text>
         ) : null}
       </View>
@@ -118,9 +118,9 @@ export default function CustomersScreen() {
             <View style={styles.empty} testID="customers-empty">
               <MaterialIcon name="account-group-outline" size={32} color={colors.muted} />
               <Text style={styles.emptyTitle}>
-                {q ? "कोई ग्राहक नहीं मिला" : customers.length === 0 ? "अभी कोई ग्राहक नहीं" : filter === "due" ? "किसी से लेने नहीं हैं" : "इस सूची में कोई नहीं"}
+                {q ? "कोई नहीं मिला" : customers.length === 0 ? (isPersonal ? "अभी कोई नहीं" : "अभी कोई ग्राहक नहीं") : filter === "due" ? "किसी से लेने नहीं हैं" : "इस सूची में कोई नहीं"}
               </Text>
-              {!q && customers.length === 0 && <Text style={styles.emptySub}>पहला ग्राहक जोड़कर शुरू करें</Text>}
+              {!q && customers.length === 0 && <Text style={styles.emptySub}>{labels.newCustomer}</Text>}
             </View>
           }
           renderItem={({ item, index }) => (

@@ -193,7 +193,7 @@ function useCustomerChoice(visible: boolean, fixedCustomerId?: string) {
   return { recent, matches, exact, customerId, setCustomerId, existingId, isNew, isSelf, query, setQuery, newPhone, setNewPhone, ready, resolve };
 }
 
-function CustomerPicker({ choice, label = "ग्राहक", allowSelf, testPrefix }: { choice: ReturnType<typeof useCustomerChoice>; label?: string; allowSelf?: boolean; testPrefix: string }) {
+function CustomerPicker({ choice, label = "नाम", allowSelf, testPrefix }: { choice: ReturnType<typeof useCustomerChoice>; label?: string; allowSelf?: boolean; testPrefix: string }) {
   const { recent, matches, exact, customerId, setCustomerId, isNew, isSelf, query, setQuery } = choice;
   const picked = recent.find((c) => c.id === customerId);
 
@@ -499,9 +499,9 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
       <PrimaryButton label={initial ? "बदलाव सेव करें" : targetPersona === "personal" ? "व्यक्ति जोड़ें" : "ग्राहक जोड़ें"} onPress={save} disabled={!name.trim()} saving={saving} testID="save-customer-btn" />
       {initial?.id && onDelete ? (
         <DangerLink
-          label="यह ग्राहक हटाएँ"
+          label="यह खाता हटाएँ"
           testID="delete-customer-link"
-          onPress={() => confirmAction(`${name || "ग्राहक"} को हटाएँ?`, "इनका पूरा खाता मिट जाएगा।", "हटा दें", () => { onDelete(); onClose(); })}
+          onPress={() => confirmAction(`${name || "यह खाता"} हटाएँ?`, "इनका पूरा खाता मिट जाएगा।", "हटा दें", () => { onDelete(); onClose(); })}
         />
       ) : null}
       <ContactPickerModal
@@ -1061,9 +1061,9 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   );
 }
 
-export function ShopProfileSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+export function ShopProfileSheet({ visible, onClose, openShop }: { visible: boolean; onClose: () => void; openShop?: boolean }) {
   const { user, setShop } = useAuth();
-  const { isPersonal } = usePersona();
+  const isPersonal = usePersona().isPersonal && !openShop;
   const [shopName, setShopName] = useState("");
   const [ownerName, setOwnerName] = useState("");
   const [phone, setPhone] = useState("");
@@ -1109,7 +1109,7 @@ export function ShopProfileSheet({ visible, onClose }: { visible: boolean; onClo
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title={isPersonal ? "मेरी जानकारी" : "दुकान की जानकारी"} testID="sheet-shop-name">
+    <SheetShell visible={visible} onClose={onClose} title={openShop ? "दुकान खाता खोलें" : isPersonal ? "मेरी जानकारी" : "दुकान की जानकारी"} testID="sheet-shop-name">
       {isPersonal ? null : (
         <Field label="दुकान का नाम">
           <TextInput style={inputStyle} value={shopName} onChangeText={setShopName} placeholder="दुकान का नाम" placeholderTextColor={colors.muted} maxLength={60} testID="input-shop-name" />

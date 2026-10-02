@@ -73,7 +73,7 @@ export function RecycleBinModal({
               renderItem={({ item }) => {
                 const collBadge =
                   item.coll === "customers"
-                    ? { label: "ग्राहक", color: "#1D4ED8" }
+                    ? { label: "खाता", color: "#1D4ED8" }
                     : item.coll === "entries"
                     ? { label: "हिसाब", color: "#047857" }
                     : item.coll === "jobs"

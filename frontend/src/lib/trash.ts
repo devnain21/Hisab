@@ -43,7 +43,7 @@ export async function putInTrash(
   let subtitle = "";
 
   if (coll === "customers") {
-    title = data.name || "ग्राहक";
+    title = data.name || "खाता";
     subtitle = data.phone ? `फ़ोन: ${data.phone}` : "खाता रिकॉर्ड";
   } else if (coll === "entries") {
     title = data.description || (data.type === "payment" ? "भुगतान" : "काम");

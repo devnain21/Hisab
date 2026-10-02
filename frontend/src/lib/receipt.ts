@@ -99,7 +99,7 @@ export function receiptDoc(
   const message = [
     ...messageHead(shop),
     `${heading} नं. ${no} · ${formatDate(entry.date)}`,
-    `ग्राहक: ${customer.name}`,
+    `${customer.persona === "personal" ? "नाम" : "ग्राहक"}: ${customer.name}`,
     "",
     item,
     ...lines.map(lineText),
@@ -170,7 +170,7 @@ export function statementDoc(
   const message = [
     ...messageHead(shop),
     `*खाता विवरण* · ${formatDate(today)}`,
-    `ग्राहक: ${customer.name}`,
+    `${customer.persona === "personal" ? "नाम" : "ग्राहक"}: ${customer.name}`,
     "",
     ...lines.map(lineText),
     `*${account.label}: ${account.value}*`,
@@ -315,7 +315,7 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
     <div><div class="shop">${esc(shop.shop_name)}</div><div class="meta">${shopMeta}</div></div>
     <div class="doc"><div class="title">${esc(heading)}</div><div class="meta">${docMeta}</div></div>
   </div>
-  <div class="to"><div class="label">ग्राहक</div><div class="name">${esc(customer.name)}</div>${customer.phone ? `<div class="meta">${esc(formatPhone(customer.phone))}</div>` : ""}</div>
+  <div class="to"><div class="label">${customer.persona === "personal" ? "नाम" : "ग्राहक"}</div><div class="name">${esc(customer.name)}</div>${customer.phone ? `<div class="meta">${esc(formatPhone(customer.phone))}</div>` : ""}</div>
   ${body}
   <div class="foot">धन्यवाद, फिर पधारें 🙏</div>
 </body></html>`;

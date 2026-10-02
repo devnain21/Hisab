@@ -35,8 +35,8 @@ export async function exportFullLedgerCsv(params: {
   lines.push("");
 
   // SECTION 1: CUSTOMER BALANCES
-  lines.push("=== 1. ग्राहकों का हिसाब (CUSTOMER BALANCES) ===");
-  lines.push(["क्र.", "ग्राहक का नाम", "मोबाइल नंबर", "पता", "बाकी रकम (लेने हैं / एडवांस)", "स्थिति"].map(escapeCsv).join(","));
+  lines.push("=== 1. खातों का हिसाब (CUSTOMER BALANCES) ===");
+  lines.push(["क्र.", "नाम", "मोबाइल नंबर", "पता", "बाकी रकम (लेने हैं / एडवांस)", "स्थिति"].map(escapeCsv).join(","));
 
   customers.forEach((c, i) => {
     const bal = computeBalance(entries, c.id);
@@ -58,7 +58,7 @@ export async function exportFullLedgerCsv(params: {
 
   // SECTION 2: ALL ENTRIES
   lines.push("=== 2. लेन-देन बही खाता (ALL ENTRIES) ===");
-  lines.push(["क्र.", "तारीख", "ग्राहक", "प्रकार", "विवरण", "कुल रकम (₹)", "नकद मिले (₹)", "उधारी/बाकी (₹)", "नोट्स"].map(escapeCsv).join(","));
+  lines.push(["क्र.", "तारीख", "नाम", "प्रकार", "विवरण", "कुल रकम (₹)", "नकद मिले (₹)", "उधारी/बाकी (₹)", "नोट्स"].map(escapeCsv).join(","));
 
   const custMap = new Map(customers.map((c) => [c.id, c.name]));
   const sortedEntries = [...entries].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
@@ -90,7 +90,7 @@ export async function exportFullLedgerCsv(params: {
   // SECTION 3: COUNTER & AEPS TRANSACTIONS
   if (aeps.length > 0) {
     lines.push("=== 3. काउंटर व मनी ट्रांसफर (AEPS & COUNTER) ===");
-    lines.push(["क्र.", "तारीख व समय", "सेवा", "ग्राहक", "मोबाइल", "रकम (₹)", "कमीशन (₹)", "स्थिति", "रेफरेंस"].map(escapeCsv).join(","));
+    lines.push(["क्र.", "तारीख व समय", "सेवा", "नाम", "मोबाइल", "रकम (₹)", "कमीशन (₹)", "स्थिति", "रेफरेंस"].map(escapeCsv).join(","));
 
     const sortedAeps = [...aeps].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
     sortedAeps.forEach((t, i) => {

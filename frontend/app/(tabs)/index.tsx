@@ -41,9 +41,15 @@ export default function Home() {
 
   const today = todayISO();
   const todayExpenses = useExpenses(today);
-  const customers = customersQ.data ?? [];
+  const allCustomers = customersQ.data ?? [];
   const entries = entriesQ.data ?? [];
   const jobs = jobsQ.data ?? [];
+
+  const customers = useMemo(() => {
+    return allCustomers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal"));
+  }, [allCustomers, isPersonal]);
+
+  const personaCustIds = useMemo(() => new Set(customers.map((c) => c.id)), [customers]);
 
   const recentCustomers = useMemo(() => {
     return recentIds
@@ -73,8 +79,8 @@ export default function Home() {
     const weOwe = balances.filter((d) => d < 0).map((d) => -d);
     const totalDue = dues.reduce((s, d) => s + d, 0);
     const totalWeOwe = weOwe.reduce((s, d) => s + d, 0);
-    const todayWork = entries.filter((e) => e.date === today && e.type === "work");
-    const todayPay = entries.filter((e) => e.date === today && cashIn(e) > 0);
+    const todayWork = entries.filter((e) => e.date === today && e.type === "work" && (!e.customerId || personaCustIds.has(e.customerId)));
+    const todayPay = entries.filter((e) => e.date === today && cashIn(e) > 0 && (!e.customerId || personaCustIds.has(e.customerId)));
     const open = jobs.filter((j) => j.status !== "done");
     return {
       totalDue,
@@ -88,7 +94,7 @@ export default function Home() {
       openJobs: open.length,
       overdue: open.filter((j) => j.dueDate < today).length,
     };
-  }, [customers, entries, jobs, today]);
+  }, [customers, entries, jobs, today, personaCustIds]);
 
   const aepsToday = useMemo(() => aepsTotals(aeps.filter((t) => t.date === today)), [aeps, today]);
 

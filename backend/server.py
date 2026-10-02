@@ -97,6 +97,7 @@ class Customer(BaseModel):
     phone: str = ""
     address: str = ""
     notes: str = ""
+    persona: Optional[str] = "business"
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -106,6 +107,7 @@ class CustomerCreate(BaseModel):
     phone: str = ""
     address: str = ""
     notes: str = ""
+    persona: Optional[str] = "business"
 
 
 def _check_paid(m):
@@ -133,6 +135,9 @@ class Entry(BaseModel):
     description: str
     amount: float
     paid: float = 0
+    mode: Optional[str] = "cash"
+    fee: Optional[float] = 0
+    feeMode: Optional[str] = "online"
     notes: str = ""
     linkId: str = ""
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -146,6 +151,9 @@ class EntryCreate(BaseModel):
     description: str
     amount: float
     paid: float = Field(0, ge=0)
+    mode: Optional[str] = "cash"
+    fee: Optional[float] = Field(0, ge=0)
+    feeMode: Optional[str] = "online"
     notes: str = ""
     linkId: str = ""
 
@@ -160,6 +168,9 @@ class EntryUpdate(BaseModel):
     description: str
     amount: float
     paid: Optional[float] = Field(None, ge=0)
+    mode: Optional[str] = None
+    fee: Optional[float] = Field(None, ge=0)
+    feeMode: Optional[str] = None
     notes: str = ""
     linkId: Optional[str] = None
 

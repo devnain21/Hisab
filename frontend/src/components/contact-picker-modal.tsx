@@ -1,6 +1,17 @@
-import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TextInput, Modal, Platform } from "react-native";
+import { useEffect, useState, useMemo } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  Modal,
+  Platform,
+  FlatList,
+  ActivityIndicator,
+  Alert,
+} from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
+import * as Contacts from "expo-contacts";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { formatPhone } from "@/src/lib/format";
@@ -16,12 +27,15 @@ export function ContactPickerModal({
 }) {
   const [inputText, setInputText] = useState("");
   const [clipboardSnippet, setClipboardSnippet] = useState<{ name: string; phone: string } | null>(null);
+  const [phoneContacts, setPhoneContacts] = useState<Array<{ id: string; name: string; phone: string }>>([]);
+  const [loadingContacts, setLoadingContacts] = useState(false);
+  const [searchContactQuery, setSearchContactQuery] = useState("");
+  const [hasLoadedDeviceContacts, setHasLoadedDeviceContacts] = useState(false);
 
   const parseRawContact = (text: string) => {
     if (!text.trim()) return null;
     const digitsOnly = text.replace(/[^0-9]/g, "");
     const cleanPhone = digitsOnly.length >= 10 ? digitsOnly.slice(-10) : "";
-    // Remove the phone number and common prefixes to extract the name
     const cleanName = text
       .replace(/(\+91|91)?\s*[\d\s-]{10,15}/g, "")
       .replace(/[0-9]/g, "")
@@ -34,36 +48,94 @@ export function ContactPickerModal({
     };
   };
 
+  const cleanPhoneNumber = (raw: string): string => {
+    const digits = (raw || "").replace(/[^0-9]/g, "");
+    return digits.length >= 10 ? digits.slice(-10) : digits;
+  };
+
+  // Clipboard check
   useEffect(() => {
     if (visible && Platform.OS === "web" && typeof navigator !== "undefined" && navigator.clipboard?.readText) {
-      navigator.clipboard.readText().then((txt) => {
-        const parsed = parseRawContact(txt);
-        if (parsed && (parsed.phone || parsed.name)) {
-          setClipboardSnippet(parsed);
-        }
-      }).catch(() => {});
+      navigator.clipboard
+        .readText()
+        .then((txt) => {
+          const parsed = parseRawContact(txt);
+          if (parsed && (parsed.phone || parsed.name)) {
+            setClipboardSnippet(parsed);
+          }
+        })
+        .catch(() => {});
     }
   }, [visible]);
 
-  // Try Web / Android Contacts API if available
-  const handlePickFromNative = async () => {
-    if (Platform.OS === "web" && "contacts" in navigator && "ContactsManager" in window) {
-      try {
-        const contacts = await (navigator as any).contacts.select(["name", "tel"], { multiple: false });
-        if (contacts && contacts[0]) {
-          const first = contacts[0];
-          const name = first.name?.[0] || "";
-          const rawTel = first.tel?.[0] || "";
-          const parsed = parseRawContact(`${name} ${rawTel}`);
-          if (parsed) {
-            onSelect(parsed.name, parsed.phone);
-            onClose();
-            return;
+  // Load contacts or present picker
+  const handleOpenPhoneContacts = async () => {
+    try {
+      setLoadingContacts(true);
+      const { status } = await Contacts.requestPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "संपर्क अनुमति चाहिए",
+          "फ़ोन से सीधे ग्राहक का नाम और नंबर चुनने के लिए कृपया सेटिंग्स में Contacts की अनुमति दें।"
+        );
+        setLoadingContacts(false);
+        return;
+      }
+
+      // Try native picker first (Android / iOS native system picker)
+      if (typeof Contacts.presentContactPickerAsync === "function") {
+        try {
+          const picked = await Contacts.presentContactPickerAsync();
+          if (picked) {
+            const rawName = [picked.firstName, picked.lastName].filter(Boolean).join(" ") || picked.name || "";
+            const rawPhone = picked.phoneNumbers?.[0]?.number || "";
+            const clean = cleanPhoneNumber(rawPhone);
+            if (rawName || clean) {
+              onSelect(rawName, clean);
+              onClose();
+              setLoadingContacts(false);
+              return;
+            }
+          }
+        } catch {
+          // If system picker fails, fall through to in-app contact list
+        }
+      }
+
+      // Fetch contacts to show in searchable list
+      const { data } = await Contacts.getContactsAsync({
+        fields: [Contacts.Fields.PhoneNumbers],
+        sort: Contacts.SortTypes.FirstName,
+      });
+
+      if (data && data.length > 0) {
+        const formatted: Array<{ id: string; name: string; phone: string }> = [];
+        for (const item of data) {
+          const name = [item.firstName, item.lastName].filter(Boolean).join(" ") || item.name || "";
+          const phone = cleanPhoneNumber(item.phoneNumbers?.[0]?.number || "");
+          if (name || phone) {
+            formatted.push({ id: item.id || String(Math.random()), name, phone });
           }
         }
-      } catch {}
+        setPhoneContacts(formatted);
+        setHasLoadedDeviceContacts(true);
+      } else {
+        Alert.alert("कोई संपर्क नहीं मिला", "फ़ोन की संपर्क सूची खाली है।");
+      }
+    } catch (e) {
+      Alert.alert("संपर्क नहीं खुल सके", "कृपया नीचे नाम और नंबर सीधा लिख या पेस्ट कर लें।");
+    } finally {
+      setLoadingContacts(false);
     }
   };
+
+  const filteredContacts = useMemo(() => {
+    const q = searchContactQuery.trim().toLowerCase();
+    if (!q) return phoneContacts.slice(0, 50);
+    return phoneContacts
+      .filter((c) => c.name.toLowerCase().includes(q) || c.phone.includes(q))
+      .slice(0, 50);
+  }, [phoneContacts, searchContactQuery]);
 
   const handleApply = () => {
     const parsed = parseRawContact(inputText);
@@ -82,13 +154,86 @@ export function ContactPickerModal({
         <View style={styles.sheet}>
           <View style={styles.header}>
             <View>
-              <Text style={styles.title}>📱 फ़ोन बुक से चुनें / पेस्ट करें</Text>
-              <Text style={styles.subtitle}>Truecaller, WhatsApp या Contacts से कॉपी किया गया विवरण</Text>
+              <Text style={styles.title}>📱 फ़ोन से ग्राहक चुनें</Text>
+              <Text style={styles.subtitle}>सीधे फ़ोन बुक, WhatsApp या Truecaller से</Text>
             </View>
             <Pressable onPress={onClose} hitSlop={12} testID="contact-picker-close">
               <MaterialIcon name="close" size={24} color={colors.onSurface} />
             </Pressable>
           </View>
+
+          {/* PRIMARY BUTTON: Direct Phone Contacts Picker */}
+          <Pressable
+            style={styles.primaryNativeBtn}
+            onPress={handleOpenPhoneContacts}
+            disabled={loadingContacts}
+            testID="open-device-contacts-btn"
+          >
+            {loadingContacts ? (
+              <ActivityIndicator color={colors.onBrandPrimary} size="small" />
+            ) : (
+              <MaterialIcon name="contacts" size={22} color={colors.onBrandPrimary} />
+            )}
+            <Text style={styles.primaryNativeBtnText}>
+              {loadingContacts ? "फ़ोन संपर्क खुल रहे हैं..." : "फ़ोन की संपर्क सूची (Contacts) खोलें"}
+            </Text>
+          </Pressable>
+
+          {/* If device contacts loaded, show instant search bar and list */}
+          {hasLoadedDeviceContacts ? (
+            <View style={styles.contactsListWrap}>
+              <View style={styles.searchBar}>
+                <MaterialIcon name="magnify" size={18} color={colors.muted} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="संपर्क में नाम या नंबर खोजें..."
+                  placeholderTextColor={colors.muted}
+                  value={searchContactQuery}
+                  onChangeText={setSearchContactQuery}
+                  autoFocus
+                />
+                {searchContactQuery ? (
+                  <Pressable onPress={() => setSearchContactQuery("")} hitSlop={8}>
+                    <MaterialIcon name="close-circle" size={16} color={colors.muted} />
+                  </Pressable>
+                ) : null}
+              </View>
+
+              <FlatList
+                data={filteredContacts}
+                keyExtractor={(item) => item.id}
+                style={{ maxHeight: 220 }}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => (
+                  <Pressable
+                    style={styles.contactItem}
+                    onPress={() => {
+                      onSelect(item.name, item.phone);
+                      onClose();
+                    }}
+                  >
+                    <View style={styles.contactAvatar}>
+                      <Text style={styles.contactInitial}>{(item.name || "C")[0].toUpperCase()}</Text>
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.contactName} numberOfLines={1}>
+                        {item.name || "अनाम"}
+                      </Text>
+                      {item.phone ? (
+                        <Text style={styles.contactPhone}>{formatPhone(item.phone)}</Text>
+                      ) : null}
+                    </View>
+                    <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
+                  </Pressable>
+                )}
+                ListEmptyComponent={
+                  <View style={{ padding: spacing.md, alignItems: "center" }}>
+                    <Text style={{ color: colors.muted, fontSize: 12 }}>कोई संपर्क नहीं मिला</Text>
+                  </View>
+                }
+              />
+            </View>
+          ) : null}
 
           {/* Clipboard detected card */}
           {clipboardSnippet && clipboardSnippet.phone ? (
@@ -113,24 +258,15 @@ export function ContactPickerModal({
             </View>
           ) : null}
 
-          {/* Native Contacts Button if web browser supports it */}
-          {Platform.OS === "web" && "contacts" in (typeof navigator !== "undefined" ? navigator : {}) ? (
-            <Pressable style={styles.nativeBtn} onPress={handlePickFromNative} testID="native-contacts-btn">
-              <MaterialIcon name="contacts" size={20} color={colors.brandPrimary} />
-              <Text style={styles.nativeBtnText}>फ़ोन की संपर्क सूची (Contacts) खोलें</Text>
-            </Pressable>
-          ) : null}
-
-          {/* Quick Paste Input */}
+          {/* Quick Paste or Manual Input */}
           <View style={styles.field}>
-            <Text style={styles.label}>कॉपी किया गया टेक्स्ट यहाँ पेस्ट करें:</Text>
+            <Text style={styles.label}>या कॉपी किया गया टेक्स्ट यहाँ पेस्ट करें:</Text>
             <TextInput
               style={styles.input}
               placeholder="उदा. 'राकेश शर्मा +91 98765 43210' या सिर्फ 10 अंक..."
               placeholderTextColor={colors.muted}
               value={inputText}
               onChangeText={setInputText}
-              autoFocus
               testID="contact-paste-input"
             />
           </View>
@@ -138,7 +274,7 @@ export function ContactPickerModal({
           {/* Live Preview */}
           {currentParsed && (currentParsed.phone || currentParsed.name) ? (
             <View style={styles.previewBox}>
-              <Text style={styles.previewHeading}>पहचाना गया संपर्क:</Text>
+              <Text style={styles.previewHeading}>पहचाना गया विवरण:</Text>
               <View style={styles.previewRow}>
                 <Text style={styles.previewLabel}>नाम:</Text>
                 <Text style={styles.previewVal}>{currentParsed.name || "—"}</Text>
@@ -151,7 +287,10 @@ export function ContactPickerModal({
               </View>
 
               <Pressable
-                style={[styles.applyBtn, !currentParsed.phone && !currentParsed.name && { opacity: 0.5 }]}
+                style={[
+                  styles.applyBtn,
+                  !currentParsed.phone && !currentParsed.name && { opacity: 0.5 },
+                ]}
                 onPress={handleApply}
                 testID="apply-contact-btn"
               >
@@ -177,7 +316,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,
     padding: spacing.lg,
-    maxHeight: "85%",
+    maxHeight: "88%",
   },
   header: {
     flexDirection: "row",
@@ -194,6 +333,80 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.muted,
     marginTop: 2,
+  },
+  primaryNativeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    backgroundColor: colors.brandPrimary,
+    paddingVertical: 13,
+    borderRadius: radius.md,
+    marginBottom: spacing.md,
+    elevation: 2,
+  },
+  primaryNativeBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.onBrandPrimary,
+  },
+  contactsListWrap: {
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.surface,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    marginBottom: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.onSurface,
+    paddingVertical: 0,
+  },
+  contactItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  contactAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.brandTertiary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  contactInitial: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.brandPrimary,
+  },
+  contactName: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.onSurface,
+  },
+  contactPhone: {
+    fontSize: 11,
+    color: colors.muted,
+    marginTop: 1,
   },
   clipboardBox: {
     flexDirection: "row",
@@ -226,23 +439,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     color: colors.onBrandPrimary,
-  },
-  nativeBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: colors.surfaceSecondary,
-    paddingVertical: 12,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.md,
-  },
-  nativeBtnText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.brandPrimary,
   },
   field: {
     marginBottom: spacing.sm,

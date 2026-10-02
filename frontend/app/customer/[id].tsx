@@ -338,12 +338,24 @@ function WorkCard({ entry, status, onPress, onSettle, onReceipt }: { entry: Entr
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.jobTitle} numberOfLines={2}>{entry.description || (given ? "पैसे दिए" : "काम")}</Text>
           <Text style={styles.sub}>{formatDate(entry.date)}{entry.notes ? ` · ${entry.notes}` : ""}</Text>
+          {entry.fee && entry.fee > 0 ? (
+            <Text style={{ fontSize: 11, color: colors.muted, marginTop: 2 }}>
+              पोर्टल फीस: {formatINR(entry.fee)} ({entry.feeMode === "cash" ? "नकद" : "बैंक"}) · बचत: {formatINR(entry.amount - entry.fee)}
+            </Text>
+          ) : null}
         </View>
         <View style={{ alignItems: "flex-end" }}>
           <Text style={[styles.amount, open && { color: ui.fg }]}>{formatINR(entry.amount)}</Text>
-          <View style={[styles.statePill, { backgroundColor: ui.bg }]}>
-            {status.state === "settled" ? <MaterialIcon name="check" size={12} color={ui.fg} /> : null}
-            <Text style={[styles.stateText, { color: ui.fg }]}>{ui.label}</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
+            {entry.mode === "online" ? (
+              <View style={[styles.statePill, { backgroundColor: colors.infoSoft }]}>
+                <Text style={[styles.stateText, { color: colors.info }]}>UPI</Text>
+              </View>
+            ) : null}
+            <View style={[styles.statePill, { backgroundColor: ui.bg }]}>
+              {status.state === "settled" ? <MaterialIcon name="check" size={12} color={ui.fg} /> : null}
+              <Text style={[styles.stateText, { color: ui.fg }]}>{ui.label}</Text>
+            </View>
           </View>
         </View>
         <ReceiptButton entryId={entry.id} onPress={onReceipt} />
@@ -388,8 +400,19 @@ function JamaCard({ entry, onPress, onReceipt }: { entry: Entry; onPress: () => 
         </View>
         <View style={{ alignItems: "flex-end" }}>
           <Text style={[styles.amount, { color: colors.success }]}>−{formatINR(entry.amount)}</Text>
-          <View style={[styles.statePill, { backgroundColor: colors.successSoft }]}>
-            <Text style={[styles.stateText, { color: colors.success }]}>मिले</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
+            {entry.mode === "online" ? (
+              <View style={[styles.statePill, { backgroundColor: colors.infoSoft }]}>
+                <Text style={[styles.stateText, { color: colors.info }]}>UPI</Text>
+              </View>
+            ) : (
+              <View style={[styles.statePill, { backgroundColor: colors.successSoft }]}>
+                <Text style={[styles.stateText, { color: colors.success }]}>नकद</Text>
+              </View>
+            )}
+            <View style={[styles.statePill, { backgroundColor: colors.successSoft }]}>
+              <Text style={[styles.stateText, { color: colors.success }]}>मिले</Text>
+            </View>
           </View>
         </View>
         <ReceiptButton entryId={entry.id} onPress={onReceipt} />

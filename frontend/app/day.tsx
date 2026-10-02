@@ -94,19 +94,48 @@ export default function DayScreen() {
   );
   const sum = (k: "work" | "payment") => dayEntries.filter((e) => inKind(e, k)).reduce((s, e) => s + amountFor(e, k), 0);
 
-  // Cash In & Work Breakdown
-  const workTotal = useMemo(() => dayEntries.filter((e) => e.type === "work").reduce((s, e) => s + e.amount, 0), [dayEntries]);
-  const workCash = useMemo(() => dayEntries.filter((e) => e.type === "work").reduce((s, e) => s + (e.paid ?? 0), 0), [dayEntries]);
-  const workUdhaar = workTotal - workCash;
+  // Work Breakdown & Government Fees / Direct Cost
+  const workEntries = useMemo(() => dayEntries.filter((e) => e.type === "work"), [dayEntries]);
+  const workTotal = useMemo(() => workEntries.reduce((s, e) => s + e.amount, 0), [workEntries]);
+  const workFees = useMemo(() => workEntries.reduce((s, e) => s + (e.fee ?? 0), 0), [workEntries]);
+  const workProfit = workTotal - workFees;
 
-  const paymentCash = useMemo(() => dayEntries.filter((e) => e.type === "payment").reduce((s, e) => s + e.amount, 0), [dayEntries]);
+  const workCash = useMemo(
+    () => workEntries.filter((e) => e.mode !== "online").reduce((s, e) => s + (e.paid ?? 0), 0),
+    [workEntries]
+  );
+  const workOnline = useMemo(
+    () => workEntries.filter((e) => e.mode === "online").reduce((s, e) => s + (e.paid ?? 0), 0),
+    [workEntries]
+  );
+  const workUdhaar = workTotal - (workCash + workOnline);
+
+  const feePaidOnline = useMemo(
+    () => workEntries.filter((e) => e.feeMode !== "cash").reduce((s, e) => s + (e.fee ?? 0), 0),
+    [workEntries]
+  );
+  const feePaidCash = useMemo(
+    () => workEntries.filter((e) => e.feeMode === "cash").reduce((s, e) => s + (e.fee ?? 0), 0),
+    [workEntries]
+  );
+
+  // Payments received Breakdown (cash vs online)
+  const paymentEntries = useMemo(() => dayEntries.filter((e) => e.type === "payment"), [dayEntries]);
+  const paymentCash = useMemo(
+    () => paymentEntries.filter((e) => e.mode !== "online").reduce((s, e) => s + e.amount, 0),
+    [paymentEntries]
+  );
+  const paymentOnline = useMemo(
+    () => paymentEntries.filter((e) => e.mode === "online").reduce((s, e) => s + e.amount, 0),
+    [paymentEntries]
+  );
 
   const dayAeps = useMemo(() => aepsList.filter((t) => t.date === date && t.status === "success"), [aepsList, date]);
   const aepsTot = useMemo(() => aepsTotals(dayAeps), [dayAeps]);
 
   // Cash Drawer Total Math
   const cashInTotal = workCash + paymentCash + aepsTot.cashIn + contraData.bankToCash;
-  const cashOutTotal = aepsTot.cashOut + expensesData.totalCash + contraData.cashToBank;
+  const cashOutTotal = aepsTot.cashOut + expensesData.totalCash + contraData.cashToBank + feePaidCash;
   const openingNum = parseInt(openingCash, 10) || 0;
   const expectedCash = openingNum + cashInTotal - cashOutTotal;
 
@@ -115,8 +144,8 @@ export default function DayScreen() {
 
   // Online Bank Total Math
   const openingBankNum = parseInt(openingBank, 10) || 0;
-  const onlineInTotal = aepsTot.commission + contraData.cashToBank;
-  const onlineOutTotal = expensesData.totalOnline + contraData.bankToCash;
+  const onlineInTotal = workOnline + paymentOnline + aepsTot.commission + contraData.cashToBank;
+  const onlineOutTotal = expensesData.totalOnline + contraData.bankToCash + feePaidOnline;
   const expectedBank = openingBankNum + onlineInTotal - onlineOutTotal;
 
   const dateLabel = date === today ? "आज" : date === todayISO(-1) ? "कल" : formatWeekdayDate(date);
@@ -126,11 +155,15 @@ export default function DayScreen() {
     date,
     shop: user || {},
     workTotal,
+    workFees,
+    workProfit,
     workCash,
-    workOnline: 0,
+    workOnline,
     workUdhaar,
+    feePaidOnline,
+    feePaidCash,
     paymentCash,
-    paymentOnline: 0,
+    paymentOnline,
     expenseCash: expensesData.totalCash,
     expenseOnline: expensesData.totalOnline,
     bankToCash: contraData.bankToCash,
@@ -143,7 +176,7 @@ export default function DayScreen() {
     expectedBank,
     actualBank: null,
     bankDiff: null,
-    netProfitEstimate: workTotal - expensesData.totalAll,
+    netProfitEstimate: (workTotal - workFees) - expensesData.totalAll,
   };
 
   return (
@@ -204,14 +237,64 @@ export default function DayScreen() {
           </Pressable>
         </View>
 
-        {kind !== "drawer" ? (
+        {kind === "work" ? (
+          <View style={styles.workSummaryCard}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
+              <Text style={styles.totalLabel}>कुल काम बिल ({rows.length} एंट्री):</Text>
+              <Text style={[styles.totalValue, { fontSize: 24, marginTop: 0 }]}>{formatINR(workTotal)}</Text>
+            </View>
+            {workFees > 0 ? (
+              <View style={styles.workFeeRow}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <MaterialIcon name="receipt" size={14} color={colors.error} />
+                  <Text style={styles.feeLabel}>सरकारी/पोर्टल फीस:</Text>
+                </View>
+                <Text style={styles.feeValue}>-{formatINR(workFees)}</Text>
+              </View>
+            ) : null}
+            {workFees > 0 ? (
+              <View style={styles.workProfitRow}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <MaterialIcon name="star-outline" size={15} color={colors.brandPrimary} />
+                  <Text style={styles.profitLabel}>आपकी शुद्ध कमाई (मार्जिन):</Text>
+                </View>
+                <Text style={styles.profitValue}>{formatINR(workProfit)}</Text>
+              </View>
+            ) : null}
+            <View style={styles.workPillsRow}>
+              <View style={[styles.miniPill, { backgroundColor: colors.successSoft }]}>
+                <Text style={[styles.miniPillText, { color: colors.success }]}>💵 नकद: {formatINR(workCash)}</Text>
+              </View>
+              {workOnline > 0 ? (
+                <View style={[styles.miniPill, { backgroundColor: colors.infoSoft }]}>
+                  <Text style={[styles.miniPillText, { color: colors.info }]}>📱 UPI: {formatINR(workOnline)}</Text>
+                </View>
+              ) : null}
+              {workUdhaar > 0 ? (
+                <View style={[styles.miniPill, { backgroundColor: colors.errorSoft }]}>
+                  <Text style={[styles.miniPillText, { color: colors.error }]}>उधारी: {formatINR(workUdhaar)}</Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+        ) : kind === "payment" ? (
           <View style={styles.totalCard}>
-            <Text style={styles.totalLabel}>
-              {kind === "work" ? "कुल काम" : "कुल मिले"} ({rows.length} एंट्री)
-            </Text>
-            <Text style={[styles.totalValue, { color: kind === "work" ? colors.onSurface : colors.success }]}>
-              {formatINR(sum(kind))}
-            </Text>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", width: "100%" }}>
+              <Text style={styles.totalLabel}>कुल मिले ({rows.length} एंट्री):</Text>
+              <Text style={[styles.totalValue, { color: colors.success, fontSize: 24, marginTop: 0 }]}>
+                {formatINR(paymentCash + paymentOnline)}
+              </Text>
+            </View>
+            <View style={styles.workPillsRow}>
+              <View style={[styles.miniPill, { backgroundColor: colors.successSoft }]}>
+                <Text style={[styles.miniPillText, { color: colors.success }]}>💵 नकद: {formatINR(paymentCash)}</Text>
+              </View>
+              {paymentOnline > 0 ? (
+                <View style={[styles.miniPill, { backgroundColor: colors.infoSoft }]}>
+                  <Text style={[styles.miniPillText, { color: colors.info }]}>📱 ऑनलाइन: {formatINR(paymentOnline)}</Text>
+                </View>
+              ) : null}
+            </View>
           </View>
         ) : null}
       </View>
@@ -310,6 +393,12 @@ export default function DayScreen() {
                 <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(contraData.cashToBank)}</Text>
               </View>
             ) : null}
+            {feePaidCash > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>- पोर्टल फीस (नकद गल्ले से दी)</Text>
+                <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(feePaidCash)}</Text>
+              </View>
+            ) : null}
 
             <View style={styles.divider} />
 
@@ -390,6 +479,18 @@ export default function DayScreen() {
 
             <View style={styles.divider} />
 
+            {workOnline > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>+ काम से ऑनलाइन / UPI मिले</Text>
+                <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(workOnline)}</Text>
+              </View>
+            ) : null}
+            {paymentOnline > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>+ उधारी वापसी (ऑनलाइन / UPI)</Text>
+                <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(paymentOnline)}</Text>
+              </View>
+            ) : null}
             {aepsTot.commission > 0 ? (
               <View style={styles.flowRow}>
                 <Text style={styles.flowLabel}>+ काउंटर / AEPS कमीशन बैंक में</Text>
@@ -413,6 +514,12 @@ export default function DayScreen() {
               <View style={styles.flowRow}>
                 <Text style={styles.flowLabel}>- ऑनलाइन/UPI से दिया गया खर्च</Text>
                 <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(expensesData.totalOnline)}</Text>
+              </View>
+            ) : null}
+            {feePaidOnline > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>- पोर्टल / सरकारी फीस कटी (बैंक से)</Text>
+                <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(feePaidOnline)}</Text>
               </View>
             ) : null}
 
@@ -490,18 +597,38 @@ export default function DayScreen() {
           renderItem={({ item: e }) => (
             <Pressable style={styles.row} onPress={() => setEditing(e)} testID={`day-row-${e.id}`}>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Pressable onPress={() => router.push(`/customer/${e.customerId}`)} hitSlop={4}>
-                  <Text style={styles.name} numberOfLines={1}>{nameOf(e.customerId)}</Text>
-                </Pressable>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <Pressable onPress={() => router.push(`/customer/${e.customerId}`)} hitSlop={4}>
+                    <Text style={styles.name} numberOfLines={1}>{nameOf(e.customerId)}</Text>
+                  </Pressable>
+                  {e.mode === "online" ? (
+                    <View style={styles.modeBadgeOnline}>
+                      <MaterialIcon name="cellphone" size={10} color={colors.info} />
+                      <Text style={styles.modeBadgeTextOnline}>ऑनलाइन</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.modeBadgeCash}>
+                      <MaterialIcon name="cash" size={10} color={colors.success} />
+                      <Text style={styles.modeBadgeTextCash}>नकद</Text>
+                    </View>
+                  )}
+                </View>
                 <Text style={styles.desc} numberOfLines={2}>{e.description || (e.type === "work" ? "काम" : "मिले")}</Text>
                 {e.type === "work" ? (
-                  <Text style={[styles.notes, { color: (e.paid ?? 0) >= e.amount ? colors.success : colors.error }]}>
-                    {(e.paid ?? 0) >= e.amount
-                      ? "पूरे मिले"
-                      : (e.paid ?? 0) > 0
-                      ? `${formatINR(e.paid ?? 0)} मिले · ${formatINR(e.amount - (e.paid ?? 0))} लेने हैं`
-                      : "लेने हैं"}
-                  </Text>
+                  <View style={{ marginTop: 2 }}>
+                    <Text style={[styles.notes, { color: (e.paid ?? 0) >= e.amount ? colors.success : colors.error }]}>
+                      {(e.paid ?? 0) >= e.amount
+                        ? "पूरे मिले"
+                        : (e.paid ?? 0) > 0
+                        ? `${formatINR(e.paid ?? 0)} मिले · ${formatINR(e.amount - (e.paid ?? 0))} लेने हैं`
+                        : "लेने हैं"}
+                    </Text>
+                    {e.fee && e.fee > 0 ? (
+                      <Text style={styles.feeInfoText}>
+                        फीस: {formatINR(e.fee)} ({e.feeMode === "cash" ? "नकद" : "बैंक"}) · शुद्ध बचत: {formatINR(e.amount - e.fee)}
+                      </Text>
+                    ) : null}
+                  </View>
                 ) : null}
                 {e.notes ? <Text style={styles.notes} numberOfLines={1}>{e.notes}</Text> : null}
               </View>
@@ -536,6 +663,65 @@ const styles = StyleSheet.create({
   totalCard: { marginTop: spacing.md, padding: spacing.lg, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center" },
   totalLabel: { fontSize: 12, color: colors.muted, fontWeight: "600" },
   totalValue: { fontSize: 28, fontWeight: "800", marginTop: 2 },
+  workSummaryCard: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  workFeeRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: spacing.xs,
+    paddingVertical: 2,
+  },
+  feeLabel: { fontSize: 13, color: colors.error, fontWeight: "600" },
+  feeValue: { fontSize: 13, color: colors.error, fontWeight: "700" },
+  workProfitRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 2,
+    paddingVertical: 2,
+  },
+  profitLabel: { fontSize: 13, color: colors.brandPrimary, fontWeight: "700" },
+  profitValue: { fontSize: 14, color: colors.brandPrimary, fontWeight: "800" },
+  workPillsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  miniPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
+  miniPillText: { fontSize: 11, fontWeight: "700" },
+  modeBadgeOnline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: colors.infoSoft,
+  },
+  modeBadgeTextOnline: { fontSize: 10, fontWeight: "700", color: colors.info },
+  modeBadgeCash: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: colors.successSoft,
+  },
+  modeBadgeTextCash: { fontSize: 10, fontWeight: "700", color: colors.success },
+  feeInfoText: { fontSize: 11, color: colors.muted, marginTop: 2, fontWeight: "500" },
   row: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   name: { fontSize: 15, fontWeight: "700", color: colors.onSurface },
   desc: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: 2 },

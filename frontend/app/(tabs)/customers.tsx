@@ -18,16 +18,28 @@ const FILTER_LABEL: Record<Filter, string> = { due: "लेने हैं", al
 export default function CustomersScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { labels, isPersonal } = usePersona();
+  const { labels, persona, setPersona, isPersonal } = usePersona();
   const params = useLocalSearchParams<{ filter?: Filter; t?: string }>();
   const customersQ = useCustomers();
   const entriesQ = useEntries();
-  const customers = customersQ.data ?? [];
+  const allCustomers = customersQ.data ?? [];
   const entries = entriesQ.data ?? [];
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("due");
   const [open, setOpen] = useState(false);
+  const [tabPersona, setTabPersona] = useState<"business" | "personal">(persona || "business");
   const today = todayISO();
+
+  useEffect(() => {
+    setTabPersona(persona || "business");
+  }, [persona]);
+
+  const bizCount = useMemo(() => allCustomers.filter((c) => c.persona !== "personal").length, [allCustomers]);
+  const persCount = useMemo(() => allCustomers.filter((c) => c.persona === "personal").length, [allCustomers]);
+
+  const customers = useMemo(() => {
+    return allCustomers.filter((c) => (tabPersona === "personal" ? c.persona === "personal" : c.persona !== "personal"));
+  }, [allCustomers, tabPersona]);
 
   useEffect(() => {
     if (params.filter && FILTERS.includes(params.filter)) {
@@ -67,7 +79,47 @@ export default function CustomersScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.md, backgroundColor: colors.surface }}>
-        <Text style={styles.h1}>{labels.customers}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
+          <Text style={styles.h1}>{tabPersona === "personal" ? "व्यक्तिगत खाते" : labels.customers}</Text>
+        </View>
+
+        {/* Persona Switcher Tabs */}
+        <View style={styles.personaTabs}>
+          <Pressable
+            onPress={() => {
+              setTabPersona("business");
+              setPersona("business");
+            }}
+            style={[styles.personaTab, tabPersona === "business" && styles.personaTabActive]}
+          >
+            <MaterialIcon
+              name="storefront-outline"
+              size={16}
+              color={tabPersona === "business" ? colors.brandPrimary : colors.muted}
+            />
+            <Text style={[styles.personaTabText, tabPersona === "business" && styles.personaTabTextActive]}>
+              दुकान ग्राहक ({bizCount})
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => {
+              setTabPersona("personal");
+              setPersona("personal");
+            }}
+            style={[styles.personaTab, tabPersona === "personal" && styles.personaTabActive]}
+          >
+            <MaterialIcon
+              name="account-outline"
+              size={16}
+              color={tabPersona === "personal" ? colors.brandPrimary : colors.muted}
+            />
+            <Text style={[styles.personaTabText, tabPersona === "personal" && styles.personaTabTextActive]}>
+              व्यक्तिगत खाते ({persCount})
+            </Text>
+          </Pressable>
+        </View>
+
         <View style={styles.searchWrap}>
           <MaterialIcon name="magnify" size={18} color={colors.muted} />
           <TextInput
@@ -155,7 +207,34 @@ export default function CustomersScreen() {
 }
 
 const styles = StyleSheet.create({
-  h1: { fontSize: 30, fontWeight: "700", color: colors.onSurface, marginBottom: spacing.md },
+  h1: { fontSize: 26, fontWeight: "700", color: colors.onSurface },
+  personaTabs: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md },
+  personaTab: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  personaTabActive: {
+    backgroundColor: colors.brandPrimary + "15",
+    borderColor: colors.brandPrimary,
+  },
+  personaTabText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.muted,
+  },
+  personaTabTextActive: {
+    color: colors.brandPrimary,
+    fontWeight: "700",
+  },
   searchWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 46, borderWidth: 1, borderColor: colors.border },
   search: { flex: 1, color: colors.onSurface, fontSize: 15 },
   chip: { height: 36, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center", flexShrink: 0 },

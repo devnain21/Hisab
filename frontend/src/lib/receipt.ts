@@ -2,10 +2,11 @@ import { Platform } from "react-native";
 import { requireOptionalNativeModule } from "expo";
 import * as Sharing from "expo-sharing";
 import { File, Paths } from "expo-file-system";
-import type { Customer, Entry } from "@/src/lib/data";
+import type { Customer, Entry, AepsTxn } from "@/src/lib/data";
 import type { Ledger, WorkStatus } from "@/src/lib/records";
 import { formatDate, formatDateShort, formatINR, formatPhone, todayISO } from "@/src/lib/format";
 import type { ShopProfile } from "@/src/context/AuthContext";
+import { AEPS_META, STATUS_META } from "@/src/lib/aeps";
 
 type Tone = "due" | "ok";
 export type Line = { label: string; value: string; tone?: Tone };
@@ -317,6 +318,89 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
   ${body}
   <div class="foot">धन्यवाद, फिर पधारें 🙏</div>
 </body></html>`;
+}
+
+/**
+ * Counter / AEPS receipt slip for customers.
+ */
+export function aepsReceiptDoc(t: AepsTxn, shopIn: Partial<ShopProfile>): ShareDoc {
+  const shop = fullShop(shopIn);
+  const m = AEPS_META[t.type] || { label: "काउंटर सेवा", short: "काउंटर" };
+  const st = STATUS_META[t.status] || { label: "सफल" };
+  const lines: Line[] = [
+    { label: "सेवा का नाम", value: m.label },
+    { label: "तारीख व समय", value: `${formatDate(t.date)}${t.time ? ` ${t.time}` : ""}` },
+    { label: "ग्राहक / व्यक्ति", value: t.customerName || "—" },
+    ...(t.mobile ? [{ label: "मोबाइल", value: formatPhone(t.mobile) }] : []),
+    ...(t.amount > 0 ? [{ label: "रकम", value: formatINR(t.amount), tone: "ok" as Tone }] : []),
+    ...(t.bankName ? [{ label: "बैंक", value: t.bankName }] : []),
+    ...(t.aadhaarLast4 ? [{ label: "आधार", value: `XXXX XXXX ${t.aadhaarLast4}` }] : []),
+    ...(t.accountNumber ? [{ label: "खाता संख्या", value: t.accountNumber }] : []),
+    ...(t.ifsc ? [{ label: "IFSC कोड", value: t.ifsc }] : []),
+    ...(t.reference ? [{ label: "संदर्भ / RRN / UTR", value: t.reference }] : []),
+    ...(t.operator ? [{ label: "ऑपरेटर", value: t.operator }] : []),
+    ...(t.rechargeNumber ? [{ label: "रिचार्ज नंबर", value: t.rechargeNumber }] : []),
+    ...(t.billerName ? [{ label: "बिलर", value: t.billerName }] : []),
+    ...(t.billAccount ? [{ label: "उपभोक्ता सं.", value: t.billAccount }] : []),
+    ...(t.beneficiaryName ? [{ label: "प्राप्तकर्ता", value: t.beneficiaryName }] : []),
+    ...(t.upiId ? [{ label: "UPI ID", value: t.upiId }] : []),
+    { label: "लेन-देन स्थिति", value: st.label, tone: t.status === "success" ? ("ok" as Tone) : ("due" as Tone) },
+  ];
+
+  const no = t.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase();
+  const heading = "काउंटर सेवा रसीद";
+  const title = `${m.label}${t.amount > 0 ? ` · ${formatINR(t.amount)}` : ""}`;
+  const sub = `${t.customerName || "ग्राहक"} · ${formatDate(t.date)} · नं. ${no}`;
+
+  const message = [
+    `🧾 *${heading}*`,
+    `🏪 *${shop.shop_name}*`,
+    ...(shop.shop_phone ? [`📞 फ़ोन: ${formatPhone(shop.shop_phone)}`] : []),
+    ...(shop.shop_address ? [`📍 पता: ${shop.shop_address}`] : []),
+    `--------------------------------`,
+    `रसीद नं: ${no}`,
+    `तारीख: ${formatDate(t.date)}${t.time ? ` ${t.time}` : ""}`,
+    `सेवा: *${m.label}*`,
+    `ग्राहक: ${t.customerName || "ग्राहक"}`,
+    ...(t.mobile ? [`मोबाइल: ${formatPhone(t.mobile)}`] : []),
+    ...(t.amount > 0 ? [`रकम: *${formatINR(t.amount)}*`] : []),
+    ...(t.reference ? [`संदर्भ / UTR: ${t.reference}`] : []),
+    `स्थिति: *${st.label}*`,
+    `--------------------------------`,
+    `धन्यवाद, फिर पधारें 🙏`,
+  ].join("\n");
+
+  const body = `
+  <div style="background:#F0FAF8;border:1.5px solid ${BRAND};border-radius:8px;padding:12px;margin-bottom:16px;text-align:center;">
+    <div style="font-size:12px;color:#666;text-transform:uppercase;font-weight:700;">${esc(m.label)}</div>
+    ${t.amount > 0 ? `<div style="font-size:28px;font-weight:800;color:${BRAND};margin:4px 0;">${esc(formatINR(t.amount))}</div>` : ""}
+    <div style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:700;background:${t.status === "success" ? "#E8F5E9" : "#FDECEA"};color:${t.status === "success" ? "#2E7D32" : "#C62828"};">${esc(st.label)}</div>
+  </div>
+  <table>
+    <tr><th>विवरण</th><th class="amt">जानकारी</th></tr>
+    ${lines.map((l) => `<tr><td style="color:#666;">${esc(l.label)}</td><td class="amt" style="font-weight:600;font-family:monospace;">${esc(l.value)}</td></tr>`).join("")}
+  </table>
+  <div class="stamp" style="border-color:${t.status === "success" ? "#2E7D32" : "#C62828"};color:${t.status === "success" ? "#2E7D32" : "#C62828"};">${esc(st.label)}</div>`;
+
+  const customerObj: Customer = {
+    id: "",
+    name: t.customerName || "ग्राहक",
+    phone: t.mobile || "",
+    address: "",
+    notes: "",
+    createdAt: t.createdAt,
+  };
+
+  return {
+    heading,
+    title,
+    sub,
+    phone: t.mobile || "",
+    lines,
+    message,
+    html: page(shop, heading, `नं. ${esc(no)}<br/>${esc(formatDate(t.date))}`, customerObj, body, "A5"),
+    fileName: `${fileSafe(t.customerName || "aeps")}-${m.short}-${no}.pdf`,
+  };
 }
 
 // APKs built before expo-print was added still receive this code over OTA; importing expo-print there would crash.

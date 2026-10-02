@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Linking, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Linking, Alert, ActivityIndicator } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -13,6 +13,7 @@ import { confirmAction } from "@/src/lib/confirm";
 import { useAuth } from "@/src/context/AuthContext";
 import { Pressable } from "@/src/components/tap";
 import { AepsSheet } from "@/src/components/aeps-sheet";
+import { aepsReceiptDoc, sharePdf } from "@/src/lib/receipt";
 
 const DETAIL_ORDER: AepsField[] = [
   "mobile", "aadhaarLast4", "beneficiaryName", "upiId", "bankName", "accountNumber", "ifsc",
@@ -34,6 +35,7 @@ export default function AepsDetail() {
   const q = useAeps();
   const { user } = useAuth();
   const [editing, setEditing] = useState(false);
+  const [sharingPdf, setSharingPdf] = useState(false);
   const t = (q.data ?? []).find((x) => x.id === id);
 
   if (!t) {
@@ -54,10 +56,23 @@ export default function AepsDetail() {
 
   const share = async () => {
     try {
-      const result = await shareMessage(receiptText(t, user?.shop_name || "बही खाता"));
+      const doc = aepsReceiptDoc(t, user || {});
+      const result = await shareMessage(doc.message);
       if (result === "copied") Alert.alert("मैसेज कॉपी हो गया", "जिसे भेजना है, वहाँ पेस्ट कर दें।");
     } catch {
       Alert.alert("शेयर नहीं खुला", "दोबारा कोशिश करें।");
+    }
+  };
+
+  const handleSharePdf = async () => {
+    try {
+      setSharingPdf(true);
+      const doc = aepsReceiptDoc(t, user || {});
+      await sharePdf(doc);
+    } catch {
+      Alert.alert("PDF नहीं बन पाई", "दोबारा कोशिश करें।");
+    } finally {
+      setSharingPdf(false);
     }
   };
 
@@ -116,9 +131,25 @@ export default function AepsDetail() {
           </>
         ) : null}
 
+        <Pressable
+          style={styles.pdfBtn}
+          onPress={handleSharePdf}
+          disabled={sharingPdf}
+          testID="aeps-pdf-btn"
+        >
+          {sharingPdf ? (
+            <ActivityIndicator color={colors.onBrandPrimary} size="small" />
+          ) : (
+            <MaterialIcon name="file-pdf-box" size={20} color={colors.onBrandPrimary} />
+          )}
+          <Text style={styles.pdfText}>
+            {sharingPdf ? "PDF बन रही है..." : "📄 PDF रसीद (प्रिंट / शेयर)"}
+          </Text>
+        </Pressable>
+
         <Pressable style={styles.waBtn} onPress={share} testID="aeps-share-btn">
-          <MaterialIcon name="share-variant" size={20} color={colors.brandPrimary} />
-          <Text style={styles.waText}>रसीद भेजें</Text>
+          <MaterialIcon name="whatsapp" size={20} color="#0B6B5C" />
+          <Text style={styles.waText}>WhatsApp रसीद भेजें</Text>
         </Pressable>
         {t.mobile ? (
           <Pressable style={styles.callBtn} onPress={() => Linking.openURL(`tel:${t.mobile}`)} testID="aeps-call-btn">
@@ -160,7 +191,9 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
   rowLabel: { fontSize: 13, color: colors.muted, flexShrink: 0, maxWidth: "45%" },
   rowValue: { fontSize: 14, fontWeight: "600", color: colors.onSurface, flex: 1, textAlign: "right" },
-  waBtn: { marginTop: spacing.xl, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 14, borderRadius: radius.md, backgroundColor: "#E7F6F1", borderWidth: 1, borderColor: "#128C7E" },
+  pdfBtn: { marginTop: spacing.xl, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
+  pdfText: { color: colors.onBrandPrimary, fontWeight: "700", fontSize: 15 },
+  waBtn: { marginTop: spacing.sm, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 14, borderRadius: radius.md, backgroundColor: "#E7F6F1", borderWidth: 1, borderColor: "#128C7E" },
   waText: { color: "#0B6B5C", fontWeight: "700", fontSize: 15 },
   callBtn: { marginTop: spacing.sm, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 12, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   callText: { color: colors.onSurface, fontWeight: "600", fontSize: 14 },

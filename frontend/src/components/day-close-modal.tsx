@@ -59,6 +59,41 @@ export function DayCloseModal({
               </View>
             </View>
 
+            {/* Work & Profit Card */}
+            <View style={styles.card}>
+              <Text style={styles.cardHeading}>💼 काम, पोर्टल फीस व बचत</Text>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>कुल काम बिल:</Text>
+                <Text style={styles.rowVal}>{formatINR(data.workTotal)}</Text>
+              </View>
+              {data.workFees > 0 ? (
+                <>
+                  <View style={styles.row}>
+                    <Text style={styles.rowLabel}>पोर्टल / सरकारी फीस:</Text>
+                    <Text style={[styles.rowVal, { color: colors.error }]}>-{formatINR(data.workFees)}</Text>
+                  </View>
+                  <View style={styles.row}>
+                    <Text style={styles.rowLabel}>काम से शुद्ध बचत:</Text>
+                    <Text style={[styles.rowVal, { fontWeight: "800", color: colors.brandPrimary }]}>
+                      {formatINR(data.workProfit || (data.workTotal - data.workFees))}
+                    </Text>
+                  </View>
+                </>
+              ) : null}
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>नकद प्राप्त:</Text>
+                <Text style={[styles.rowVal, { color: colors.success }]}>{formatINR(data.workCash)}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>ऑनलाइन / UPI:</Text>
+                <Text style={[styles.rowVal, { color: colors.info }]}>{formatINR(data.workOnline)}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>आज की नई उधारी:</Text>
+                <Text style={[styles.rowVal, { color: colors.warning }]}>{formatINR(data.workUdhaar)}</Text>
+              </View>
+            </View>
+
             {/* Galla & Bank Breakdown */}
             <View style={styles.card}>
               <Text style={styles.cardHeading}>💵 नकद गल्ला स्थिति</Text>

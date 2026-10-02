@@ -67,7 +67,13 @@
       "expo-status-bar",
       "@react-native-vector-icons/material-design-icons",
       "@react-native-google-signin/google-signin",
-      "expo-local-authentication"
+      "expo-local-authentication",
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "नया ग्राहक जोड़ने के लिए फ़ोन के संपर्कों की अनुमति दें।"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

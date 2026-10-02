@@ -144,11 +144,16 @@ export default function AepsScreen() {
                 </View>
                 <View style={{ alignItems: "flex-end", gap: 4 }}>
                   {t.amount > 0 ? <Text style={[styles.amount, { color: cashOf(t) === "out" ? colors.error : cashOf(t) === "in" ? colors.success : colors.onSurface }]}>{formatINR(t.amount)}</Text> : null}
-                  {t.status !== "success" ? (
-                    <View style={[styles.statusPill, { backgroundColor: st.soft }]}><Text style={[styles.statusText, { color: st.color }]}>{st.label}</Text></View>
-                  ) : t.commission > 0 ? (
-                    <Text style={styles.commission}>+{formatINR(t.commission)}</Text>
-                  ) : null}
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                    <MaterialIcon name="file-pdf-box" size={16} color={colors.brandPrimary} />
+                    {t.status !== "success" ? (
+                      <View style={[styles.statusPill, { backgroundColor: st.soft }]}><Text style={[styles.statusText, { color: st.color }]}>{st.label}</Text></View>
+                    ) : t.commission > 0 ? (
+                      <Text style={styles.commission}>+{formatINR(t.commission)}</Text>
+                    ) : (
+                      <Text style={{ fontSize: 11, color: colors.muted }}>रसीद</Text>
+                    )}
+                  </View>
                 </View>
               </Pressable>
             );

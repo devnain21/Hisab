@@ -10,9 +10,14 @@ export type DaySummaryData = {
   shop: Partial<ShopProfile>;
   // Work & Collections
   workTotal: number;
+  workFees: number;
+  workProfit: number;
   workCash: number;
   workOnline: number;
   workUdhaar: number;
+  // Fees Paid breakdown
+  feePaidOnline: number;
+  feePaidCash: number;
   // Payments
   paymentCash: number;
   paymentOnline: number;
@@ -46,6 +51,14 @@ export function buildDayCloseMessage(data: DaySummaryData): string {
     `📅 तारीख: ${dateStr}`,
     `--------------------------------`,
     `💼 *आज की कुल बिक्री / काम:* ${formatINR(data.workTotal)}`,
+  ];
+
+  if (data.workFees > 0) {
+    lines.push(`  • पोर्टल/सरकारी फीस कटी: -${formatINR(data.workFees)}`);
+    lines.push(`  • काम से शुद्ध बचत: ${formatINR(data.workProfit || data.workTotal - data.workFees)}`);
+  }
+
+  lines.push(
     `  • नकद मिले: ${formatINR(data.workCash)}`,
     `  • ऑनलाइन/UPI: ${formatINR(data.workOnline)}`,
     `  • आज की उधारी: ${formatINR(data.workUdhaar)}`,
@@ -62,7 +75,7 @@ export function buildDayCloseMessage(data: DaySummaryData): string {
     `💵 *दुकान का गल्ला (Cash Drawer):*`,
     `  • सुबह का गल्ला: ${formatINR(data.openingCash)}`,
     `  • शाम को होना चाहिए: ${formatINR(data.expectedCash)}`,
-  ];
+  );
 
   if (data.countedCash !== null) {
     lines.push(`  • गिने हुए नोट: ${formatINR(data.countedCash)}`);
@@ -86,10 +99,12 @@ export function buildDayCloseMessage(data: DaySummaryData): string {
     lines.push(`  • बैंक में मौजूद: ${formatINR(data.actualBank)}`);
   }
 
+  const realNetProfit = data.netProfitEstimate;
+
   lines.push(
     `--------------------------------`,
-    `🎯 *आज का शुद्ध नकद बहाव:* ${formatINR(data.workCash + data.paymentCash - data.expenseCash)}`,
-    `📊 *आज की कुल कमाई (काम - खर्च):* ${formatINR(data.workTotal - (data.expenseCash + data.expenseOnline))}`,
+    `🎯 *आज का शुद्ध नकद बहाव:* ${formatINR(data.workCash + data.paymentCash - (data.expenseCash + (data.feePaidCash || 0)))}`,
+    `✨ *आज की शुद्ध बचत (काम - फीस - खर्च):* ${formatINR(realNetProfit)}`,
     `--------------------------------`,
     `🙏 हिसाब पूरा हुआ · शुभ रात्रि!`,
   );

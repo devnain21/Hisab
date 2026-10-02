@@ -2,12 +2,39 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/src/lib/api";
 import { withPending } from "@/src/lib/store";
 
-export type Customer = { id: string; name: string; phone: string; address: string; notes: string; createdAt: string };
+export type Customer = {
+  id: string;
+  name: string;
+  phone: string;
+  address: string;
+  notes: string;
+  persona?: "business" | "personal";
+  createdAt: string;
+};
 // work: service done · payment: money received from them · given: money handed to them (loan).
-// paid: cash taken when the work was booked (work rows only, 0..amount).
+// paid: money taken when the work was booked (work rows only, 0..amount).
+// mode: payment mode ("cash" = cash drawer, "online" = UPI/Bank account).
+// fee: government/portal fee or direct cost incurred by shopkeeper.
+// feeMode: where government fee was paid from ("online" = Bank/UPI, "cash" = Drawer).
 // linkId: a payment that settles a specific work/given entry points at that entry.
 export type EntryType = "work" | "payment" | "given";
-export type Entry = { id: string; customerId: string; type: EntryType; date: string; description: string; amount: number; paid?: number; notes: string; linkId?: string; createdAt: string };
+export type PaymentMode = "cash" | "online";
+
+export type Entry = {
+  id: string;
+  customerId: string;
+  type: EntryType;
+  date: string;
+  description: string;
+  amount: number;
+  paid?: number;
+  mode?: PaymentMode;
+  fee?: number;
+  feeMode?: PaymentMode;
+  notes: string;
+  linkId?: string;
+  createdAt: string;
+};
 // customerId "" = the shopkeeper's own task (no customer, no money).
 // entryId: the work entry booked when this job was completed.
 export type Job = { id: string; customerId: string; title: string; dueDate: string; status: "pending" | "doing" | "done"; estimatedAmount: number; notes: string; entryId?: string; createdAt: string };
@@ -66,10 +93,31 @@ export function entryDelta(e: Entry): number {
   return e.type === "given" ? e.amount : -e.amount;
 }
 
-/** Cash that came in with this row (for day totals). */
+/** Cash that came into Cash Drawer (गल्ला) with this row. */
 export function cashIn(e: Entry): number {
+  if (e.mode === "online") return 0;
   if (e.type === "work") return e.paid ?? 0;
   return e.type === "payment" ? e.amount : 0;
+}
+
+/** Online money received into Bank/UPI with this row. */
+export function onlineIn(e: Entry): number {
+  if (e.mode !== "online") return 0;
+  if (e.type === "work") return e.paid ?? 0;
+  return e.type === "payment" ? e.amount : 0;
+}
+
+/** Portal fees/charges or direct cost for this work entry. */
+export function entryFee(e: Entry): number {
+  return Math.max(0, e.fee ?? 0);
+}
+
+/** Net earning / profit margin for this work entry (turnover minus portal fees/cost). */
+export function entryProfit(e: Entry): number {
+  if (e.type === "work") {
+    return Math.max(0, e.amount - entryFee(e));
+  }
+  return 0;
 }
 
 /** Rows the customer owes on (payments settle these, oldest first). */

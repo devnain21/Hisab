@@ -38,6 +38,7 @@ const light = {
   errorSoft: "#FDECEA",
   info: "#1D4ED8",
   onInfo: "#FFFFFF",
+  infoSoft: "#EFF6FF",
 
   // Lines
   border: "#EBE4D5",

@@ -183,7 +183,7 @@ export const store = {
     enqueue({ kind: "create", coll: "entries", item });
     return item;
   },
-  updateEntry(id: string, patch: Pick<Entry, "type" | "date" | "description" | "amount" | "notes"> & { linkId?: string; paid?: number }) {
+  updateEntry(id: string, patch: Partial<Omit<Entry, "id" | "createdAt">>) {
     enqueue({ kind: "update", coll: "entries", itemId: id, patch });
   },
   deleteEntry(id: string) {

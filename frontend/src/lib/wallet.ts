@@ -1,5 +1,9 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import * as Crypto from "expo-crypto";
+import { api } from "./api";
+import { store, withPending } from "./store";
 import { todayISO } from "./format";
 import { useAeps, useCustomers, useEntries, type AepsTxn, type Customer, type Entry } from "./data";
 import { useExpenses, expensePersona, type Expense } from "./expenses";
@@ -24,23 +28,16 @@ export type Move = {
 const MOVES_KEY = "hisab_money_moves_v1";
 const LEGACY_CONTRA_KEY = "hisab_contra_transfers_v1";
 
-let cache: Move[] | null = null;
-const listeners = new Set<() => void>();
-const notify = () => listeners.forEach((fn) => fn());
-
-async function load(): Promise<Move[]> {
-  if (cache) return cache;
-  let list: Move[] = [];
+/** Moves saved on this phone before they were stored on the server; queued for upload once. */
+async function uploadLocalMoves() {
   try {
     const raw = await AsyncStorage.getItem(MOVES_KEY);
-    list = raw ? JSON.parse(raw) : [];
-    // Cash/bank swaps saved by the old shop-only transfer screen.
     const legacy = await AsyncStorage.getItem(LEGACY_CONTRA_KEY);
+    const list: Move[] = raw ? JSON.parse(raw) : [];
     if (legacy) {
       const old = JSON.parse(legacy) as { id: string; type: string; amount: number; date: string; notes?: string; createdAt: string }[];
-      list = [
-        ...list,
-        ...old.map<Move>((c) => ({
+      old.forEach((c) =>
+        list.push({
           id: c.id,
           date: c.date,
           from: c.type === "bank_to_cash" ? "business:bank" : "business:cash",
@@ -48,45 +45,36 @@ async function load(): Promise<Move[]> {
           amount: c.amount,
           note: c.notes || "",
           createdAt: c.createdAt,
-        })),
-      ];
-      await AsyncStorage.setItem(MOVES_KEY, JSON.stringify(list));
-      await AsyncStorage.removeItem(LEGACY_CONTRA_KEY);
+        })
+      );
     }
+    list.forEach((m) => store.createMove(m));
+    if (raw) await AsyncStorage.removeItem(MOVES_KEY);
+    if (legacy) await AsyncStorage.removeItem(LEGACY_CONTRA_KEY);
   } catch {}
-  cache = list;
-  return list;
-}
-
-async function save(list: Move[]) {
-  cache = list;
-  notify();
-  await AsyncStorage.setItem(MOVES_KEY, JSON.stringify(list)).catch(() => {});
 }
 
 export async function addMove(m: Omit<Move, "id" | "createdAt">): Promise<Move> {
-  const list = await load();
-  const item: Move = { ...m, id: `mv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, createdAt: new Date().toISOString() };
-  await save([item, ...list]);
+  const item: Move = { ...m, id: Crypto.randomUUID(), createdAt: new Date().toISOString() };
+  store.createMove(item);
   return item;
 }
 
 export async function deleteMove(id: string) {
-  const list = await load();
-  await save(list.filter((m) => m.id !== id));
+  store.deleteMove(id);
 }
 
+const NO_MOVES: Move[] = [];
+
 export function useMoves(): Move[] {
-  const [list, setList] = useState<Move[]>(cache ?? []);
-  useEffect(() => {
-    load().then(setList);
-    const fn = () => setList(cache ?? []);
-    listeners.add(fn);
-    return () => {
-      listeners.delete(fn);
-    };
-  }, []);
-  return list;
+  const q = useQuery<Move[]>({
+    queryKey: ["moves"],
+    queryFn: async () => {
+      await uploadLocalMoves();
+      return withPending("moves", (await api.listMoves()) as Move[]);
+    },
+  });
+  return q.data ?? NO_MOVES;
 }
 
 export const accountKey = (persona: Persona, pocket: Pocket): AccountKey => `${persona}:${pocket}`;

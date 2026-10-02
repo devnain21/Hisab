@@ -259,6 +259,47 @@ class AepsCreate(AepsFields):
     id: Optional[str] = None
 
 
+class ExpenseFields(BaseModel):
+    amount: float = Field(gt=0)
+    title: str = Field("खर्च", max_length=80)
+    mode: Literal["cash", "online"] = "cash"
+    date: str
+    notes: str = ""
+    persona: Literal["business", "personal"] = "business"
+
+
+class Expense(ExpenseFields):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class ExpenseCreate(ExpenseFields):
+    id: Optional[str] = None
+    createdAt: Optional[str] = None
+
+
+AccountKey = Literal["", "business:cash", "business:bank", "personal:cash", "personal:bank"]
+
+
+class MoneyMoveFields(BaseModel):
+    date: str
+    # Source and destination account; "" is money from / to outside the app's accounts.
+    src: AccountKey = ""
+    dst: AccountKey = ""
+    amount: float = Field(gt=0)
+    note: str = Field("", max_length=120)
+
+
+class MoneyMove(MoneyMoveFields):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class MoneyMoveCreate(MoneyMoveFields):
+    id: Optional[str] = None
+    createdAt: Optional[str] = None
+
+
 # --- Auth Helpers ---
 def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
     if not authorization or not authorization.startswith("Bearer "):
@@ -502,6 +543,41 @@ async def update_aeps(txn_id: str, payload: AepsFields, user: dict = Depends(get
 @api_router.delete("/aeps/{txn_id}")
 async def delete_aeps(txn_id: str, user: dict = Depends(get_current_user)):
     await db.aeps.delete_one({"id": txn_id, "user_id": user["user_id"]})
+    return {"ok": True}
+
+
+# --- Expenses and money moves (cash / bank adjustments) ---
+@api_router.get("/expenses", response_model=List[Expense])
+async def list_expenses(user: dict = Depends(get_current_user)):
+    rows = await db.expenses.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(20000)
+    return [Expense(**r) for r in rows]
+
+
+@api_router.post("/expenses", response_model=Expense)
+async def create_expense(payload: ExpenseCreate, user: dict = Depends(get_current_user)):
+    return await _create_idempotent(db.expenses, Expense, payload, user)
+
+
+@api_router.delete("/expenses/{expense_id}")
+async def delete_expense(expense_id: str, user: dict = Depends(get_current_user)):
+    await db.expenses.delete_one({"id": expense_id, "user_id": user["user_id"]})
+    return {"ok": True}
+
+
+@api_router.get("/moves", response_model=List[MoneyMove])
+async def list_moves(user: dict = Depends(get_current_user)):
+    rows = await db.moves.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(20000)
+    return [MoneyMove(**r) for r in rows]
+
+
+@api_router.post("/moves", response_model=MoneyMove)
+async def create_move(payload: MoneyMoveCreate, user: dict = Depends(get_current_user)):
+    return await _create_idempotent(db.moves, MoneyMove, payload, user)
+
+
+@api_router.delete("/moves/{move_id}")
+async def delete_move(move_id: str, user: dict = Depends(get_current_user)):
+    await db.moves.delete_one({"id": move_id, "user_id": user["user_id"]})
     return {"ok": True}
 
 

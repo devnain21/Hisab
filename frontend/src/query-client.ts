@@ -3,7 +3,8 @@
 // queryClient.invalidateQueries or setQueryData in websocket or push
 // handlers; inside components useQueryClient() returns this same instance.
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { QueryClient } from "@tanstack/react-query";
+import { AppState, Platform } from "react-native";
+import { QueryClient, focusManager } from "@tanstack/react-query";
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
 
 export const CACHE_MAX_AGE = 1000 * 60 * 60 * 24 * 30;
@@ -18,6 +19,15 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+// Native apps have no window focus event; refetch when the app comes back to the foreground
+// so entries made on the website show up.
+if (Platform.OS !== "web") {
+  focusManager.setEventListener((setFocused) => {
+    const sub = AppState.addEventListener("change", (s) => setFocused(s === "active"));
+    return () => sub.remove();
+  });
+}
 
 // Keeps the last synced khata on the device so it opens without internet.
 export const queryPersister = createAsyncStoragePersister({ storage: AsyncStorage, key: "hisab_query_cache_v1" });

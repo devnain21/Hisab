@@ -7,16 +7,18 @@ import { AppState } from "react-native";
 import { api } from "@/src/lib/api";
 import { queryClient } from "@/src/query-client";
 import type { AepsTxn, Customer, Entry, Job } from "@/src/lib/data";
+import type { Expense } from "@/src/lib/expenses";
+import type { Move } from "@/src/lib/wallet";
 import { putInTrash } from "@/src/lib/trash";
 
-type Coll = "customers" | "entries" | "jobs" | "aeps";
+type Coll = "customers" | "entries" | "jobs" | "aeps" | "expenses" | "moves";
 type Op =
   | { kind: "create"; coll: Coll; item: { id: string } & Record<string, unknown> }
   | { kind: "update"; coll: Coll; itemId: string; patch: Record<string, unknown> }
   | { kind: "delete"; coll: Coll; itemId: string };
 
 const KEY = "hisab_outbox_v1";
-const COLLS: Coll[] = ["customers", "entries", "jobs", "aeps"];
+const COLLS: Coll[] = ["customers", "entries", "jobs", "aeps", "expenses", "moves"];
 const RETRY_MS = 15_000;
 
 let ops: Op[] = [];
@@ -82,22 +84,29 @@ function send(op: Op): Promise<unknown> {
     if (op.coll === "customers") return api.createCustomer(op.item);
     if (op.coll === "entries") return api.createEntry(op.item);
     if (op.coll === "aeps") return api.createAeps(op.item);
+    if (op.coll === "expenses") return api.createExpense(op.item);
+    if (op.coll === "moves") return api.createMove(op.item as unknown as Move);
     return api.createJob(op.item);
   }
   if (op.kind === "update") {
     if (op.coll === "customers") return api.updateCustomer(op.itemId, op.patch);
     if (op.coll === "entries") return api.updateEntry(op.itemId, op.patch);
     if (op.coll === "aeps") return api.updateAeps(op.itemId, op.patch);
+    if (op.coll === "expenses" || op.coll === "moves") return Promise.resolve();
     return api.updateJob(op.itemId, op.patch);
   }
   if (op.coll === "customers") return api.deleteCustomer(op.itemId);
   if (op.coll === "entries") return api.deleteEntry(op.itemId);
   if (op.coll === "aeps") return api.deleteAeps(op.itemId);
+  if (op.coll === "expenses") return api.deleteExpense(op.itemId);
+  if (op.coll === "moves") return api.deleteMove(op.itemId);
   return api.deleteJob(op.itemId);
 }
 
-function isRetryable(e: unknown) {
+function isRetryable(e: unknown, op: Op) {
   const status = (e as { status?: number })?.status;
+  // A server that predates these collections answers 404/405; keep the row until it is updated.
+  if ((op.coll === "expenses" || op.coll === "moves") && (status === 404 || status === 405)) return true;
   return status === undefined || status === 401 || status === 408 || status === 429 || status >= 500;
 }
 
@@ -116,7 +125,7 @@ export async function flush() {
       try {
         await send(op);
       } catch (e) {
-        if (isRetryable(e)) {
+        if (isRetryable(e, op)) {
           retryTimer = setTimeout(() => void flush(), RETRY_MS);
           return;
         }
@@ -224,6 +233,18 @@ export const store = {
     const target = list?.find((x) => x.id === id);
     if (target) void putInTrash("aeps", target);
     enqueue({ kind: "delete", coll: "aeps", itemId: id });
+  },
+  createExpense(item: Expense) {
+    enqueue({ kind: "create", coll: "expenses", item });
+  },
+  deleteExpense(id: string) {
+    enqueue({ kind: "delete", coll: "expenses", itemId: id });
+  },
+  createMove(item: Move) {
+    enqueue({ kind: "create", coll: "moves", item });
+  },
+  deleteMove(id: string) {
+    enqueue({ kind: "delete", coll: "moves", itemId: id });
   },
   restoreRaw(coll: Coll, item: Record<string, unknown> & { id: string }) {
     enqueue({ kind: "create", coll, item });

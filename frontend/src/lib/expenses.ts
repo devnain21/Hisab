@@ -1,5 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import * as Crypto from "expo-crypto";
+import { api } from "./api";
+import { store, withPending } from "./store";
 import { todayISO } from "./format";
 
 export type ExpenseMode = "cash" | "online";
@@ -32,22 +35,24 @@ export const EXPENSE_CATEGORIES = [
 
 export const PERSONAL_EXPENSE_CATEGORIES = ["घर का खर्च", "राशन", "बिजली बिल", "पेट्रोल", "किराया", "दवाई", "अन्य"];
 
-let cachedExpenses: Expense[] | null = null;
-const listeners = new Set<() => void>();
-
-function notify() {
-  listeners.forEach((fn) => fn());
-}
-
-export async function getExpenses(): Promise<Expense[]> {
-  if (cachedExpenses) return cachedExpenses;
+/** Expenses saved on this phone before they were stored on the server; queued for upload once. */
+async function uploadLocalExpenses() {
   try {
     const raw = await AsyncStorage.getItem(EXPENSES_KEY);
-    cachedExpenses = raw ? JSON.parse(raw) : [];
-  } catch {
-    cachedExpenses = [];
-  }
-  return cachedExpenses || [];
+    const old: Expense[] = raw ? JSON.parse(raw) : [];
+    old.forEach((e) => store.createExpense({ ...e, notes: e.notes ?? "", persona: expensePersona(e) }));
+    if (raw) await AsyncStorage.removeItem(EXPENSES_KEY);
+  } catch {}
+}
+
+export function useExpenseList() {
+  return useQuery<Expense[]>({
+    queryKey: ["expenses"],
+    queryFn: async () => {
+      await uploadLocalExpenses();
+      return withPending("expenses", await api.listExpenses());
+    },
+  });
 }
 
 export async function addExpense(payload: {
@@ -58,9 +63,8 @@ export async function addExpense(payload: {
   notes?: string;
   persona: "business" | "personal";
 }): Promise<Expense> {
-  const list = await getExpenses();
   const item: Expense = {
-    id: `exp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    id: Crypto.randomUUID(),
     amount: payload.amount,
     title: payload.title.trim() || "खर्च",
     mode: payload.mode,
@@ -69,36 +73,18 @@ export async function addExpense(payload: {
     persona: payload.persona,
     createdAt: new Date().toISOString(),
   };
-
-  const updated = [item, ...list];
-  cachedExpenses = updated;
-  await AsyncStorage.setItem(EXPENSES_KEY, JSON.stringify(updated)).catch(() => {});
-  notify();
+  store.createExpense(item);
   return item;
 }
 
 export async function deleteExpense(id: string): Promise<void> {
-  const list = await getExpenses();
-  const updated = list.filter((e) => e.id !== id);
-  cachedExpenses = updated;
-  await AsyncStorage.setItem(EXPENSES_KEY, JSON.stringify(updated)).catch(() => {});
-  notify();
+  store.deleteExpense(id);
 }
 
+const NONE: Expense[] = [];
+
 export function useExpenses(date?: string, persona?: "business" | "personal"): { expenses: Expense[]; all: Expense[]; totalCash: number; totalOnline: number; totalAll: number } {
-  const [list, setList] = useState<Expense[]>(cachedExpenses || []);
-
-  useEffect(() => {
-    getExpenses().then(setList);
-    const listener = () => {
-      setList(cachedExpenses || []);
-    };
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  }, []);
-
+  const list = useExpenseList().data ?? NONE;
   const filtered = list.filter((e) => (!date || e.date === date) && (!persona || expensePersona(e) === persona));
   const totalCash = filtered.filter((e) => e.mode === "cash").reduce((s, e) => s + e.amount, 0);
   const totalOnline = filtered.filter((e) => e.mode === "online").reduce((s, e) => s + e.amount, 0);

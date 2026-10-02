@@ -7,6 +7,7 @@ import { AppState } from "react-native";
 import { api } from "@/src/lib/api";
 import { queryClient } from "@/src/query-client";
 import type { AepsTxn, Customer, Entry, Job } from "@/src/lib/data";
+import { putInTrash } from "@/src/lib/trash";
 
 type Coll = "customers" | "entries" | "jobs" | "aeps";
 type Op =
@@ -172,6 +173,9 @@ export const store = {
     enqueue({ kind: "update", coll: "customers", itemId: id, patch: b });
   },
   deleteCustomer(id: string) {
+    const list = queryClient.getQueryData<Customer[]>(["customers"]);
+    const target = list?.find((x) => x.id === id);
+    if (target) void putInTrash("customers", target);
     enqueue({ kind: "delete", coll: "customers", itemId: id });
   },
   createEntry(b: Omit<Entry, "id" | "createdAt">): Entry {
@@ -183,6 +187,9 @@ export const store = {
     enqueue({ kind: "update", coll: "entries", itemId: id, patch });
   },
   deleteEntry(id: string) {
+    const list = queryClient.getQueryData<Entry[]>(["entries"]);
+    const target = list?.find((x) => x.id === id);
+    if (target) void putInTrash("entries", target);
     enqueue({ kind: "delete", coll: "entries", itemId: id });
   },
   createJob(b: Omit<Job, "id" | "createdAt" | "status"> & { status?: Job["status"] }): Job {
@@ -194,6 +201,9 @@ export const store = {
     enqueue({ kind: "update", coll: "jobs", itemId: id, patch });
   },
   deleteJob(id: string) {
+    const list = queryClient.getQueryData<Job[]>(["jobs"]);
+    const target = list?.find((x) => x.id === id);
+    if (target) void putInTrash("jobs", target);
     enqueue({ kind: "delete", coll: "jobs", itemId: id });
   },
   createAeps(b: Omit<AepsTxn, "id" | "createdAt">): AepsTxn {
@@ -205,6 +215,12 @@ export const store = {
     enqueue({ kind: "update", coll: "aeps", itemId: id, patch: b });
   },
   deleteAeps(id: string) {
+    const list = queryClient.getQueryData<AepsTxn[]>(["aeps"]);
+    const target = list?.find((x) => x.id === id);
+    if (target) void putInTrash("aeps", target);
     enqueue({ kind: "delete", coll: "aeps", itemId: id });
+  },
+  restoreRaw(coll: Coll, item: Record<string, unknown> & { id: string }) {
+    enqueue({ kind: "create", coll, item });
   },
 };

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Linking } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -13,7 +13,9 @@ import { AddEntrySheet, AddJobSheet, AddCustomerSheet, CompleteJobSheet, EditRec
 import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
-import { receiptDoc, statementDoc, type ShareDoc } from "@/src/lib/receipt";
+import { receiptDoc, statementDoc, reminderDoc, type ShareDoc } from "@/src/lib/receipt";
+import { UpiQrModal } from "@/src/components/upi-qr-sheet";
+import { addRecentCustomer } from "@/src/lib/recent";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -37,6 +39,11 @@ export default function CustomerDetail() {
   const [filter, setFilter] = useState<LedgerFilter>("all");
   const [settling, setSettling] = useState<Entry | null>(null);
   const [shareDoc, setShareDoc] = useState<ShareDoc | null>(null);
+  const [qrModal, setQrModal] = useState(false);
+
+  useEffect(() => {
+    if (id) void addRecentCustomer(id);
+  }, [id]);
 
   const rows = useMemo(
     () =>
@@ -96,6 +103,7 @@ export default function CustomerDetail() {
 
   const openReceipt = (e: Entry) => setShareDoc(receiptDoc(e, ledger.work.get(e.id), customer, due, isCustomer, user ?? {}));
   const openStatement = () => setShareDoc(statementDoc(entries, ledger, customer, isCustomer, user ?? {}));
+  const openReminder = () => setShareDoc(reminderDoc(customer, due, user ?? {}));
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, flexDirection: "row", alignItems: "center", gap: spacing.md }}>
@@ -110,12 +118,21 @@ export default function CustomerDetail() {
           </Text>
         </View>
         {customer.phone ? (
-          <Pressable onPress={() => Linking.openURL(`tel:${customer.phone}`)} hitSlop={8} testID="call-cust-btn">
-            <MaterialIcon name="phone-outline" size={22} color={colors.onSurface} />
-          </Pressable>
+          <>
+            <Pressable onPress={() => Linking.openURL(`tel:${customer.phone}`)} hitSlop={8} testID="call-cust-btn">
+              <MaterialIcon name="phone-outline" size={22} color={colors.onSurface} />
+            </Pressable>
+            <Pressable
+              onPress={() => Linking.openURL(`https://wa.me/91${customer.phone.replace(/[^0-9]/g, "").slice(-10)}`)}
+              hitSlop={8}
+              testID="direct-wa-btn"
+            >
+              <MaterialIcon name="whatsapp" size={22} color="#128C7E" />
+            </Pressable>
+          </>
         ) : null}
         <Pressable onPress={openStatement} hitSlop={8} testID="share-whatsapp-btn">
-          <MaterialIcon name="whatsapp" size={22} color="#128C7E" />
+          <MaterialIcon name="share-variant-outline" size={22} color={colors.brandPrimary} />
         </Pressable>
         <Pressable onPress={() => setEditSheet(true)} hitSlop={10} testID="edit-cust-btn">
           <MaterialIcon name="pencil-outline" size={22} color={colors.onSurface} />
@@ -158,6 +175,27 @@ export default function CustomerDetail() {
               <Text style={styles.statementText}>पूरा हिसाब भेजें</Text>
               <Text style={styles.statementHint}>PDF / WhatsApp</Text>
             </Pressable>
+          ) : null}
+
+          {due > 0 ? (
+            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm }}>
+              <Pressable
+                style={[styles.statementBtn, { flex: 1, backgroundColor: "#FFF8F0", borderColor: "#FDBA74", marginTop: 0 }]}
+                onPress={openReminder}
+                testID="share-reminder-btn"
+              >
+                <MaterialIcon name="message-alert-outline" size={18} color="#C2410C" />
+                <Text style={[styles.statementText, { color: "#C2410C" }]}>तगादा भेजें</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.statementBtn, { flex: 1, backgroundColor: "#F0FDF4", borderColor: "#86EFAC", marginTop: 0 }]}
+                onPress={() => setQrModal(true)}
+                testID="open-qr-btn"
+              >
+                <MaterialIcon name="qrcode-scan" size={18} color={colors.success} />
+                <Text style={[styles.statementText, { color: colors.success }]}>QR पेमेंट</Text>
+              </Pressable>
+            </View>
           ) : null}
         </View>
 
@@ -243,6 +281,14 @@ export default function CustomerDetail() {
       />
       <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
       <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
+      <UpiQrModal
+        visible={qrModal}
+        onClose={() => setQrModal(false)}
+        upiId={user?.shop_upi || ""}
+        shopName={user?.shop_name || "खाता"}
+        amount={due}
+        customerName={customer.name}
+      />
     </View>
   );
 }

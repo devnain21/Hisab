@@ -6,6 +6,7 @@ import { View, ActivityIndicator, Platform } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useFoldLegacyCashRows } from "@/src/lib/records";
 import { useCounterMode } from "@/src/lib/counter";
+import { usePersona } from "@/src/lib/persona";
 
 function LedgerMaintenance() {
   useFoldLegacyCashRows();
@@ -15,6 +16,7 @@ function LedgerMaintenance() {
 export default function TabsLayout() {
   const { status } = useAuth();
   const counter = useCounterMode();
+  const { isPersonal, labels } = usePersona();
   if (status === "loading") {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface }}>
@@ -56,14 +58,14 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="customers"
         options={{
-          title: "ग्राहक",
+          title: labels.customers,
           tabBarIcon: ({ color, size }) => <MaterialIcon name="account-group" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="work"
         options={{
-          title: "काम",
+          title: labels.work,
           tabBarIcon: ({ color, size }) => <MaterialIcon name="briefcase-outline" size={size} color={color} />,
         }}
       />
@@ -71,7 +73,7 @@ export default function TabsLayout() {
         name="aeps"
         options={{
           title: "काउंटर",
-          href: counter.on ? undefined : null,
+          href: counter.on && !isPersonal ? undefined : null,
           tabBarIcon: ({ color, size }) => <MaterialIcon name="fingerprint" size={size} color={color} />,
         }}
       />

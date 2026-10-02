@@ -47,7 +47,8 @@ export const api = {
   login: (id_token: string) =>
     req("/auth/login", { method: "POST", body: JSON.stringify({ id_token }) }),
   me: () => req("/auth/me"),
-  updateMe: (b: { shop_name: string; shop_phone?: string; shop_address?: string; shop_gst?: string }) => req("/auth/me", { method: "PUT", body: JSON.stringify(b) }),
+  updateMe: (b: { shop_name: string; shop_phone?: string; shop_address?: string; shop_gst?: string; shop_upi?: string; persona?: string }) =>
+    req("/auth/me", { method: "PUT", body: JSON.stringify(b) }),
   logout: () => req("/auth/logout", { method: "POST" }),
   listCustomers: () => req("/customers"),
   createCustomer: (b: unknown) => req("/customers", { method: "POST", body: JSON.stringify(b) }),

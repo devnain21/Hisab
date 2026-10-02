@@ -10,15 +10,19 @@ import { Pressable } from "@/src/components/tap";
 import { ShopProfileSheet } from "@/src/components/sheets";
 import { PinSetupModal, useAppLock } from "@/src/components/app-lock";
 import { biometricAvailable, disableLock, lockSupported, setBiometric, setPin } from "@/src/lib/app-lock";
-import { buildBackupCsv, shareBackup } from "@/src/lib/backup";
+import { exportFullLedgerCsv } from "@/src/lib/export-data";
 import { usePendingCount } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
 import { useCounterMode } from "@/src/lib/counter";
+import { usePersona } from "@/src/lib/persona";
+import { RecycleBinModal } from "@/src/components/recycle-bin-sheet";
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
   const { user, signOut } = useAuth();
+  const { isPersonal, labels } = usePersona();
   const [shopSheet, setShopSheet] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
   const customers = useCustomers().data ?? [];
   const entries = useEntries().data ?? [];
   const jobs = useJobs().data ?? [];
@@ -64,7 +68,13 @@ export default function Profile() {
     setBackupError(null);
     setBackingUp(true);
     try {
-      await shareBackup(buildBackupCsv(customers, entries, jobs, aeps));
+      await exportFullLedgerCsv({
+        customers,
+        entries,
+        jobs,
+        aeps,
+        shop: user,
+      });
     } catch {
       setBackupError("बैकअप नहीं बन पाया, दोबारा कोशिश करें।");
     } finally {
@@ -106,9 +116,11 @@ export default function Profile() {
       <Pressable style={styles.row} onPress={() => setShopSheet(true)} testID="profile-shop-name">
         <MaterialIcon name="storefront-outline" size={22} color={colors.brandPrimary} />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.rowLabel}>बिल पर नाम</Text>
-          <Text style={[styles.rowValue, !user?.shop_name && { color: colors.muted }]} numberOfLines={1}>
-            {user?.shop_name ? [user.shop_name, user.shop_phone].filter(Boolean).join(" · ") : "अभी सेट नहीं है"}
+          <Text style={styles.rowLabel}>{labels.profileHeading}</Text>
+          <Text style={[styles.rowValue, !user?.shop_name && { color: colors.muted }]} numberOfLines={2}>
+            {user?.shop_name
+              ? [user.shop_name, user.shop_phone, user.shop_upi ? `UPI: ${user.shop_upi}` : ""].filter(Boolean).join(" · ")
+              : "अभी सेट नहीं है"}
           </Text>
         </View>
         <MaterialIcon name="pencil-outline" size={18} color={colors.muted} />
@@ -189,6 +201,14 @@ export default function Profile() {
           </View>
           {backingUp ? <ActivityIndicator color={colors.brandPrimary} /> : <MaterialIcon name="download" size={22} color={colors.muted} />}
         </Pressable>
+        <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => setTrashOpen(true)} testID="trash-btn">
+          <MaterialIcon name="delete-restore" size={22} color={colors.warning} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowValue}>कचरा पेटी (Recycle Bin)</Text>
+            <Text style={styles.rowLabel}>हटाए गए रिकॉर्ड देखें या वापस लाएं</Text>
+          </View>
+          <MaterialIcon name="chevron-right" size={22} color={colors.muted} />
+        </Pressable>
       </View>
       {backupError ? <Text style={styles.errorText}>{backupError}</Text> : null}
 
@@ -200,6 +220,7 @@ export default function Profile() {
       <Text style={styles.footer}>{user?.shop_name ? `${user.shop_name} — ` : ""}बही खाता · v1.0</Text>
       <ShopProfileSheet visible={shopSheet} onClose={() => setShopSheet(false)} />
       <PinSetupModal visible={pinSetup} onClose={() => setPinSetup(false)} onDone={onPinSet} />
+      <RecycleBinModal visible={trashOpen} onClose={() => setTrashOpen(false)} />
     </ScrollView>
   );
 }

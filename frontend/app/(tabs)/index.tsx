@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TextInput } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { Pressable } from "@/src/components/tap";
 import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
@@ -9,11 +9,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { cashIn, useAeps, useCustomers, useEntries, useJobs, computeBalance, type Job } from "@/src/lib/data";
 import { aepsTotals } from "@/src/lib/aeps";
-import { formatDateShort, formatINR, formatWeekdayDate, todayISO } from "@/src/lib/format";
+import { formatDateShort, formatINR, formatPhone, formatWeekdayDate, todayISO } from "@/src/lib/format";
 import { AddEntrySheet, AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
 import { useAuth } from "@/src/context/AuthContext";
 import { usePendingCount } from "@/src/lib/store";
 import { useCounterMode } from "@/src/lib/counter";
+import { usePersona } from "@/src/lib/persona";
+import { useRecentCustomerIds } from "@/src/lib/recent";
+import { VoiceEntryModal } from "@/src/components/voice-entry-sheet";
 
 export default function Home() {
   const insets = useSafeAreaInsets();
@@ -25,14 +28,40 @@ export default function Home() {
   const [jobSheet, setJobSheet] = useState(false);
   const [moneySheet, setMoneySheet] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [voiceModal, setVoiceModal] = useState(false);
   const { user } = useAuth();
   const pending = usePendingCount();
   const counter = useCounterMode();
+  const { isPersonal, labels } = usePersona();
+  const recentIds = useRecentCustomerIds();
 
   const today = todayISO();
   const customers = customersQ.data ?? [];
   const entries = entriesQ.data ?? [];
   const jobs = jobsQ.data ?? [];
+
+  const recentCustomers = useMemo(() => {
+    return recentIds
+      .map((id) => customers.find((c) => c.id === id))
+      .filter((c): c is (typeof customers)[0] => Boolean(c));
+  }, [recentIds, customers]);
+
+  const searchResults = useMemo(() => {
+    const needle = searchQuery.trim().toLowerCase();
+    if (!needle) return { customers: [], jobs: [] };
+    const matchedCusts = customers
+      .filter((c) => c.name.toLowerCase().includes(needle) || c.phone.includes(needle))
+      .slice(0, 5)
+      .map((c) => ({
+        customer: c,
+        balance: computeBalance(entries, c.id),
+      }));
+    const matchedJobs = jobs
+      .filter((j) => j.title.toLowerCase().includes(needle) || (j.customerId && nameOf(j.customerId).toLowerCase().includes(needle)))
+      .slice(0, 5);
+    return { customers: matchedCusts, jobs: matchedJobs };
+  }, [searchQuery, customers, jobs, entries]);
 
   const stats = useMemo(() => {
     const dues = customers.map((c) => computeBalance(entries, c.id)).filter((d) => d > 0);
@@ -82,6 +111,102 @@ export default function Home() {
             <MaterialIcon name="account-circle-outline" size={28} color={colors.onSurface} />
           </Pressable>
         </View>
+
+        {/* Global Spotlight Search Bar */}
+        <View style={styles.searchBar}>
+          <MaterialIcon name="magnify" size={20} color={colors.muted} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="ग्राहक, फ़ोन या काम खोजें..."
+            placeholderTextColor={colors.muted}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            testID="home-global-search"
+          />
+          {searchQuery ? (
+            <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
+              <MaterialIcon name="close-circle" size={18} color={colors.muted} />
+            </Pressable>
+          ) : (
+            <Pressable onPress={() => setVoiceModal(true)} hitSlop={8} testID="home-voice-btn">
+              <MaterialIcon name="microphone" size={20} color={colors.brandPrimary} />
+            </Pressable>
+          )}
+        </View>
+
+        {/* Live Search Results Dropdown */}
+        {searchQuery.trim().length > 0 ? (
+          <View style={styles.searchDropdown}>
+            {searchResults.customers.length === 0 && searchResults.jobs.length === 0 ? (
+              <Text style={styles.searchEmpty}>कोई परिणाम नहीं मिला</Text>
+            ) : (
+              <>
+                {searchResults.customers.map(({ customer: c, balance: b }) => (
+                  <Pressable
+                    key={c.id}
+                    style={styles.searchResultRow}
+                    onPress={() => {
+                      setSearchQuery("");
+                      router.push(`/customer/${c.id}`);
+                    }}
+                  >
+                    <MaterialIcon name="account" size={18} color={colors.brandPrimary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.resultTitle}>{c.name}</Text>
+                      {c.phone ? <Text style={styles.resultSub}>{formatPhone(c.phone)}</Text> : null}
+                    </View>
+                    <Text style={[styles.resultDue, { color: b > 0 ? colors.error : colors.success }]}>
+                      {b === 0 ? "क्लियर" : b > 0 ? `${formatINR(b)} लेने` : `${formatINR(-b)} एडवांस`}
+                    </Text>
+                  </Pressable>
+                ))}
+                {searchResults.jobs.map((j) => (
+                  <Pressable
+                    key={j.id}
+                    style={styles.searchResultRow}
+                    onPress={() => {
+                      setSearchQuery("");
+                      setEditingJob(j);
+                    }}
+                  >
+                    <MaterialIcon name="briefcase-outline" size={18} color={colors.warning} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.resultTitle}>{j.title}</Text>
+                      <Text style={styles.resultSub}>{nameOf(j.customerId)} · {formatDateShort(j.dueDate)}</Text>
+                    </View>
+                    <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
+                  </Pressable>
+                ))}
+              </>
+            )}
+          </View>
+        ) : null}
+
+        {/* Recently Viewed Customers Horizontal Chips */}
+        {!searchQuery && recentCustomers.length > 0 ? (
+          <View style={styles.recentWrap}>
+            <Text style={styles.recentLabel}>हालिया:</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+              {recentCustomers.map((c) => {
+                const bal = computeBalance(entries, c.id);
+                return (
+                  <Pressable
+                    key={c.id}
+                    style={styles.recentChip}
+                    onPress={() => router.push(`/customer/${c.id}`)}
+                  >
+                    <MaterialIcon name="account-outline" size={14} color={colors.brandPrimary} />
+                    <Text style={styles.recentChipName} numberOfLines={1}>{c.name}</Text>
+                    {bal > 0 ? (
+                      <Text style={styles.recentChipDue}>{formatINR(bal)}</Text>
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : null}
+
         {pending > 0 ? (
           <View style={styles.pendingPill} testID="home-sync-pending">
             <MaterialIcon name="cloud-upload-outline" size={14} color={colors.warning} />
@@ -139,12 +264,16 @@ export default function Home() {
 
             <View style={styles.actionRow}>
               <Pressable style={styles.primaryAction} onPress={() => setJobSheet(true)} testID="quick-work">
-                <MaterialIcon name="briefcase-plus-outline" size={20} color={colors.onBrandPrimary} />
-                <Text style={styles.primaryActionText}>काम लिखें</Text>
+                <MaterialIcon name="briefcase-plus-outline" size={18} color={colors.onBrandPrimary} />
+                <Text style={styles.primaryActionText}>{labels.newWork}</Text>
               </Pressable>
               <Pressable style={styles.secondaryAction} onPress={() => setMoneySheet(true)} testID="quick-money">
-                <MaterialIcon name="swap-vertical" size={20} color={colors.brandPrimary} />
+                <MaterialIcon name="swap-vertical" size={18} color={colors.brandPrimary} />
                 <Text style={styles.secondaryActionText}>मिले · दिए</Text>
+              </Pressable>
+              <Pressable style={styles.voiceAction} onPress={() => setVoiceModal(true)} testID="quick-voice">
+                <MaterialIcon name="microphone" size={18} color={colors.brandPrimary} />
+                <Text style={styles.voiceActionText}>बोलकर</Text>
               </Pressable>
             </View>
 
@@ -201,6 +330,7 @@ export default function Home() {
       <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />
       <AddEntrySheet visible={moneySheet} type="payment" kinds={["payment", "given"]} onClose={() => setMoneySheet(false)} />
       <EditRecordSheet job={editingJob} onClose={() => setEditingJob(null)} />
+      <VoiceEntryModal visible={voiceModal} onClose={() => setVoiceModal(false)} />
     </View>
   );
 }
@@ -240,10 +370,106 @@ const styles = StyleSheet.create({
   statBottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xs },
   statHint: { fontSize: 12, color: colors.muted, flexShrink: 1 },
   actionRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },
-  primaryAction: { flex: 3, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
-  primaryActionText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "700" },
-  secondaryAction: { flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.surface },
-  secondaryActionText: { color: colors.brandPrimary, fontSize: 16, fontWeight: "700" },
+  primaryAction: { flex: 3, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
+  primaryActionText: { color: colors.onBrandPrimary, fontSize: 15, fontWeight: "700" },
+  secondaryAction: { flex: 3, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.surface },
+  secondaryActionText: { color: colors.brandPrimary, fontSize: 15, fontWeight: "700" },
+  voiceAction: { flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary },
+  voiceActionText: { color: colors.brandPrimary, fontSize: 14, fontWeight: "700" },
+
+  // Search & Recent Styles
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    marginTop: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: colors.onSurface,
+    paddingVertical: 2,
+  },
+  searchDropdown: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginTop: 4,
+    borderWidth: 1.5,
+    borderColor: colors.brandPrimary,
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+  },
+  searchEmpty: {
+    fontSize: 13,
+    color: colors.muted,
+    textAlign: "center",
+    paddingVertical: spacing.md,
+  },
+  searchResultRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  resultTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.onSurface,
+  },
+  resultSub: {
+    fontSize: 11,
+    color: colors.muted,
+    marginTop: 1,
+  },
+  resultDue: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  recentWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: spacing.sm,
+    gap: 6,
+  },
+  recentLabel: {
+    fontSize: 11,
+    color: colors.muted,
+    fontWeight: "700",
+  },
+  recentChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.surfaceSecondary,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  recentChipName: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.onSurface,
+    maxWidth: 90,
+  },
+  recentChipDue: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.error,
+  },
   aepsLine: { marginTop: spacing.sm, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 10, paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary },
   aepsLineText: { flex: 1, fontSize: 13, fontWeight: "600", color: colors.onSurface },
   sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xl, marginBottom: spacing.md },

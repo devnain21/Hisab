@@ -28,6 +28,7 @@ const fullShop = (s: Partial<ShopProfile>): ShopProfile => ({
   shop_phone: s.shop_phone || "",
   shop_address: s.shop_address || "",
   shop_gst: s.shop_gst || "",
+  shop_upi: s.shop_upi || "",
 });
 
 /** Whole-account position, worded for a customer (advance) or a personal contact (we owe them). */
@@ -38,6 +39,21 @@ function accountLine(balance: number, isCustomer: boolean): Line {
 }
 
 const fileSafe = (s: string) => s.replace(/[\\/:*?"<>|\s]+/g, "-").slice(0, 30) || "customer";
+
+function upiQrHtml(shop: ShopProfile, amount: number, customerName: string): string {
+  if (!shop.shop_upi || amount <= 0) return "";
+  const upiUrl = `upi://pay?pa=${encodeURIComponent(shop.shop_upi)}&pn=${encodeURIComponent(shop.shop_name)}&am=${amount}&cu=INR&tn=Hisab_${encodeURIComponent(customerName)}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(upiUrl)}`;
+  return `
+  <div style="margin-top:14px;padding:10px 12px;border:1.5px solid ${BRAND};border-radius:8px;display:flex;align-items:center;gap:14px;background:#F0FAF8;">
+    <img src="${qrUrl}" width="76" height="76" style="border-radius:4px;border:1px solid #CCC;background:#FFF;"/>
+    <div>
+      <div style="font-weight:700;color:${BRAND};font-size:12px;">ऑनलाइन भुगतान के लिए स्कैन करें (${formatINR(amount)})</div>
+      <div style="font-size:11px;color:#222;margin-top:2px;">UPI ID: <b>${esc(shop.shop_upi)}</b></div>
+      <div style="font-size:10px;color:#666;margin-top:2px;">PhonePe, Google Pay, Paytm, BHIM</div>
+    </div>
+  </div>`;
+}
 
 /**
  * Receipt for one ledger row. `balance` is the customer's whole-account balance
@@ -90,6 +106,8 @@ export function receiptDoc(
     "धन्यवाद 🙏",
   ].join("\n");
 
+  const upiDue = itemDue > 0 ? itemDue : balance > 0 ? balance : 0;
+
   const body = `
   <table>
     <tr><th>विवरण</th><th class="amt">रकम</th></tr>
@@ -97,6 +115,7 @@ export function receiptDoc(
   </table>
   <table class="sum">${lines.map(sumRow).join("")}</table>
   ${account ? accountBox(account) : ""}
+  ${upiQrHtml(shop, upiDue, customer.name)}
   <div class="stamp" style="border-color:${toneColor(stamp.tone)};color:${toneColor(stamp.tone)}">${esc(stamp.text)}</div>`;
 
   return {
@@ -174,7 +193,8 @@ export function statementDoc(
       .join("")}
     <tr class="total"><td colspan="2">कुल</td><td class="amt">${esc(formatINR(debit))}</td><td class="amt" style="color:${OK}">${esc(formatINR(credit))}</td><td class="amt">${balCell(balance)}</td></tr>
   </table>
-  ${accountBox(account)}`;
+  ${accountBox(account)}
+  ${upiQrHtml(shop, balance, customer.name)}`;
 
   return {
     heading: "खाता विवरण",
@@ -186,6 +206,57 @@ export function statementDoc(
     message,
     html: page(shop, "खाता विवरण", esc(formatDate(today)), customer, body, "A4"),
     fileName: `Hisab-${fileSafe(customer.name)}-${today}.pdf`,
+  };
+}
+
+export function reminderDoc(
+  customer: Customer,
+  balance: number,
+  shopIn: Partial<ShopProfile>,
+): ShareDoc {
+  const shop = fullShop(shopIn);
+  const upiUrl = shop.shop_upi
+    ? `upi://pay?pa=${encodeURIComponent(shop.shop_upi)}&pn=${encodeURIComponent(shop.shop_name)}&am=${balance}&cu=INR&tn=Hisab_${encodeURIComponent(customer.name)}`
+    : "";
+
+  const lines: Line[] = [
+    { label: "कुल बाकी रकम (लेने हैं)", value: formatINR(balance), tone: "due" },
+  ];
+
+  const message = [
+    `नमस्ते *${customer.name}* जी 🙏,`,
+    `आशा है आप सकुशल हैं।`,
+    "",
+    `*${shop.shop_name}* की तरफ से आपका हिसाब विवरण:`,
+    `💰 कुल बाकी रकम: *${formatINR(balance)}*`,
+    "",
+    `कृपया सुविधा अनुसार इसका भुगतान कर दें।`,
+    ...(shop.shop_upi ? ["", `📱 ऑनलाइन भुगतान के लिए UPI ID:\n*${shop.shop_upi}*`, `🔗 तुरंत पेमेंट लिंक:\n${upiUrl}`] : []),
+    "",
+    `धन्यवाद 🙏`,
+    `— ${shop.shop_name}${shop.shop_phone ? ` (${formatPhone(shop.shop_phone)})` : ""}`,
+  ].join("\n");
+
+  const today = todayISO();
+  const body = `
+  <div style="margin:20px 0;padding:16px;background:#FDECEA;border:1.5px solid ${DUE};border-radius:8px;text-align:center;">
+    <div style="font-size:13px;color:#777;">कुल बाकी रकम (लेने हैं)</div>
+    <div style="font-size:26px;font-weight:800;color:${DUE};margin:6px 0;">${esc(formatINR(balance))}</div>
+    <div style="font-size:12px;color:#555;">कृपया सुविधा अनुसार भुगतान करने का कष्ट करें।</div>
+  </div>
+  ${upiQrHtml(shop, balance, customer.name)}
+  `;
+
+  return {
+    heading: "भुगतान रिमाइंडर",
+    title: "उधारी तगादा",
+    sub: `${customer.name} · ${formatDate(today)}`,
+    phone: customer.phone,
+    lines,
+    account: { label: "कुल लेने हैं", value: formatINR(balance), tone: "due" },
+    message,
+    html: page(shop, "भुगतान रिमाइंडर", esc(formatDate(today)), customer, body, "A5"),
+    fileName: `Reminder-${fileSafe(customer.name)}-${today}.pdf`,
   };
 }
 

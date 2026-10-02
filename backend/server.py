@@ -74,6 +74,8 @@ class UserOut(BaseModel):
     shop_phone: str = ""
     shop_address: str = ""
     shop_gst: str = ""
+    shop_upi: str = ""
+    persona: str = "business"
 
 
 class ProfileUpdate(BaseModel):
@@ -81,6 +83,8 @@ class ProfileUpdate(BaseModel):
     shop_phone: Optional[str] = Field(default=None, max_length=20)
     shop_address: Optional[str] = Field(default=None, max_length=120)
     shop_gst: Optional[str] = Field(default=None, max_length=20)
+    shop_upi: Optional[str] = Field(default=None, max_length=50)
+    persona: Optional[str] = Field(default=None, max_length=20)
 
 
 class AuthResponse(BaseModel):
@@ -333,6 +337,8 @@ def _user_out(user: dict) -> UserOut:
         shop_phone=user.get("shop_phone", ""),
         shop_address=user.get("shop_address", ""),
         shop_gst=user.get("shop_gst", ""),
+        shop_upi=user.get("shop_upi", ""),
+        persona=user.get("persona", "business"),
     )
 
 
@@ -500,8 +506,12 @@ async def startup():
     await db.users.create_index("firebase_uid", unique=True, sparse=True)
     await db.customers.create_index([("user_id", 1), ("id", 1)])
     await db.entries.create_index([("user_id", 1), ("id", 1)])
+    await db.entries.create_index([("user_id", 1), ("customerId", 1)])
+    await db.entries.create_index([("user_id", 1), ("date", -1)])
     await db.jobs.create_index([("user_id", 1), ("id", 1)])
+    await db.jobs.create_index([("user_id", 1), ("status", 1), ("dueDate", 1)])
     await db.aeps.create_index([("user_id", 1), ("id", 1)])
+    await db.aeps.create_index([("user_id", 1), ("date", -1)])
 
 
 @app.on_event("shutdown")

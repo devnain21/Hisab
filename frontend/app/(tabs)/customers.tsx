@@ -9,6 +9,7 @@ import { colors, spacing, radius } from "@/src/theme";
 import { entryDelta, useCustomers, useEntries } from "@/src/lib/data";
 import { formatDateShort, formatINR, formatPhone, initials, todayISO } from "@/src/lib/format";
 import { AddCustomerSheet } from "@/src/components/sheets";
+import { usePersona } from "@/src/lib/persona";
 
 type Filter = "due" | "all" | "clear";
 const FILTERS: Filter[] = ["due", "all", "clear"];
@@ -17,6 +18,7 @@ const FILTER_LABEL: Record<Filter, string> = { due: "लेने हैं", al
 export default function CustomersScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { labels, isPersonal } = usePersona();
   const params = useLocalSearchParams<{ filter?: Filter; t?: string }>();
   const customersQ = useCustomers();
   const entriesQ = useEntries();
@@ -65,7 +67,7 @@ export default function CustomersScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.md, backgroundColor: colors.surface }}>
-        <Text style={styles.h1}>ग्राहक</Text>
+        <Text style={styles.h1}>{labels.customers}</Text>
         <View style={styles.searchWrap}>
           <MaterialIcon name="magnify" size={18} color={colors.muted} />
           <TextInput

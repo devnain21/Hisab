@@ -20,7 +20,14 @@ if (Platform.OS !== "web") {
   if (webClientId) GoogleSignin.configure({ webClientId });
 }
 
-export type ShopProfile = { shop_name: string; shop_phone: string; shop_address: string; shop_gst: string };
+export type ShopProfile = {
+  shop_name: string;
+  shop_phone: string;
+  shop_address: string;
+  shop_gst: string;
+  shop_upi?: string;
+  persona?: "business" | "personal";
+};
 type User = { user_id: string; email: string; name: string; picture?: string | null } & Partial<ShopProfile>;
 type AuthState = { status: "loading" | "authenticated" | "unauthenticated"; user: User | null };
 

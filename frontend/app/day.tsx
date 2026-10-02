@@ -10,6 +10,13 @@ import { formatINR, formatWeekdayDate, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { EditRecordSheet } from "@/src/components/sheets";
 import { aepsTotals, drawerSentence, cashOf } from "@/src/lib/aeps";
+import { useExpenses, deleteExpense } from "@/src/lib/expenses";
+import { useContraTransfers } from "@/src/lib/contra";
+import { AddExpenseSheet } from "@/src/components/expense-sheet";
+import { ContraSheet } from "@/src/components/contra-sheet";
+import { DayCloseModal } from "@/src/components/day-close-modal";
+import { useAuth } from "@/src/context/AuthContext";
+import type { DaySummaryData } from "@/src/lib/day-close";
 
 type Kind = "work" | "payment" | "drawer";
 
@@ -20,11 +27,11 @@ function shiftDay(iso: string, days: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-/** Day book: every work or payment entry booked on one date, plus cash drawer reconciliation. */
 export default function DayScreen() {
   const params = useLocalSearchParams<{ type?: "work" | "payment" | "drawer"; date?: string }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { user } = useAuth();
   const customers = useCustomers().data ?? [];
   const entries = useEntries().data ?? [];
   const aepsList = useAeps().data ?? [];
@@ -33,9 +40,18 @@ export default function DayScreen() {
   const [date, setDate] = useState(params.date || today);
   const [editing, setEditing] = useState<Entry | null>(null);
 
-  // Cash Drawer State
+  // Sheets & Modals
+  const [expenseSheet, setExpenseSheet] = useState(false);
+  const [contraSheet, setContraSheet] = useState(false);
+  const [dayCloseOpen, setDayCloseOpen] = useState(false);
+
+  // Dual Galla: Cash Drawer + Bank Account
   const [openingCash, setOpeningCash] = useState<string>("0");
   const [countedCash, setCountedCash] = useState<string>("");
+  const [openingBank, setOpeningBank] = useState<string>("0");
+
+  const expensesData = useExpenses(date);
+  const contraData = useContraTransfers(date);
 
   useEffect(() => {
     AsyncStorage.getItem(`hisab_opening_cash_${date}`).then((v) => {
@@ -43,6 +59,9 @@ export default function DayScreen() {
     }).catch(() => {});
     AsyncStorage.getItem(`hisab_counted_cash_${date}`).then((v) => {
       setCountedCash(v || "");
+    }).catch(() => {});
+    AsyncStorage.getItem(`hisab_opening_bank_${date}`).then((v) => {
+      setOpeningBank(v || "0");
     }).catch(() => {});
   }, [date]);
 
@@ -58,6 +77,12 @@ export default function DayScreen() {
     AsyncStorage.setItem(`hisab_counted_cash_${date}`, clean).catch(() => {});
   };
 
+  const handleSaveOpeningBank = (val: string) => {
+    const clean = val.replace(/[^0-9]/g, "");
+    setOpeningBank(clean);
+    AsyncStorage.setItem(`hisab_opening_bank_${date}`, clean).catch(() => {});
+  };
+
   const nameOf = (id: string) => customers.find((c) => c.id === id)?.name ?? "ग्राहक";
 
   const dayEntries = useMemo(() => entries.filter((e) => e.date === date), [entries, date]);
@@ -69,21 +94,57 @@ export default function DayScreen() {
   );
   const sum = (k: "work" | "payment") => dayEntries.filter((e) => inKind(e, k)).reduce((s, e) => s + amountFor(e, k), 0);
 
-  // Drawer Calculations
+  // Cash In & Work Breakdown
+  const workTotal = useMemo(() => dayEntries.filter((e) => e.type === "work").reduce((s, e) => s + e.amount, 0), [dayEntries]);
   const workCash = useMemo(() => dayEntries.filter((e) => e.type === "work").reduce((s, e) => s + (e.paid ?? 0), 0), [dayEntries]);
+  const workUdhaar = workTotal - workCash;
+
   const paymentCash = useMemo(() => dayEntries.filter((e) => e.type === "payment").reduce((s, e) => s + e.amount, 0), [dayEntries]);
+
   const dayAeps = useMemo(() => aepsList.filter((t) => t.date === date && t.status === "success"), [aepsList, date]);
   const aepsTot = useMemo(() => aepsTotals(dayAeps), [dayAeps]);
 
-  const totalIn = workCash + paymentCash + aepsTot.cashIn;
-  const totalOut = aepsTot.cashOut;
+  // Cash Drawer Total Math
+  const cashInTotal = workCash + paymentCash + aepsTot.cashIn + contraData.bankToCash;
+  const cashOutTotal = aepsTot.cashOut + expensesData.totalCash + contraData.cashToBank;
   const openingNum = parseInt(openingCash, 10) || 0;
-  const expectedCash = openingNum + totalIn - totalOut;
+  const expectedCash = openingNum + cashInTotal - cashOutTotal;
 
   const countedNum = countedCash ? parseInt(countedCash, 10) || 0 : null;
   const diff = countedNum !== null ? countedNum - expectedCash : null;
 
+  // Online Bank Total Math
+  const openingBankNum = parseInt(openingBank, 10) || 0;
+  const onlineInTotal = aepsTot.commission + contraData.cashToBank;
+  const onlineOutTotal = expensesData.totalOnline + contraData.bankToCash;
+  const expectedBank = openingBankNum + onlineInTotal - onlineOutTotal;
+
   const dateLabel = date === today ? "आज" : date === todayISO(-1) ? "कल" : formatWeekdayDate(date);
+
+  // Day Close Summary Object
+  const daySummary: DaySummaryData = {
+    date,
+    shop: user || {},
+    workTotal,
+    workCash,
+    workOnline: 0,
+    workUdhaar,
+    paymentCash,
+    paymentOnline: 0,
+    expenseCash: expensesData.totalCash,
+    expenseOnline: expensesData.totalOnline,
+    bankToCash: contraData.bankToCash,
+    cashToBank: contraData.cashToBank,
+    openingCash: openingNum,
+    expectedCash,
+    countedCash: countedNum,
+    cashDiff: diff,
+    openingBank: openingBankNum,
+    expectedBank,
+    actualBank: null,
+    bankDiff: null,
+    netProfitEstimate: workTotal - expensesData.totalAll,
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -138,7 +199,7 @@ export default function DayScreen() {
             testID="day-kind-drawer"
           >
             <Text style={[styles.segmentText, kind === "drawer" && { color: colors.onBrandPrimary }]}>
-              गल्ला · {formatINR(expectedCash)}
+              गल्ला व बैंक
             </Text>
           </Pressable>
         </View>
@@ -157,10 +218,41 @@ export default function DayScreen() {
 
       {kind === "drawer" ? (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}>
-          {/* Expected vs Counted Cash Card */}
+          {/* Quick Actions in Galla */}
+          <View style={styles.quickGallaRow}>
+            <Pressable
+              style={styles.gallaActionBtn}
+              onPress={() => setExpenseSheet(true)}
+              testID="open-expense-btn"
+            >
+              <MaterialIcon name="coffee-outline" size={18} color={colors.warning} />
+              <Text style={styles.gallaActionText}>खर्च लिखें</Text>
+            </Pressable>
+            <Pressable
+              style={styles.gallaActionBtn}
+              onPress={() => setContraSheet(true)}
+              testID="open-contra-btn"
+            >
+              <MaterialIcon name="bank-transfer" size={18} color={colors.brandPrimary} />
+              <Text style={styles.gallaActionText}>आपसी ट्रांसफर</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.gallaActionBtn, { backgroundColor: "#128C7E", borderColor: "#128C7E" }]}
+              onPress={() => setDayCloseOpen(true)}
+              testID="open-day-close-btn"
+            >
+              <MaterialIcon name="check-all" size={18} color="#FFFFFF" />
+              <Text style={[styles.gallaActionText, { color: "#FFFFFF" }]}>दुकान बंद रिपोर्ट</Text>
+            </Pressable>
+          </View>
+
+          {/* 1. Cash Drawer Card */}
           <View style={styles.drawerCard}>
-            <Text style={styles.drawerHeading}>दुकान का गल्ला मिलान</Text>
-            <Text style={styles.drawerSub}>आज की नकद आवक और जावक का पूरा जोड़</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <MaterialIcon name="cash-multiple" size={20} color={colors.brandPrimary} />
+              <Text style={styles.drawerHeading}>नकद गल्ला (Cash Drawer)</Text>
+            </View>
+            <Text style={styles.drawerSub}>दुकान की नकद दराज़ में रखे नोट और सिक्के</Text>
 
             <View style={styles.drawerRow}>
               <Text style={styles.drawerLabel}>सुबह का गल्ला (शुरुआती नकद):</Text>
@@ -187,14 +279,37 @@ export default function DayScreen() {
               <Text style={styles.flowLabel}>+ उधारी वापसी (भुगतान)</Text>
               <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(paymentCash)}</Text>
             </View>
-            <View style={styles.flowRow}>
-              <Text style={styles.flowLabel}>+ काउंटर / मनी ट्रांसफर में आए नकद</Text>
-              <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(aepsTot.cashIn)}</Text>
-            </View>
-            <View style={styles.flowRow}>
-              <Text style={styles.flowLabel}>- काउंटर से दिए गए नकद (AEPS निकासी)</Text>
-              <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(aepsTot.cashOut)}</Text>
-            </View>
+            {aepsTot.cashIn > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>+ काउंटर में आए नकद</Text>
+                <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(aepsTot.cashIn)}</Text>
+              </View>
+            ) : null}
+            {contraData.bankToCash > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>+ ATM / बैंक से निकाले (गल्ले में आए)</Text>
+                <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(contraData.bankToCash)}</Text>
+              </View>
+            ) : null}
+
+            {aepsTot.cashOut > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>- काउंटर से दिए गए नकद (AEPS निकासी)</Text>
+                <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(aepsTot.cashOut)}</Text>
+              </View>
+            ) : null}
+            {expensesData.totalCash > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>- दुकान का नकद खर्च (चाय, सामान आदि)</Text>
+                <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(expensesData.totalCash)}</Text>
+              </View>
+            ) : null}
+            {contraData.cashToBank > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>- गल्ले से बैंक में जमा किए</Text>
+                <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(contraData.cashToBank)}</Text>
+              </View>
+            ) : null}
 
             <View style={styles.divider} />
 
@@ -250,7 +365,90 @@ export default function DayScreen() {
             ) : null}
           </View>
 
-          {/* Today's Counter Transactions summary */}
+          {/* 2. Online Bank & UPI Card */}
+          <View style={[styles.drawerCard, { marginTop: spacing.lg }]}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <MaterialIcon name="bank-outline" size={20} color={colors.info} />
+              <Text style={styles.drawerHeading}>ऑनलाइन बैंक / UPI खाता</Text>
+            </View>
+            <Text style={styles.drawerSub}>Google Pay, PhonePe, Paytm व बैंक बैलेंस</Text>
+
+            <View style={styles.drawerRow}>
+              <Text style={styles.drawerLabel}>सुबह का बैंक बैलेंस:</Text>
+              <View style={styles.inputWrap}>
+                <Text style={styles.currencyPrefix}>₹</Text>
+                <TextInput
+                  style={styles.drawerInput}
+                  keyboardType="numeric"
+                  value={openingBank}
+                  onChangeText={handleSaveOpeningBank}
+                  placeholder="0"
+                  testID="day-opening-bank"
+                />
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            {aepsTot.commission > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>+ काउंटर / AEPS कमीशन बैंक में</Text>
+                <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(aepsTot.commission)}</Text>
+              </View>
+            ) : null}
+            {contraData.cashToBank > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>+ गल्ले से बैंक में जमा (कैश डिपॉजिट)</Text>
+                <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(contraData.cashToBank)}</Text>
+              </View>
+            ) : null}
+
+            {contraData.bankToCash > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>- ATM / बैंक से निकाले (नकद बदला)</Text>
+                <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(contraData.bankToCash)}</Text>
+              </View>
+            ) : null}
+            {expensesData.totalOnline > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>- ऑनलाइन/UPI से दिया गया खर्च</Text>
+                <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(expensesData.totalOnline)}</Text>
+              </View>
+            ) : null}
+
+            <View style={styles.divider} />
+
+            <View style={styles.expectedRow}>
+              <Text style={styles.expectedLabel}>बैंक में होने चाहिए (अपेक्षित):</Text>
+              <Text style={[styles.expectedValue, { color: colors.info }]}>{formatINR(expectedBank)}</Text>
+            </View>
+          </View>
+
+          {/* 3. Today's Expenses List */}
+          {expensesData.expenses.length > 0 ? (
+            <View style={{ marginTop: spacing.lg }}>
+              <Text style={styles.sectionTitle}>
+                आज का दुकान खर्च ({expensesData.expenses.length} एंट्री · {formatINR(expensesData.totalAll)})
+              </Text>
+              {expensesData.expenses.map((exp) => (
+                <View key={exp.id} style={styles.expenseRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.expenseTitle}>{exp.title}</Text>
+                    <Text style={styles.expenseSub}>
+                      {exp.mode === "cash" ? "गल्ले से नकद" : "बैंक / UPI से"}
+                      {exp.notes ? ` · ${exp.notes}` : ""}
+                    </Text>
+                  </View>
+                  <Text style={[styles.expenseAmt, { color: colors.error }]}>-{formatINR(exp.amount)}</Text>
+                  <Pressable onPress={() => deleteExpense(exp.id)} hitSlop={8}>
+                    <MaterialIcon name="delete-outline" size={18} color={colors.muted} />
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          {/* 4. Today's Counter Transactions summary */}
           {dayAeps.length > 0 ? (
             <View style={{ marginTop: spacing.lg }}>
               <Text style={styles.sectionTitle}>आज की काउंटर सेवाएं ({dayAeps.length})</Text>
@@ -317,6 +515,9 @@ export default function DayScreen() {
       )}
 
       <EditRecordSheet entry={editing} onClose={() => setEditing(null)} />
+      <AddExpenseSheet visible={expenseSheet} onClose={() => setExpenseSheet(false)} initialDate={date} />
+      <ContraSheet visible={contraSheet} onClose={() => setContraSheet(false)} initialDate={date} />
+      <DayCloseModal visible={dayCloseOpen} onClose={() => setDayCloseOpen(false)} data={daySummary} />
     </View>
   );
 }
@@ -343,7 +544,29 @@ const styles = StyleSheet.create({
   empty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },
   emptyTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
 
-  // Drawer styles
+  // Galla Styles
+  quickGallaRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  gallaActionBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    backgroundColor: colors.surfaceSecondary,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  gallaActionText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: colors.onSurface,
+  },
   drawerCard: {
     backgroundColor: colors.surfaceSecondary,
     borderRadius: radius.md,
@@ -352,7 +575,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   drawerHeading: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: "800",
     color: colors.onSurface,
   },
@@ -449,6 +672,32 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: colors.onSurface,
     marginBottom: spacing.sm,
+  },
+  expenseRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    padding: spacing.md,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.sm,
+    marginBottom: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  expenseTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.onSurface,
+  },
+  expenseSub: {
+    fontSize: 11,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  expenseAmt: {
+    fontSize: 14,
+    fontWeight: "800",
   },
   aepsRow: {
     flexDirection: "row",

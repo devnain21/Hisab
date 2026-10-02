@@ -21,6 +21,7 @@ import { colors, spacing, radius } from "@/src/theme";
 import { formatDate, formatINR, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
+import { ContactPickerModal } from "@/src/components/contact-picker-modal";
 
 // Android modals don't resize for the keyboard under edge-to-edge, so pad by the measured overlap instead.
 function useKeyboardOverlap(ref: React.RefObject<View | null>) {
@@ -346,6 +347,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
   const [address, setAddress] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [contactModal, setContactModal] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -370,23 +372,27 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
   return (
     <SheetShell visible={visible} onClose={onClose} title={initial ? "ग्राहक बदलें" : "नया ग्राहक"} testID="sheet-customer">
       {!initial ? (
-        <View style={{ marginBottom: spacing.md, backgroundColor: colors.surfaceSecondary, padding: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border }}>
-          <Text style={{ fontSize: 11, color: colors.muted, marginBottom: 4 }}>
-            📋 त्वरित भरें: Truecaller या WhatsApp से कॉपी किया गया नंबर यहाँ पेस्ट करें
-          </Text>
-          <TextInput
-            style={[inputStyle, { fontSize: 13, paddingVertical: 4 }]}
-            placeholder="उदा. 'राजेश शर्मा 9876543210' पेस्ट करें"
-            placeholderTextColor={colors.muted}
-            onChangeText={(val) => {
-              if (!val.trim()) return;
-              const digits = val.replace(/[^0-9]/g, "");
-              const tenDigits = digits.length >= 10 ? digits.slice(-10) : "";
-              if (tenDigits) setPhone(tenDigits);
-              const remaining = val.replace(/(\+91|91)?\s*[\d\s-]{10,15}/g, "").trim();
-              if (remaining && !name) setName(remaining);
+        <View style={{ marginBottom: spacing.md, gap: spacing.sm }}>
+          <Pressable
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              backgroundColor: colors.brandTertiary,
+              paddingVertical: 10,
+              borderRadius: radius.md,
+              borderWidth: 1,
+              borderColor: colors.brandPrimary,
             }}
-          />
+            onPress={() => setContactModal(true)}
+            testID="pick-contact-btn"
+          >
+            <MaterialIcon name="contacts" size={18} color={colors.brandPrimary} />
+            <Text style={{ fontSize: 13, fontWeight: "700", color: colors.brandPrimary }}>
+              📱 फ़ोन से चुनें / पेस्ट करें
+            </Text>
+          </Pressable>
         </View>
       ) : null}
       <Field label="नाम">
@@ -409,6 +415,14 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
           onPress={() => confirmAction(`${name || "ग्राहक"} को हटाएँ?`, "इनका पूरा खाता मिट जाएगा।", "हटा दें", () => { onDelete(); onClose(); })}
         />
       ) : null}
+      <ContactPickerModal
+        visible={contactModal}
+        onClose={() => setContactModal(false)}
+        onSelect={(n, p) => {
+          if (n) setName(n);
+          if (p) setPhone(p);
+        }}
+      />
     </SheetShell>
   );
 }

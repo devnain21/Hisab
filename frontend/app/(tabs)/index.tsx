@@ -17,6 +17,8 @@ import { useCounterMode } from "@/src/lib/counter";
 import { usePersona } from "@/src/lib/persona";
 import { useRecentCustomerIds } from "@/src/lib/recent";
 import { VoiceEntryModal } from "@/src/components/voice-entry-sheet";
+import { AddExpenseSheet } from "@/src/components/expense-sheet";
+import { useExpenses } from "@/src/lib/expenses";
 
 export default function Home() {
   const insets = useSafeAreaInsets();
@@ -30,6 +32,7 @@ export default function Home() {
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [voiceModal, setVoiceModal] = useState(false);
+  const [expenseSheet, setExpenseSheet] = useState(false);
   const { user } = useAuth();
   const pending = usePendingCount();
   const counter = useCounterMode();
@@ -37,6 +40,7 @@ export default function Home() {
   const recentIds = useRecentCustomerIds();
 
   const today = todayISO();
+  const todayExpenses = useExpenses(today);
   const customers = customersQ.data ?? [];
   const entries = entriesQ.data ?? [];
   const jobs = jobsQ.data ?? [];
@@ -64,15 +68,19 @@ export default function Home() {
   }, [searchQuery, customers, jobs, entries]);
 
   const stats = useMemo(() => {
-    const dues = customers.map((c) => computeBalance(entries, c.id)).filter((d) => d > 0);
-    const dueCustomers = dues.length;
+    const balances = customers.map((c) => computeBalance(entries, c.id));
+    const dues = balances.filter((d) => d > 0);
+    const weOwe = balances.filter((d) => d < 0).map((d) => -d);
     const totalDue = dues.reduce((s, d) => s + d, 0);
+    const totalWeOwe = weOwe.reduce((s, d) => s + d, 0);
     const todayWork = entries.filter((e) => e.date === today && e.type === "work");
     const todayPay = entries.filter((e) => e.date === today && cashIn(e) > 0);
     const open = jobs.filter((j) => j.status !== "done");
     return {
       totalDue,
-      dueCustomers,
+      dueCustomers: dues.length,
+      totalWeOwe,
+      weOweCount: weOwe.length,
       todayWork: todayWork.reduce((n, e) => n + e.amount, 0),
       todayWorkCount: todayWork.length,
       todayPay: todayPay.reduce((n, e) => n + cashIn(e), 0),
@@ -224,60 +232,107 @@ export default function Home() {
         ) : (
           <Animated.View entering={FadeInDown.duration(300)}>
             <View style={styles.statsGrid}>
-              <StatCard
-                label="कुल लेने हैं"
-                value={formatINR(Math.max(stats.totalDue, 0))}
-                hint={`${stats.dueCustomers} ग्राहक`}
-                icon="account-cash-outline"
-                tone="due"
-                onPress={() => go("/(tabs)/customers", { filter: "due" })}
-                testID="stat-total-due"
-              />
-              <StatCard
-                label="काम बाकी"
-                value={String(stats.openJobs)}
-                hint={stats.overdue > 0 ? `${stats.overdue} देर से` : "सब समय पर"}
-                icon="briefcase-clock-outline"
-                tone={stats.overdue > 0 ? "warn" : "neutral"}
-                onPress={() => go("/(tabs)/work", { filter: stats.overdue > 0 ? "late" : "open" })}
-                testID="stat-pending-jobs"
-              />
-              <StatCard
-                label="आज का काम"
-                value={formatINR(stats.todayWork)}
-                hint={`${stats.todayWorkCount} एंट्री`}
-                icon="clipboard-text-outline"
-                tone="neutral"
-                onPress={() => router.push({ pathname: "/day", params: { type: "work" } })}
-                testID="stat-today-work"
-              />
-              <StatCard
-                label="आज मिले"
-                value={formatINR(stats.todayPay)}
-                hint={`${stats.todayPayCount} एंट्री`}
-                icon="cash-check"
-                tone="ok"
-                onPress={() => router.push({ pathname: "/day", params: { type: "payment" } })}
-                testID="stat-today-pay"
-              />
+              {isPersonal ? (
+                <>
+                  <StatCard
+                    label="कुल लेने हैं"
+                    value={formatINR(Math.max(stats.totalDue, 0))}
+                    hint={`${stats.dueCustomers} लोग`}
+                    icon="account-arrow-left-outline"
+                    tone="due"
+                    onPress={() => go("/(tabs)/customers", { filter: "due" })}
+                    testID="stat-total-due"
+                  />
+                  <StatCard
+                    label="कुल देने हैं"
+                    value={formatINR(Math.max(stats.totalWeOwe, 0))}
+                    hint={`${stats.weOweCount} लोग`}
+                    icon="account-arrow-right-outline"
+                    tone="warn"
+                    onPress={() => go("/(tabs)/customers", { filter: "clear" })}
+                    testID="stat-total-we-owe"
+                  />
+                  <StatCard
+                    label="आज का लेन-देन"
+                    value={formatINR(stats.todayWork)}
+                    hint={`${stats.todayWorkCount} एंट्री`}
+                    icon="swap-horizontal"
+                    tone="neutral"
+                    onPress={() => router.push({ pathname: "/day", params: { type: "work" } })}
+                    testID="stat-today-work"
+                  />
+                  <StatCard
+                    label="आज का खर्च"
+                    value={formatINR(todayExpenses.totalAll)}
+                    hint={`${todayExpenses.expenses.length} एंट्री`}
+                    icon="coffee-outline"
+                    tone="ok"
+                    onPress={() => setExpenseSheet(true)}
+                    testID="stat-today-expense"
+                  />
+                </>
+              ) : (
+                <>
+                  <StatCard
+                    label="कुल लेने हैं"
+                    value={formatINR(Math.max(stats.totalDue, 0))}
+                    hint={`${stats.dueCustomers} ग्राहक`}
+                    icon="account-cash-outline"
+                    tone="due"
+                    onPress={() => go("/(tabs)/customers", { filter: "due" })}
+                    testID="stat-total-due"
+                  />
+                  <StatCard
+                    label="काम बाकी"
+                    value={String(stats.openJobs)}
+                    hint={stats.overdue > 0 ? `${stats.overdue} देर से` : "सब समय पर"}
+                    icon="briefcase-clock-outline"
+                    tone={stats.overdue > 0 ? "warn" : "neutral"}
+                    onPress={() => go("/(tabs)/work", { filter: stats.overdue > 0 ? "late" : "open" })}
+                    testID="stat-pending-jobs"
+                  />
+                  <StatCard
+                    label="आज का काम"
+                    value={formatINR(stats.todayWork)}
+                    hint={`${stats.todayWorkCount} एंट्री`}
+                    icon="clipboard-text-outline"
+                    tone="neutral"
+                    onPress={() => router.push({ pathname: "/day", params: { type: "work" } })}
+                    testID="stat-today-work"
+                  />
+                  <StatCard
+                    label="आज मिले"
+                    value={formatINR(stats.todayPay)}
+                    hint={`${stats.todayPayCount} एंट्री`}
+                    icon="cash-check"
+                    tone="ok"
+                    onPress={() => router.push({ pathname: "/day", params: { type: "payment" } })}
+                    testID="stat-today-pay"
+                  />
+                </>
+              )}
             </View>
 
             <View style={styles.actionRow}>
               <Pressable style={styles.primaryAction} onPress={() => setJobSheet(true)} testID="quick-work">
-                <MaterialIcon name="briefcase-plus-outline" size={18} color={colors.onBrandPrimary} />
+                <MaterialIcon name="briefcase-plus-outline" size={17} color={colors.onBrandPrimary} />
                 <Text style={styles.primaryActionText}>{labels.newWork}</Text>
               </Pressable>
               <Pressable style={styles.secondaryAction} onPress={() => setMoneySheet(true)} testID="quick-money">
-                <MaterialIcon name="swap-vertical" size={18} color={colors.brandPrimary} />
-                <Text style={styles.secondaryActionText}>मिले · दिए</Text>
+                <MaterialIcon name="swap-vertical" size={17} color={colors.brandPrimary} />
+                <Text style={styles.secondaryActionText}>मिले/दिए</Text>
+              </Pressable>
+              <Pressable style={styles.expenseAction} onPress={() => setExpenseSheet(true)} testID="quick-expense">
+                <MaterialIcon name="coffee-outline" size={17} color={colors.warning} />
+                <Text style={styles.expenseActionText}>खर्च</Text>
               </Pressable>
               <Pressable style={styles.voiceAction} onPress={() => setVoiceModal(true)} testID="quick-voice">
-                <MaterialIcon name="microphone" size={18} color={colors.brandPrimary} />
+                <MaterialIcon name="microphone" size={17} color={colors.brandPrimary} />
                 <Text style={styles.voiceActionText}>बोलकर</Text>
               </Pressable>
             </View>
 
-            {counter.on ? (
+            {!isPersonal && counter.on ? (
             <Pressable style={styles.aepsLine} onPress={() => go("/(tabs)/aeps", { range: "today" })} testID="home-aeps-card">
               <MaterialIcon name="fingerprint" size={16} color={colors.brandPrimary} />
               <Text style={styles.aepsLineText} numberOfLines={2}>
@@ -329,6 +384,7 @@ export default function Home() {
 
       <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />
       <AddEntrySheet visible={moneySheet} type="payment" kinds={["payment", "given"]} onClose={() => setMoneySheet(false)} />
+      <AddExpenseSheet visible={expenseSheet} onClose={() => setExpenseSheet(false)} />
       <EditRecordSheet job={editingJob} onClose={() => setEditingJob(null)} />
       <VoiceEntryModal visible={voiceModal} onClose={() => setVoiceModal(false)} />
     </View>
@@ -372,8 +428,10 @@ const styles = StyleSheet.create({
   actionRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },
   primaryAction: { flex: 3, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
   primaryActionText: { color: colors.onBrandPrimary, fontSize: 15, fontWeight: "700" },
-  secondaryAction: { flex: 3, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.surface },
-  secondaryActionText: { color: colors.brandPrimary, fontSize: 15, fontWeight: "700" },
+  secondaryAction: { flex: 2.5, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.surface },
+  secondaryActionText: { color: colors.brandPrimary, fontSize: 14, fontWeight: "700" },
+  expenseAction: { flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 3, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.surfaceSecondary },
+  expenseActionText: { color: colors.warning, fontSize: 14, fontWeight: "700" },
   voiceAction: { flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary },
   voiceActionText: { color: colors.brandPrimary, fontSize: 14, fontWeight: "700" },
 

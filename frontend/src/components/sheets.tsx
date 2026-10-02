@@ -15,7 +15,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
 import { advanceOf, computeBalance, useCustomers, useEntries, useJobs, type Entry, type EntryType, type Job } from "@/src/lib/data";
-import { buildLedger, jobForWork, linkedPayment, removeEntryWithLinks, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
+import { ADVANCE, advancesForJob, buildLedger, jobForWork, linkedPayment, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
 import { formatDate, formatINR, todayISO } from "@/src/lib/format";
@@ -324,12 +324,49 @@ function MoneyResult({ total, received, advance, freeAllowed }: { total: number;
   );
 }
 
+type PayMode = "cash" | "online";
+
+function PayModeField({ label, value, onChange, cashLabel = "नकद", onlineLabel = "ऑनलाइन" }: { label: string; value: PayMode; onChange: (m: PayMode) => void; cashLabel?: string; onlineLabel?: string }) {
+  return (
+    <Field label={label}>
+      <View style={[styles.segment, { marginBottom: 0 }]}>
+        <Pressable onPress={() => onChange("cash")} style={[styles.segmentBtn, value === "cash" && { backgroundColor: colors.success }]} testID="paymode-cash">
+          <MaterialIcon name="cash" size={16} color={value === "cash" ? "#fff" : colors.onSurface} />
+          <Text style={[styles.segmentText, value === "cash" && { color: "#fff" }]}>{cashLabel}</Text>
+        </Pressable>
+        <Pressable onPress={() => onChange("online")} style={[styles.segmentBtn, value === "online" && { backgroundColor: colors.info }]} testID="paymode-online">
+          <MaterialIcon name="cellphone" size={16} color={value === "online" ? "#fff" : colors.onSurface} />
+          <Text style={[styles.segmentText, value === "online" && { color: "#fff" }]}>{onlineLabel}</Text>
+        </Pressable>
+      </View>
+    </Field>
+  );
+}
+
+/** Portal fee / cost paid by the shop for this work. Never printed on the customer's bill. */
+function FeeField({ fee, setFee, feeMode, setFeeMode, amount }: { fee: string; setFee: (v: string) => void; feeMode: PayMode; setFeeMode: (m: PayMode) => void; amount: number }) {
+  const n = Math.max(parseFloat(fee) || 0, 0);
+  return (
+    <>
+      <Field label="फीस / लागत (₹)">
+        <TextInput style={inputStyle} value={fee} onChangeText={setFee} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-fee" />
+        {n > 0 && amount > 0 ? (
+          <Text style={[styles.hint, { color: amount - n >= 0 ? colors.brandPrimary : colors.error, fontWeight: "700" }]}>
+            बचत {formatINR(amount - n)}
+          </Text>
+        ) : null}
+      </Field>
+      {n > 0 ? <PayModeField label="फीस कहाँ से दी" value={feeMode} onChange={setFeeMode} cashLabel="गल्ले से" onlineLabel="बैंक से" /> : null}
+    </>
+  );
+}
+
 const settleDescription = (title: string) => `${title} — भुगतान`;
 
-/** Money taken beyond the work amount stays with us as a separate advance row. */
-function bookAdvance(customerId: string, extra: number, date: string, title: string) {
+/** Money taken beyond the work amount stays with us as an advance row tied to that work. */
+function bookAdvance(customerId: string, extra: number, date: string, title: string, linkId: string, mode: PayMode) {
   if (extra <= 0) return;
-  store.createEntry({ customerId, type: "payment", date, description: "एडवांस", amount: extra, notes: `${title} के साथ` });
+  store.createEntry({ customerId, type: "payment", date, description: "एडवांस", amount: extra, mode, notes: `${title} के साथ`, linkId });
 }
 
 // One row per piece of work: `paid` is the money taken now (capped at the amount), the rest is udhaar.
@@ -367,7 +404,7 @@ function recordWork({
     feeMode,
     notes,
   });
-  bookAdvance(customerId, received - amount, date, title);
+  bookAdvance(customerId, received - amount, date, title, work.id, mode);
   return work.id;
 }
 
@@ -574,25 +611,8 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
           </Text>
         ) : null}
       </Field>
-      {kind === "payment" ? (
-        <Field label="पैसे कैसे मिले?">
-          <View style={styles.segment}>
-            <Pressable
-              onPress={() => setPayMode("cash")}
-              style={[styles.segmentBtn, payMode === "cash" && { backgroundColor: colors.success }]}
-            >
-              <MaterialIcon name="cash" size={15} color={payMode === "cash" ? "#fff" : colors.onSurface} />
-              <Text style={[styles.segmentText, payMode === "cash" && { color: "#fff" }]}>💵 नकद (गल्ला)</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setPayMode("online")}
-              style={[styles.segmentBtn, payMode === "online" && { backgroundColor: colors.brandPrimary }]}
-            >
-              <MaterialIcon name="cellphone-check" size={15} color={payMode === "online" ? "#fff" : colors.onSurface} />
-              <Text style={[styles.segmentText, payMode === "online" && { color: "#fff" }]}>📱 ऑनलाइन (UPI / Bank)</Text>
-            </Pressable>
-          </View>
-        </Field>
+      {kind !== "work" ? (
+        <PayModeField label={kind === "payment" ? "कैसे मिले" : "कैसे दिए"} value={payMode} onChange={setPayMode} />
       ) : null}
       <Field label={needsDescription ? "विवरण" : "किस लिए (वैकल्पिक)"}>
         <TextInput style={inputStyle} value={description} onChangeText={setDescription} placeholder={ui.placeholder} placeholderTextColor={colors.muted} testID="input-entry-desc" />
@@ -652,13 +672,17 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   const [remarkDate, setRemarkDate] = useState(todayISO(1));
   const [saving, setSaving] = useState(false);
 
-  const link = entry ? linkedPayment(entry, entries) : undefined;
   const job = entry ? jobForWork(entry, jobs) : undefined;
+  // Extra money taken on the work day beyond the bill, booked as a linked advance row.
+  const extras = entry ? entries.filter((e) => e.type === "payment" && e.linkId === entry.id && e.date === entry.date && e.description === ADVANCE && e.notes.endsWith("के साथ")) : [];
+  const extraSum = extras.reduce((s, e) => s + e.amount, 0);
+  const link = entry ? linkedPayment(entry, entries) : undefined;
+  const legacyLink = link && !extras.some((e) => e.id === link.id) ? link : undefined;
 
   useEffect(() => {
     if (!entry) return;
     setTitle(entry.description);
-    money.reset(String(entry.amount), String((entry.paid ?? 0) || (link?.amount ?? 0)));
+    money.reset(String(entry.amount), String(((entry.paid ?? 0) || (legacyLink?.amount ?? 0)) + extraSum));
     setPayMode(entry.mode ?? "cash");
     setGovtFee(entry.fee ? String(entry.fee) : "");
     setFeeMode(entry.feeMode ?? "online");
@@ -691,9 +715,10 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
         feeMode,
         notes: notes.trim(),
       });
-      bookAdvance(entry.customerId, taken - amt, date, t);
+      extras.forEach((e) => store.deleteEntry(e.id));
+      bookAdvance(entry.customerId, taken - amt, date, t, entry.id, payMode);
       // Old two-row cash records: the same-day jama is now carried by `paid`.
-      if (link && !(entry.paid ?? 0)) store.deleteEntry(link.id);
+      if (legacyLink && !(entry.paid ?? 0)) store.deleteEntry(legacyLink.id);
       if (job) {
         store.updateJob(job.id, { title: t, dueDate: date, estimatedAmount: amt, notes: notes.trim(), entryId: entry.id });
       }
@@ -709,62 +734,9 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       <Field label="क्या काम">
         <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholderTextColor={colors.muted} testID="input-edit-work-title" />
       </Field>
-      <MoneyFields money={money} receivedLabel="काम के दिन कितने मिले (₹)" />
-      {money.receivedNum > 0 ? (
-        <Field label="पैसे कैसे मिले?">
-          <View style={styles.segment}>
-            <Pressable
-              onPress={() => setPayMode("cash")}
-              style={[styles.segmentBtn, payMode === "cash" && { backgroundColor: colors.success }]}
-            >
-              <MaterialIcon name="cash" size={15} color={payMode === "cash" ? "#fff" : colors.onSurface} />
-              <Text style={[styles.segmentText, payMode === "cash" && { color: "#fff" }]}>💵 नकद (गल्ला)</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setPayMode("online")}
-              style={[styles.segmentBtn, payMode === "online" && { backgroundColor: colors.brandPrimary }]}
-            >
-              <MaterialIcon name="cellphone-check" size={15} color={payMode === "online" ? "#fff" : colors.onSurface} />
-              <Text style={[styles.segmentText, payMode === "online" && { color: "#fff" }]}>📱 ऑनलाइन (UPI / Bank)</Text>
-            </Pressable>
-          </View>
-        </Field>
-      ) : null}
-
-      <Field label="सरकारी पोर्टल फीस / लागत (₹, वैकल्पिक)">
-        <TextInput
-          style={inputStyle}
-          value={govtFee}
-          onChangeText={setGovtFee}
-          placeholder="0 = कोई फीस नहीं"
-          placeholderTextColor={colors.muted}
-          keyboardType="numeric"
-          testID="input-edit-work-fee"
-        />
-        {parseFloat(govtFee) > 0 ? (
-          <View style={{ marginTop: spacing.xs, gap: 4 }}>
-            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.brandPrimary }}>
-              ✨ आपकी शुद्ध बचत / मुनाफा: {formatINR(Math.max(amt - (parseFloat(govtFee) || 0), 0))}
-            </Text>
-            <View style={[styles.segment, { marginTop: 4 }]}>
-              <Pressable
-                onPress={() => setFeeMode("online")}
-                style={[styles.segmentBtn, feeMode === "online" && { backgroundColor: colors.brandSecondary }]}
-              >
-                <MaterialIcon name="credit-card-outline" size={14} color={feeMode === "online" ? "#fff" : colors.onSurface} />
-                <Text style={[styles.segmentText, feeMode === "online" && { color: "#fff" }]}>फीस: बैंक/UPI से कटी</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setFeeMode("cash")}
-                style={[styles.segmentBtn, feeMode === "cash" && { backgroundColor: colors.warning }]}
-              >
-                <MaterialIcon name="cash-minus" size={14} color={feeMode === "cash" ? "#fff" : colors.onSurface} />
-                <Text style={[styles.segmentText, feeMode === "cash" && { color: "#fff" }]}>फीस: नकद गल्ले से दी</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : null}
-      </Field>
+      <MoneyFields money={money} receivedLabel="उस दिन मिले (₹)" />
+      {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
+      <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
       {later.length > 0 ? (
         <Field label="बाद में मिले पैसे">
           {later.map((p) => (
@@ -798,6 +770,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
 
 /** Edits an open (or money-less finished) job card. */
 export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () => void }) {
+  const entries = useEntries().data ?? [];
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(todayISO());
@@ -825,8 +798,9 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
 
   const remove = () => {
     if (!job) return;
-    confirmAction("काम हटाएँ?", job.title, "हटा दें", () => {
-      store.deleteJob(job.id);
+    const adv = advancesForJob(job, entries).reduce((s, e) => s + e.amount, 0);
+    confirmAction("काम हटाएँ?", adv > 0 ? `${job.title}\nइसका एडवांस ${formatINR(adv)} भी हटेगा।` : job.title, "हटा दें", () => {
+      removeJobWithAdvances(job, entries);
       onClose();
     });
   };
@@ -943,29 +917,12 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
         ) : null}
         <TextInput style={inputStyle} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.muted} testID="input-settle-amount" />
         {amt > 0 && amt < remaining ? <Text style={styles.hint}>{formatINR(remaining - amt)} अभी भी लेने हैं</Text> : null}
-        {amt > remaining && remaining > 0 ? <Text style={styles.hint}>{formatINR(amt - remaining)} ज़्यादा — बचा हिसाब या एडवांस में जुड़ेगा</Text> : null}
+        {amt > remaining && remaining > 0 ? <Text style={styles.hint}>{formatINR(amt - remaining)} ज़्यादा, एडवांस में जुड़ेगा</Text> : null}
       </Field>
-      <Field label="पैसे कैसे मिले?">
-        <View style={styles.segment}>
-          <Pressable
-            onPress={() => setPayMode("cash")}
-            style={[styles.segmentBtn, payMode === "cash" && { backgroundColor: colors.success }]}
-          >
-            <MaterialIcon name="cash" size={15} color={payMode === "cash" ? "#fff" : colors.onSurface} />
-            <Text style={[styles.segmentText, payMode === "cash" && { color: "#fff" }]}>💵 नकद (गल्ला)</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setPayMode("online")}
-            style={[styles.segmentBtn, payMode === "online" && { backgroundColor: colors.brandPrimary }]}
-          >
-            <MaterialIcon name="cellphone-check" size={15} color={payMode === "online" ? "#fff" : colors.onSurface} />
-            <Text style={[styles.segmentText, payMode === "online" && { color: "#fff" }]}>📱 ऑनलाइन (UPI / Bank)</Text>
-          </Pressable>
-        </View>
-      </Field>
+      <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} />
       <DateField label="कब मिले" value={date} onChange={setDate} testID="input-settle-date" />
       <Field label="नोट (वैकल्पिक)">
-        <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholder="जैसे UPI से, PhonePe" placeholderTextColor={colors.muted} testID="input-settle-notes" />
+        <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-settle-notes" />
       </Field>
       <PrimaryButton label={amt >= remaining && remaining > 0 ? "चुकता करें ✔" : "मिले सेव करें"} color={colors.success} onPress={save} disabled={!valid} saving={saving} testID="save-settle-btn" />
     </SheetShell>
@@ -1042,9 +999,9 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
           await store.createJob({ customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
         }
       } else {
-        await store.createJob({ customerId, title: t, dueDate: date, estimatedAmount: amt, notes: remark.trim() });
+        const job = store.createJob({ customerId, title: t, dueDate: date, estimatedAmount: amt, notes: remark.trim() });
         const got = Math.max(parseFloat(paidNow) || 0, 0);
-        // Cash or online is its own row on the day it was received, not on the day the work is finished.
+        // The advance lands in the drawer/bank on the day it was received, not on the delivery day.
         if (!self && got > 0) {
           store.createEntry({
             customerId,
@@ -1054,6 +1011,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
             amount: got,
             mode: payMode,
             notes: `${t} के लिए`,
+            linkId: job.id,
           });
         }
       }
@@ -1079,97 +1037,23 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       {self ? null : mode === "now" ? (
         <>
           <MoneyFields money={money} advance={advance} freeAllowed />
-
-          {money.receivedNum > 0 ? (
-            <Field label="पैसे कैसे मिले?">
-              <View style={styles.segment}>
-                <Pressable
-                  onPress={() => setPayMode("cash")}
-                  style={[styles.segmentBtn, payMode === "cash" && { backgroundColor: colors.success }]}
-                >
-                  <MaterialIcon name="cash" size={15} color={payMode === "cash" ? "#fff" : colors.onSurface} />
-                  <Text style={[styles.segmentText, payMode === "cash" && { color: "#fff" }]}>💵 नकद (गल्ला)</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setPayMode("online")}
-                  style={[styles.segmentBtn, payMode === "online" && { backgroundColor: colors.brandPrimary }]}
-                >
-                  <MaterialIcon name="cellphone-check" size={15} color={payMode === "online" ? "#fff" : colors.onSurface} />
-                  <Text style={[styles.segmentText, payMode === "online" && { color: "#fff" }]}>📱 ऑनलाइन (UPI / Bank)</Text>
-                </Pressable>
-              </View>
-            </Field>
-          ) : null}
-
-          <Field label="सरकारी पोर्टल फीस / लागत (₹, वैकल्पिक)">
-            <TextInput
-              style={inputStyle}
-              value={govtFee}
-              onChangeText={setGovtFee}
-              placeholder="0 = कोई फीस नहीं (सीधी कमाई)"
-              placeholderTextColor={colors.muted}
-              keyboardType="numeric"
-              testID="input-job-fee"
-            />
-            {parseFloat(govtFee) > 0 ? (
-              <View style={{ marginTop: spacing.xs, gap: 4 }}>
-                <Text style={{ fontSize: 12, fontWeight: "700", color: colors.brandPrimary }}>
-                  ✨ आपकी शुद्ध बचत / मुनाफा: {formatINR(Math.max(amt - (parseFloat(govtFee) || 0), 0))}
-                </Text>
-                <Text style={{ fontSize: 10, color: colors.muted }}>
-                  (ग्राहक के बिल पर यह फीस नहीं दिखेगी, केवल आपकी दुकान के मुनाफे और गल्ले/बैंक में जुड़ेगी)
-                </Text>
-                <View style={[styles.segment, { marginTop: 4 }]}>
-                  <Pressable
-                    onPress={() => setFeeMode("online")}
-                    style={[styles.segmentBtn, feeMode === "online" && { backgroundColor: colors.brandSecondary }]}
-                  >
-                    <MaterialIcon name="credit-card-outline" size={14} color={feeMode === "online" ? "#fff" : colors.onSurface} />
-                    <Text style={[styles.segmentText, feeMode === "online" && { color: "#fff" }]}>फीस: बैंक/UPI से कटी</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setFeeMode("cash")}
-                    style={[styles.segmentBtn, feeMode === "cash" && { backgroundColor: colors.warning }]}
-                  >
-                    <MaterialIcon name="cash-minus" size={14} color={feeMode === "cash" ? "#fff" : colors.onSurface} />
-                    <Text style={[styles.segmentText, feeMode === "cash" && { color: "#fff" }]}>फीस: नकद गल्ले से दी</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : null}
-          </Field>
+          {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
+          <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
         </>
       ) : (
-        <Field label="अनुमानित रकम (₹, वैकल्पिक)">
+        <Field label="रकम (₹)">
           <TextInput style={inputStyle} value={money.total} onChangeText={money.setTotal} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-amount" />
         </Field>
       )}
       {!self && mode === "later" ? (
         <>
-          <Field label="अभी मिले (₹)">
+          <Field label="एडवांस मिला (₹)">
             <TextInput style={inputStyle} value={paidNow} onChangeText={setPaidNow} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-paid" />
           </Field>
           {(parseFloat(paidNow) || 0) > 0 ? (
             <>
-              <Field label="पैसे कैसे मिले?">
-                <View style={styles.segment}>
-                  <Pressable
-                    onPress={() => setPayMode("cash")}
-                    style={[styles.segmentBtn, payMode === "cash" && { backgroundColor: colors.success }]}
-                  >
-                    <MaterialIcon name="cash" size={15} color={payMode === "cash" ? "#fff" : colors.onSurface} />
-                    <Text style={[styles.segmentText, payMode === "cash" && { color: "#fff" }]}>💵 नकद (गल्ला)</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setPayMode("online")}
-                    style={[styles.segmentBtn, payMode === "online" && { backgroundColor: colors.brandPrimary }]}
-                  >
-                    <MaterialIcon name="cellphone-check" size={15} color={payMode === "online" ? "#fff" : colors.onSurface} />
-                    <Text style={[styles.segmentText, payMode === "online" && { color: "#fff" }]}>📱 ऑनलाइन (UPI / Bank)</Text>
-                  </Pressable>
-                </View>
-              </Field>
-              <DateField label="पैसे कब मिले" value={paidDate} onChange={setPaidDate} testID="input-job-paid-date" />
+              <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} />
+              <DateField label="कब मिले" value={paidDate} onChange={setPaidDate} testID="input-job-paid-date" />
             </>
           ) : null}
         </>
@@ -1302,32 +1186,58 @@ export function ShopProfileSheet({ visible, onClose }: { visible: boolean; onClo
 
 export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: () => void }) {
   const entries = useEntries().data ?? [];
+  const jobAdvances = job ? advancesForJob(job, entries) : [];
+  const jobAdvance = jobAdvances.reduce((s, p) => s + p.amount, 0);
   const advance = job?.customerId ? advanceOf(entries, job.customerId) : 0;
   const money = useMoneyInput();
+  const [payMode, setPayMode] = useState<PayMode>("cash");
+  const [fee, setFee] = useState("");
+  const [feeMode, setFeeMode] = useState<PayMode>("online");
+  const [workDate, setWorkDate] = useState(todayISO());
   const [cashDate, setCashDate] = useState(todayISO());
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (job) {
-      const already = job.customerId ? advanceOf(entries, job.customerId) : 0;
-      // Money already in hand must not be typed again, or it would show up as cash today.
-      money.reset(job.estimatedAmount > 0 ? String(job.estimatedAmount) : "", already > 0 ? "0" : undefined);
+      const est = job.estimatedAmount > 0 ? job.estimatedAmount : 0;
+      // The advance for this job already sits in the drawer/bank; only the remainder is new money.
+      money.reset(est ? String(est) : "", jobAdvance > 0 ? String(Math.max(est - jobAdvance, 0)) : undefined);
+      setPayMode("cash");
+      setFee("");
+      setFeeMode("online");
+      setWorkDate(todayISO());
       setCashDate(todayISO());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job]);
 
   const amt = job?.customerId ? money.totalNum : 0;
+  const got = money.receivedNum;
 
   const save = async () => {
     if (!job) return;
     setSaving(true);
     try {
-      const workDate = todayISO();
-      const got = money.receivedNum;
       const sameDay = cashDate === workDate;
-      const entryId = recordWork({ customerId: job.customerId, title: job.title, amount: amt, received: sameDay ? got : 0, date: workDate, notes: "काम पूरा" });
-      if (!sameDay && got > 0) store.createEntry({ customerId: job.customerId, type: "payment", date: cashDate, description: "एडवांस", amount: got, notes: `${job.title} के लिए` });
+      const entryId = recordWork({
+        customerId: job.customerId,
+        title: job.title,
+        amount: amt,
+        received: sameDay ? got : 0,
+        date: workDate,
+        notes: "काम पूरा",
+        mode: payMode,
+        fee: Math.max(parseFloat(fee) || 0, 0),
+        feeMode,
+      });
+      if (entryId) {
+        jobAdvances.forEach((p) => store.updateEntry(p.id, { linkId: entryId }));
+        if (!sameDay && got > 0) {
+          store.createEntry({ customerId: job.customerId, type: "payment", date: cashDate, description: settleDescription(job.title), amount: got, mode: payMode, notes: "", linkId: entryId });
+        }
+      } else if (got > 0 && job.customerId) {
+        store.createEntry({ customerId: job.customerId, type: "payment", date: cashDate, description: ADVANCE, amount: got, mode: payMode, notes: `${job.title} के लिए` });
+      }
       store.updateJob(job.id, { status: "done", dueDate: workDate, estimatedAmount: amt, entryId });
       onClose();
     } finally { setSaving(false); }
@@ -1336,9 +1246,16 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
   return (
     <SheetShell visible={!!job} onClose={onClose} title="काम पूरा करें" testID="sheet-complete-job">
       {job ? <Text style={styles.jobName}>{job.title}</Text> : null}
-      {advance > 0 ? <Text style={styles.hint}>पहले मिल चुके {formatINR(advance)}। आज नई रकम ही लिखें।</Text> : null}
-      {job?.customerId ? <MoneyFields money={money} advance={advance} receivedLabel="आज कितने मिले (₹)" freeAllowed /> : null}
-      {job?.customerId && money.receivedNum > 0 ? <DateField label="यह नकद कब मिला" value={cashDate} onChange={setCashDate} testID="input-complete-cash-date" /> : null}
+      {jobAdvance > 0 ? <Text style={[styles.hint, { marginTop: 0, marginBottom: spacing.md, fontWeight: "700", color: colors.success }]}>एडवांस मिल चुका {formatINR(jobAdvance)}</Text> : null}
+      {job?.customerId ? (
+        <>
+          <MoneyFields money={money} advance={advance} receivedLabel="आज मिले (₹)" freeAllowed />
+          {got > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
+          {amt > 0 ? <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} /> : null}
+        </>
+      ) : null}
+      <DateField label="काम की तारीख" value={workDate} onChange={(d) => { setWorkDate(d); setCashDate(d); }} testID="input-complete-date" />
+      {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDate} onChange={setCashDate} testID="input-complete-cash-date" /> : null}
       <PrimaryButton label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"} color={colors.success} onPress={save} saving={saving} testID="save-complete-btn" />
     </SheetShell>
   );

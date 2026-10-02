@@ -130,12 +130,16 @@ export default function DayScreen() {
     [paymentEntries]
   );
 
+  const givenEntries = useMemo(() => dayEntries.filter((e) => e.type === "given"), [dayEntries]);
+  const givenCash = givenEntries.filter((e) => e.mode !== "online").reduce((s, e) => s + e.amount, 0);
+  const givenOnline = givenEntries.filter((e) => e.mode === "online").reduce((s, e) => s + e.amount, 0);
+
   const dayAeps = useMemo(() => aepsList.filter((t) => t.date === date && t.status === "success"), [aepsList, date]);
   const aepsTot = useMemo(() => aepsTotals(dayAeps), [dayAeps]);
 
   // Cash Drawer Total Math
   const cashInTotal = workCash + paymentCash + aepsTot.cashIn + contraData.bankToCash;
-  const cashOutTotal = aepsTot.cashOut + expensesData.totalCash + contraData.cashToBank + feePaidCash;
+  const cashOutTotal = aepsTot.cashOut + expensesData.totalCash + contraData.cashToBank + feePaidCash + givenCash;
   const openingNum = parseInt(openingCash, 10) || 0;
   const expectedCash = openingNum + cashInTotal - cashOutTotal;
 
@@ -145,7 +149,7 @@ export default function DayScreen() {
   // Online Bank Total Math
   const openingBankNum = parseInt(openingBank, 10) || 0;
   const onlineInTotal = workOnline + paymentOnline + aepsTot.commission + contraData.cashToBank;
-  const onlineOutTotal = expensesData.totalOnline + contraData.bankToCash + feePaidOnline;
+  const onlineOutTotal = expensesData.totalOnline + contraData.bankToCash + feePaidOnline + givenOnline;
   const expectedBank = openingBankNum + onlineInTotal - onlineOutTotal;
 
   const dateLabel = date === today ? "आज" : date === todayISO(-1) ? "कल" : formatWeekdayDate(date);
@@ -359,7 +363,7 @@ export default function DayScreen() {
               <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(workCash)}</Text>
             </View>
             <View style={styles.flowRow}>
-              <Text style={styles.flowLabel}>+ उधारी वापसी (भुगतान)</Text>
+              <Text style={styles.flowLabel}>+ जमा / एडवांस मिले</Text>
               <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(paymentCash)}</Text>
             </View>
             {aepsTot.cashIn > 0 ? (
@@ -370,20 +374,20 @@ export default function DayScreen() {
             ) : null}
             {contraData.bankToCash > 0 ? (
               <View style={styles.flowRow}>
-                <Text style={styles.flowLabel}>+ ATM / बैंक से निकाले (गल्ले में आए)</Text>
+                <Text style={styles.flowLabel}>+ बैंक से निकाले</Text>
                 <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(contraData.bankToCash)}</Text>
               </View>
             ) : null}
 
             {aepsTot.cashOut > 0 ? (
               <View style={styles.flowRow}>
-                <Text style={styles.flowLabel}>- काउंटर से दिए गए नकद (AEPS निकासी)</Text>
+                <Text style={styles.flowLabel}>- काउंटर से दिए</Text>
                 <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(aepsTot.cashOut)}</Text>
               </View>
             ) : null}
             {expensesData.totalCash > 0 ? (
               <View style={styles.flowRow}>
-                <Text style={styles.flowLabel}>- दुकान का नकद खर्च (चाय, सामान आदि)</Text>
+                <Text style={styles.flowLabel}>- खर्च</Text>
                 <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(expensesData.totalCash)}</Text>
               </View>
             ) : null}
@@ -395,8 +399,14 @@ export default function DayScreen() {
             ) : null}
             {feePaidCash > 0 ? (
               <View style={styles.flowRow}>
-                <Text style={styles.flowLabel}>- पोर्टल फीस (नकद गल्ले से दी)</Text>
+                <Text style={styles.flowLabel}>- फीस (गल्ले से)</Text>
                 <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(feePaidCash)}</Text>
+              </View>
+            ) : null}
+            {givenCash > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>- ग्राहक को दिए</Text>
+                <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(givenCash)}</Text>
               </View>
             ) : null}
 
@@ -481,45 +491,51 @@ export default function DayScreen() {
 
             {workOnline > 0 ? (
               <View style={styles.flowRow}>
-                <Text style={styles.flowLabel}>+ काम से ऑनलाइन / UPI मिले</Text>
+                <Text style={styles.flowLabel}>+ काम से मिले</Text>
                 <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(workOnline)}</Text>
               </View>
             ) : null}
             {paymentOnline > 0 ? (
               <View style={styles.flowRow}>
-                <Text style={styles.flowLabel}>+ उधारी वापसी (ऑनलाइन / UPI)</Text>
+                <Text style={styles.flowLabel}>+ जमा / एडवांस मिले</Text>
                 <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(paymentOnline)}</Text>
               </View>
             ) : null}
             {aepsTot.commission > 0 ? (
               <View style={styles.flowRow}>
-                <Text style={styles.flowLabel}>+ काउंटर / AEPS कमीशन बैंक में</Text>
+                <Text style={styles.flowLabel}>+ काउंटर कमीशन</Text>
                 <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(aepsTot.commission)}</Text>
               </View>
             ) : null}
             {contraData.cashToBank > 0 ? (
               <View style={styles.flowRow}>
-                <Text style={styles.flowLabel}>+ गल्ले से बैंक में जमा (कैश डिपॉजिट)</Text>
+                <Text style={styles.flowLabel}>+ गल्ले से जमा</Text>
                 <Text style={[styles.flowVal, { color: colors.success }]}>+{formatINR(contraData.cashToBank)}</Text>
               </View>
             ) : null}
 
             {contraData.bankToCash > 0 ? (
               <View style={styles.flowRow}>
-                <Text style={styles.flowLabel}>- ATM / बैंक से निकाले (नकद बदला)</Text>
+                <Text style={styles.flowLabel}>- गल्ले में निकाले</Text>
                 <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(contraData.bankToCash)}</Text>
               </View>
             ) : null}
             {expensesData.totalOnline > 0 ? (
               <View style={styles.flowRow}>
-                <Text style={styles.flowLabel}>- ऑनलाइन/UPI से दिया गया खर्च</Text>
+                <Text style={styles.flowLabel}>- खर्च</Text>
                 <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(expensesData.totalOnline)}</Text>
               </View>
             ) : null}
             {feePaidOnline > 0 ? (
               <View style={styles.flowRow}>
-                <Text style={styles.flowLabel}>- पोर्टल / सरकारी फीस कटी (बैंक से)</Text>
+                <Text style={styles.flowLabel}>- फीस (बैंक से)</Text>
                 <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(feePaidOnline)}</Text>
+              </View>
+            ) : null}
+            {givenOnline > 0 ? (
+              <View style={styles.flowRow}>
+                <Text style={styles.flowLabel}>- ग्राहक को दिए</Text>
+                <Text style={[styles.flowVal, { color: colors.error }]}>-{formatINR(givenOnline)}</Text>
               </View>
             ) : null}
 

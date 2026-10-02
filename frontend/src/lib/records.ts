@@ -50,6 +50,27 @@ export function workForJob(job: Job, entries: Entry[]): Entry | undefined {
   return entries.find((e) => e.type === "work" && e.customerId === job.customerId && e.description === job.title && e.date === job.dueDate);
 }
 
+export const ADVANCE = "एडवांस";
+
+/** Advance taken while booking a future job. Older rows carry no link, only the note. */
+export function advancesForJob(job: Job, entries: Entry[]): Entry[] {
+  if (!job.customerId) return [];
+  return entries.filter(
+    (e) =>
+      e.type === "payment" &&
+      e.customerId === job.customerId &&
+      (e.linkId === job.id || (!e.linkId && e.description === ADVANCE && e.notes === `${job.title} के लिए`)),
+  );
+}
+
+/** Unlinked advance rows written with a work entry by older versions. */
+function legacyAdvancesForWork(work: Entry, entries: Entry[]): Entry[] {
+  const notes = [`${work.description} के लिए`, `${work.description} के साथ`];
+  return entries.filter(
+    (e) => e.type === "payment" && !e.linkId && e.customerId === work.customerId && e.description === ADVANCE && notes.includes(e.notes),
+  );
+}
+
 /** Removes a khata entry together with the rows that were booked with it. */
 export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]) {
   if (entry.type === "given") {
@@ -64,9 +85,20 @@ export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]
     return;
   }
   const job = jobForWork(work, jobs);
+  const linked = new Set<string>([
+    ...settlementsFor(work, entries).map((p) => p.id),
+    ...legacyAdvancesForWork(work, entries).map((p) => p.id),
+    ...(job ? advancesForJob(job, entries).map((p) => p.id) : []),
+  ]);
   store.deleteEntry(work.id);
-  settlementsFor(work, entries).forEach((p) => store.deleteEntry(p.id));
+  linked.forEach((id) => store.deleteEntry(id));
   if (job) store.deleteJob(job.id);
+}
+
+/** Removes an open job card and the advance taken for it. */
+export function removeJobWithAdvances(job: Job, entries: Entry[]) {
+  advancesForJob(job, entries).forEach((p) => store.deleteEntry(p.id));
+  store.deleteJob(job.id);
 }
 
 export function linkedCount(entry: Entry, entries: Entry[], jobs: Job[]): number {

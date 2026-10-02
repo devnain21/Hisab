@@ -11,7 +11,7 @@ import {
   Alert,
 } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
-import * as Contacts from "expo-contacts";
+import * as Contacts from "expo-contacts/legacy";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { formatPhone } from "@/src/lib/format";
@@ -74,31 +74,24 @@ export function ContactPickerModal({
       setLoadingContacts(true);
       const { status } = await Contacts.requestPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert(
-          "संपर्क अनुमति चाहिए",
-          "फ़ोन से सीधे ग्राहक का नाम और नंबर चुनने के लिए कृपया सेटिंग्स में Contacts की अनुमति दें।"
-        );
-        setLoadingContacts(false);
+        Alert.alert("Contacts की अनुमति दें", "सेटिंग्स में जाकर Contacts चालू करें।");
         return;
       }
 
-      // Try native picker first (Android / iOS native system picker)
-      if (typeof Contacts.presentContactPickerAsync === "function") {
+      if (Platform.OS !== "web") {
         try {
           const picked = await Contacts.presentContactPickerAsync();
-          if (picked) {
-            const rawName = [picked.firstName, picked.lastName].filter(Boolean).join(" ") || picked.name || "";
-            const rawPhone = picked.phoneNumbers?.[0]?.number || "";
-            const clean = cleanPhoneNumber(rawPhone);
-            if (rawName || clean) {
-              onSelect(rawName, clean);
-              onClose();
-              setLoadingContacts(false);
-              return;
-            }
+          // null means the user backed out of the system picker.
+          if (!picked) return;
+          const rawName = [picked.firstName, picked.lastName].filter(Boolean).join(" ") || picked.name || "";
+          const clean = cleanPhoneNumber(picked.phoneNumbers?.[0]?.number || "");
+          if (rawName || clean) {
+            onSelect(rawName, clean);
+            onClose();
+            return;
           }
         } catch {
-          // If system picker fails, fall through to in-app contact list
+          // Some phones have no system contact picker; use the in-app list below.
         }
       }
 
@@ -120,10 +113,10 @@ export function ContactPickerModal({
         setPhoneContacts(formatted);
         setHasLoadedDeviceContacts(true);
       } else {
-        Alert.alert("कोई संपर्क नहीं मिला", "फ़ोन की संपर्क सूची खाली है।");
+        Alert.alert("कोई संपर्क नहीं मिला");
       }
-    } catch (e) {
-      Alert.alert("संपर्क नहीं खुल सके", "कृपया नीचे नाम और नंबर सीधा लिख या पेस्ट कर लें।");
+    } catch {
+      Alert.alert("संपर्क नहीं खुले", "नीचे नंबर पेस्ट करें।");
     } finally {
       setLoadingContacts(false);
     }
@@ -153,10 +146,7 @@ export function ContactPickerModal({
       <View style={styles.overlay}>
         <View style={styles.sheet}>
           <View style={styles.header}>
-            <View>
-              <Text style={styles.title}>📱 फ़ोन से ग्राहक चुनें</Text>
-              <Text style={styles.subtitle}>सीधे फ़ोन बुक, WhatsApp या Truecaller से</Text>
-            </View>
+            <Text style={styles.title}>संपर्क चुनें</Text>
             <Pressable onPress={onClose} hitSlop={12} testID="contact-picker-close">
               <MaterialIcon name="close" size={24} color={colors.onSurface} />
             </Pressable>
@@ -175,7 +165,7 @@ export function ContactPickerModal({
               <MaterialIcon name="contacts" size={22} color={colors.onBrandPrimary} />
             )}
             <Text style={styles.primaryNativeBtnText}>
-              {loadingContacts ? "फ़ोन संपर्क खुल रहे हैं..." : "फ़ोन की संपर्क सूची (Contacts) खोलें"}
+              {loadingContacts ? "खुल रहा है..." : "फ़ोन के Contacts खोलें"}
             </Text>
           </Pressable>
 
@@ -186,7 +176,7 @@ export function ContactPickerModal({
                 <MaterialIcon name="magnify" size={18} color={colors.muted} />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder="संपर्क में नाम या नंबर खोजें..."
+                  placeholder="नाम या नंबर खोजें"
                   placeholderTextColor={colors.muted}
                   value={searchContactQuery}
                   onChangeText={setSearchContactQuery}
@@ -239,7 +229,7 @@ export function ContactPickerModal({
           {clipboardSnippet && clipboardSnippet.phone ? (
             <View style={styles.clipboardBox}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.clipLabel}>📋 क्लिपबोर्ड पर मिला:</Text>
+                <Text style={styles.clipLabel}>कॉपी किया हुआ</Text>
                 <Text style={styles.clipVal}>
                   {clipboardSnippet.name ? `${clipboardSnippet.name} · ` : ""}
                   {formatPhone(clipboardSnippet.phone)}
@@ -260,10 +250,10 @@ export function ContactPickerModal({
 
           {/* Quick Paste or Manual Input */}
           <View style={styles.field}>
-            <Text style={styles.label}>या कॉपी किया गया टेक्स्ट यहाँ पेस्ट करें:</Text>
+            <Text style={styles.label}>या पेस्ट करें</Text>
             <TextInput
               style={styles.input}
-              placeholder="उदा. 'राकेश शर्मा +91 98765 43210' या सिर्फ 10 अंक..."
+              placeholder="नाम और नंबर"
               placeholderTextColor={colors.muted}
               value={inputText}
               onChangeText={setInputText}
@@ -274,13 +264,12 @@ export function ContactPickerModal({
           {/* Live Preview */}
           {currentParsed && (currentParsed.phone || currentParsed.name) ? (
             <View style={styles.previewBox}>
-              <Text style={styles.previewHeading}>पहचाना गया विवरण:</Text>
               <View style={styles.previewRow}>
-                <Text style={styles.previewLabel}>नाम:</Text>
+                <Text style={styles.previewLabel}>नाम</Text>
                 <Text style={styles.previewVal}>{currentParsed.name || "—"}</Text>
               </View>
               <View style={styles.previewRow}>
-                <Text style={styles.previewLabel}>मोबाइल (10 अंक):</Text>
+                <Text style={styles.previewLabel}>मोबाइल</Text>
                 <Text style={[styles.previewVal, { color: colors.brandPrimary, fontWeight: "800" }]}>
                   {currentParsed.phone ? formatPhone(currentParsed.phone) : "—"}
                 </Text>
@@ -295,7 +284,7 @@ export function ContactPickerModal({
                 testID="apply-contact-btn"
               >
                 <MaterialIcon name="check" size={20} color={colors.onBrandPrimary} />
-                <Text style={styles.applyBtnText}>यह जानकारी भरें</Text>
+                <Text style={styles.applyBtnText}>भरें</Text>
               </Pressable>
             </View>
           ) : null}

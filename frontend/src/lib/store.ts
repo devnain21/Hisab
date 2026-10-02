@@ -184,7 +184,12 @@ export const store = {
     return item;
   },
   updateEntry(id: string, patch: Partial<Omit<Entry, "id" | "createdAt">>) {
-    enqueue({ kind: "update", coll: "entries", itemId: id, patch });
+    // The API replaces type/date/description/amount/notes on every update, so send the whole row.
+    const current = queryClient.getQueryData<Entry[]>(["entries"])?.find((x) => x.id === id);
+    const base: Partial<Entry> = current ? { ...current } : {};
+    delete base.id;
+    delete base.createdAt;
+    enqueue({ kind: "update", coll: "entries", itemId: id, patch: { ...base, ...patch } });
   },
   deleteEntry(id: string) {
     const list = queryClient.getQueryData<Entry[]>(["entries"]);

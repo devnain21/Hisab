@@ -14,7 +14,7 @@ import { AddEntrySheet, AddJobSheet, EditRecordSheet } from "@/src/components/sh
 import { useAuth } from "@/src/context/AuthContext";
 import { usePendingCount } from "@/src/lib/store";
 import { useCounterMode } from "@/src/lib/counter";
-import { usePersona } from "@/src/lib/persona";
+import { accountName, usePersona } from "@/src/lib/persona";
 import { useRecentCustomerIds } from "@/src/lib/recent";
 import { VoiceEntryModal } from "@/src/components/voice-entry-sheet";
 import { AddExpenseSheet } from "@/src/components/expense-sheet";
@@ -119,7 +119,7 @@ export default function Home() {
         <View style={styles.topRow}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={styles.eyebrow}>{formatWeekdayDate(today)}</Text>
-            <Text style={styles.h1} numberOfLines={2} testID="shop-name">{user?.shop_name || "आज का खाता"}</Text>
+            <Text style={styles.h1} numberOfLines={2} testID="shop-name">{accountName(user) || "आज का खाता"}</Text>
           </View>
           <Pressable onPress={() => router.push("/(tabs)/profile")} hitSlop={8} testID="open-profile" style={styles.accountBtn}>
             <MaterialIcon name="account-circle-outline" size={28} color={colors.onSurface} />
@@ -320,14 +320,16 @@ export default function Home() {
             </View>
 
             <View style={styles.actionRow}>
-              <Pressable style={styles.primaryAction} onPress={() => setJobSheet(true)} testID="quick-work">
-                <MaterialIcon name="briefcase-plus-outline" size={17} color={colors.onBrandPrimary} />
+              <Pressable style={styles.primaryAction} onPress={() => (isPersonal ? setMoneySheet(true) : setJobSheet(true))} testID="quick-work">
+                <MaterialIcon name={isPersonal ? "swap-vertical" : "briefcase-plus-outline"} size={17} color={colors.onBrandPrimary} />
                 <Text style={styles.primaryActionText}>{labels.newWork}</Text>
               </Pressable>
-              <Pressable style={styles.secondaryAction} onPress={() => setMoneySheet(true)} testID="quick-money">
-                <MaterialIcon name="swap-vertical" size={17} color={colors.brandPrimary} />
-                <Text style={styles.secondaryActionText}>मिले/दिए</Text>
-              </Pressable>
+              {isPersonal ? null : (
+                <Pressable style={styles.secondaryAction} onPress={() => setMoneySheet(true)} testID="quick-money">
+                  <MaterialIcon name="swap-vertical" size={17} color={colors.brandPrimary} />
+                  <Text style={styles.secondaryActionText}>मिले/दिए</Text>
+                </Pressable>
+              )}
               <Pressable style={styles.expenseAction} onPress={() => setExpenseSheet(true)} testID="quick-expense">
                 <MaterialIcon name="coffee-outline" size={17} color={colors.warning} />
                 <Text style={styles.expenseActionText}>खर्च</Text>
@@ -338,7 +340,7 @@ export default function Home() {
               </Pressable>
             </View>
 
-            {!isPersonal && counter.on ? (
+            {counter.on ? (
             <Pressable style={styles.aepsLine} onPress={() => go("/(tabs)/aeps", { range: "today" })} testID="home-aeps-card">
               <MaterialIcon name="fingerprint" size={16} color={colors.brandPrimary} />
               <Text style={styles.aepsLineText} numberOfLines={2}>
@@ -389,7 +391,7 @@ export default function Home() {
       </ScrollView>
 
       <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />
-      <AddEntrySheet visible={moneySheet} type="payment" kinds={["payment", "given"]} onClose={() => setMoneySheet(false)} />
+      <AddEntrySheet visible={moneySheet} type={isPersonal ? "given" : "payment"} kinds={isPersonal ? ["given", "payment"] : ["payment", "given"]} onClose={() => setMoneySheet(false)} />
       <AddExpenseSheet visible={expenseSheet} onClose={() => setExpenseSheet(false)} />
       <EditRecordSheet job={editingJob} onClose={() => setEditingJob(null)} />
       <VoiceEntryModal visible={voiceModal} onClose={() => setVoiceModal(false)} />

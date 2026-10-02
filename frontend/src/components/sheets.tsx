@@ -459,27 +459,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title={initial ? "खाता विवरण बदलें" : targetPersona === "personal" ? "नया व्यक्तिगत खाता" : "नया दुकान ग्राहक"} testID="sheet-customer">
-      <View style={{ marginBottom: spacing.md }}>
-        <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4 }}>खाता प्रकार चुनें:</Text>
-        <View style={styles.segment}>
-          <Pressable
-            onPress={() => setTargetPersona("business")}
-            style={[styles.segmentBtn, targetPersona === "business" && styles.segmentActive]}
-          >
-            <MaterialIcon name="storefront" size={15} color={targetPersona === "business" ? colors.onBrandPrimary : colors.onSurface} />
-            <Text style={[styles.segmentText, targetPersona === "business" && { color: colors.onBrandPrimary }]}>🏪 दुकान / व्यापार</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setTargetPersona("personal")}
-            style={[styles.segmentBtn, targetPersona === "personal" && styles.segmentActive]}
-          >
-            <MaterialIcon name="account-tie" size={15} color={targetPersona === "personal" ? colors.onBrandPrimary : colors.onSurface} />
-            <Text style={[styles.segmentText, targetPersona === "personal" && { color: colors.onBrandPrimary }]}>👤 व्यक्तिगत</Text>
-          </Pressable>
-        </View>
-      </View>
-
+    <SheetShell visible={visible} onClose={onClose} title={initial ? "विवरण बदलें" : targetPersona === "personal" ? "नया व्यक्ति" : "नया ग्राहक"} testID="sheet-customer">
       {!initial ? (
         <View style={{ marginBottom: spacing.md, gap: spacing.sm }}>
           <Pressable
@@ -499,13 +479,13 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
           >
             <MaterialIcon name="contacts" size={18} color={colors.brandPrimary} />
             <Text style={{ fontSize: 13, fontWeight: "700", color: colors.brandPrimary }}>
-              📱 फ़ोन से चुनें / पेस्ट करें
+              फ़ोन से चुनें
             </Text>
           </Pressable>
         </View>
       ) : null}
       <Field label="नाम">
-        <TextInput style={inputStyle} value={name} onChangeText={setName} placeholder={targetPersona === "personal" ? "जैसे भाई, दोस्त या रिश्तेदार का नाम" : "जैसे रामलाल शर्मा"} placeholderTextColor={colors.muted} testID="input-cust-name" />
+        <TextInput style={inputStyle} value={name} onChangeText={setName} placeholder="नाम" placeholderTextColor={colors.muted} testID="input-cust-name" />
       </Field>
       <Field label="फ़ोन (वैकल्पिक)">
         <TextInput style={inputStyle} value={phone} onChangeText={setPhone} placeholder="10 अंक" placeholderTextColor={colors.muted} keyboardType="phone-pad" testID="input-cust-phone" />
@@ -1083,103 +1063,77 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
 
 export function ShopProfileSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { user, setShop } = useAuth();
-  const [name, setName] = useState("");
+  const { isPersonal } = usePersona();
+  const [shopName, setShopName] = useState("");
+  const [ownerName, setOwnerName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [gst, setGst] = useState("");
   const [upi, setUpi] = useState("");
-  const [persona, setPersona] = useState<"business" | "personal">("business");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (visible) {
-      setName(user?.shop_name ?? "");
+      setShopName(user?.shop_name ?? "");
+      setOwnerName(user?.owner_name || user?.name || "");
       setPhone(user?.shop_phone ?? "");
       setAddress(user?.shop_address ?? "");
       setGst(user?.shop_gst ?? "");
       setUpi(user?.shop_upi ?? "");
-      setPersona((user?.persona as "business" | "personal") ?? "business");
       setError(null);
     }
-  }, [visible, user?.shop_name, user?.shop_phone, user?.shop_address, user?.shop_gst, user?.shop_upi, user?.persona]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  const valid = isPersonal ? !!ownerName.trim() : !!shopName.trim();
 
   const save = async () => {
+    if (!valid) return;
     setSaving(true);
     setError(null);
     try {
       await setShop({
-        shop_name: name.trim(),
+        shop_name: shopName.trim(),
+        owner_name: ownerName.trim(),
         shop_phone: phone.trim(),
         shop_address: address.trim(),
         shop_gst: gst.trim().toUpperCase(),
         shop_upi: upi.trim(),
-        persona,
+        persona: isPersonal ? "personal" : "business",
       });
       onClose();
     } catch {
-      setError("सेव नहीं हुआ, दोबारा कोशिश करें।");
+      setError("सर्वर पर सेव नहीं हुआ, दोबारा कोशिश करें।");
     } finally { setSaving(false); }
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title={persona === "personal" ? "मेरी जानकारी" : "बिल पर क्या छपे"} testID="sheet-shop-name">
-      <View style={{ marginBottom: spacing.md }}>
-        <Text style={[styles.hint, { marginBottom: 6, fontWeight: "700" }]}>खाते का प्रकार</Text>
-        <View style={{ flexDirection: "row", gap: spacing.sm }}>
-          <Pressable
-            style={[
-              { flex: 1, paddingVertical: 8, alignItems: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
-              persona === "business" && { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
-            ]}
-            onPress={() => setPersona("business")}
-          >
-            <Text style={[{ fontSize: 13, fontWeight: "700", color: colors.onSurface }, persona === "business" && { color: colors.onBrandPrimary }]}>
-              🏪 दुकान / व्यापार
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[
-              { flex: 1, paddingVertical: 8, alignItems: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
-              persona === "personal" && { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
-            ]}
-            onPress={() => setPersona("personal")}
-          >
-            <Text style={[{ fontSize: 13, fontWeight: "700", color: colors.onSurface }, persona === "personal" && { color: colors.onBrandPrimary }]}>
-              👤 व्यक्तिगत खाता
-            </Text>
-          </Pressable>
-        </View>
-      </View>
-
-      <Field label={persona === "personal" ? "आपका नाम" : "दुकान का नाम"}>
-        <TextInput style={inputStyle} value={name} onChangeText={setName} placeholder={persona === "personal" ? "आपका नाम" : "दुकान का नाम"} placeholderTextColor={colors.muted} maxLength={60} testID="input-shop-name" />
+    <SheetShell visible={visible} onClose={onClose} title={isPersonal ? "मेरी जानकारी" : "दुकान की जानकारी"} testID="sheet-shop-name">
+      {isPersonal ? null : (
+        <Field label="दुकान का नाम">
+          <TextInput style={inputStyle} value={shopName} onChangeText={setShopName} placeholder="दुकान का नाम" placeholderTextColor={colors.muted} maxLength={60} testID="input-shop-name" />
+        </Field>
+      )}
+      <Field label="आपका नाम">
+        <TextInput style={inputStyle} value={ownerName} onChangeText={setOwnerName} placeholder="आपका नाम" placeholderTextColor={colors.muted} maxLength={60} testID="input-owner-name" />
       </Field>
-      <Field label="फ़ोन (रसीद पर छपेगा)">
+      <Field label="फ़ोन">
         <TextInput style={inputStyle} value={phone} onChangeText={setPhone} keyboardType="phone-pad" maxLength={20} placeholderTextColor={colors.muted} testID="input-shop-phone" />
       </Field>
-      <Field label="UPI ID (QR कोड और तुरंत पेमेंट के लिए)">
-        <TextInput
-          style={inputStyle}
-          value={upi}
-          onChangeText={setUpi}
-          autoCapitalize="none"
-          placeholder="उदा. 9876543210@paytm या shop@oksbi"
-          placeholderTextColor={colors.muted}
-          maxLength={50}
-          testID="input-shop-upi"
-        />
+      <Field label="UPI ID">
+        <TextInput style={inputStyle} value={upi} onChangeText={setUpi} autoCapitalize="none" placeholder="9876543210@upi" placeholderTextColor={colors.muted} maxLength={50} testID="input-shop-upi" />
       </Field>
       <Field label="पता (वैकल्पिक)">
         <TextInput style={inputStyle} value={address} onChangeText={setAddress} maxLength={120} placeholderTextColor={colors.muted} testID="input-shop-address" />
       </Field>
-      {persona === "business" ? (
+      {isPersonal ? null : (
         <Field label="GST नंबर (वैकल्पिक)">
           <TextInput style={inputStyle} value={gst} onChangeText={setGst} autoCapitalize="characters" maxLength={20} placeholderTextColor={colors.muted} testID="input-shop-gst" />
         </Field>
-      ) : null}
+      )}
       {error ? <Text style={[styles.hint, { color: colors.error }]}>{error}</Text> : null}
-      <PrimaryButton label="सेव करें" onPress={save} disabled={!name.trim()} saving={saving} testID="save-shop-name-btn" />
+      <PrimaryButton label="सेव करें" onPress={save} disabled={!valid} saving={saving} testID="save-shop-name-btn" />
     </SheetShell>
   );
 }

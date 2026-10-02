@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GoogleSignin, isErrorWithCode, statusCodes } from "@react-native-google-signin/google-signin";
@@ -26,6 +26,7 @@ export type ShopProfile = {
   shop_address: string;
   shop_gst: string;
   shop_upi?: string;
+  owner_name?: string;
   persona?: "business" | "personal";
 };
 type User = { user_id: string; email: string; name: string; picture?: string | null } & Partial<ShopProfile>;
@@ -66,6 +67,8 @@ function mapFirebaseUser(u: { uid: string; email: string | null; displayName: st
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading", user: null });
+  const userRef = useRef<User | null>(null);
+  userRef.current = state.user;
 
   useEffect(() => {
     if (!isFirebaseConfigured()) {
@@ -94,8 +97,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const token = await fbUser.getIdToken();
         const me = await api.login(token);
         if (me.user && auth.currentUser?.uid === fbUser.uid) {
-          setState({ status: "authenticated", user: me.user });
-          writeCachedProfile(fbUser.uid, me.user);
+          const user: User = { ...(cached ?? {}), ...me.user };
+          setState({ status: "authenticated", user });
+          writeCachedProfile(fbUser.uid, user);
         }
       } catch {}
     });
@@ -168,11 +172,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState({ status: "unauthenticated", user: null });
   }, []);
 
+  // Applied locally first so every screen switches mode/name at once, even before the server answers.
   const setShop = useCallback(async (shop: ShopProfile) => {
-    const me = await api.updateMe(shop);
-    setState((s) => (s.user ? { ...s, user: { ...s.user, ...me } } : s));
     const uid = getFirebaseAuth().currentUser?.uid;
-    if (uid) writeCachedProfile(uid, me);
+    const current = userRef.current;
+    if (!current) return;
+    const local: User = { ...current, ...shop };
+    userRef.current = local;
+    setState((s) => (s.user ? { ...s, user: local } : s));
+    if (uid) writeCachedProfile(uid, local);
+    const me = await api.updateMe(shop);
+    // An older server may not echo every field back; keep what was just saved.
+    const saved: User = { ...local, ...me, ...shop };
+    userRef.current = saved;
+    setState((s) => (s.user ? { ...s, user: saved } : s));
+    if (uid) writeCachedProfile(uid, saved);
   }, []);
 
   return (

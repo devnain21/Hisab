@@ -75,6 +75,7 @@ class UserOut(BaseModel):
     shop_address: str = ""
     shop_gst: str = ""
     shop_upi: str = ""
+    owner_name: str = ""
     persona: str = "business"
 
 
@@ -84,6 +85,7 @@ class ProfileUpdate(BaseModel):
     shop_address: Optional[str] = Field(default=None, max_length=120)
     shop_gst: Optional[str] = Field(default=None, max_length=20)
     shop_upi: Optional[str] = Field(default=None, max_length=50)
+    owner_name: Optional[str] = Field(default=None, max_length=60)
     persona: Optional[str] = Field(default=None, max_length=20)
 
 
@@ -349,6 +351,7 @@ def _user_out(user: dict) -> UserOut:
         shop_address=user.get("shop_address", ""),
         shop_gst=user.get("shop_gst", ""),
         shop_upi=user.get("shop_upi", ""),
+        owner_name=user.get("owner_name", ""),
         persona=user.get("persona", "business"),
     )
 

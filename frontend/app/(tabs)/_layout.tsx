@@ -16,7 +16,7 @@ function LedgerMaintenance() {
 export default function TabsLayout() {
   const { status } = useAuth();
   const counter = useCounterMode();
-  const { isPersonal, labels } = usePersona();
+  const { labels } = usePersona();
   if (status === "loading") {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface }}>
@@ -73,7 +73,7 @@ export default function TabsLayout() {
         name="aeps"
         options={{
           title: "काउंटर",
-          href: counter.on && !isPersonal ? undefined : null,
+          href: counter.on ? undefined : null,
           tabBarIcon: ({ color, size }) => <MaterialIcon name="fingerprint" size={size} color={color} />,
         }}
       />

@@ -27,8 +27,7 @@ import { biometricAvailable, disableLock, lockSupported, setBiometric, setPin } 
 import { exportFullLedgerCsv } from "@/src/lib/export-data";
 import { usePendingCount } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
-import { useCounterMode } from "@/src/lib/counter";
-import { usePersona } from "@/src/lib/persona";
+import { accountName, usePersona } from "@/src/lib/persona";
 import { RecycleBinModal } from "@/src/components/recycle-bin-sheet";
 import { getTrashList, subscribeTrash } from "@/src/lib/trash";
 import { shareMessage } from "@/src/lib/share-text";
@@ -54,7 +53,7 @@ export default function Profile() {
   const aeps = useAeps().data ?? [];
   const totalDue = computeBalance(entries);
   const pending = usePendingCount();
-  const counter = useCounterMode();
+  const ownerName = user?.owner_name || user?.name || "";
 
   // App Lock
   const { config: lock, refresh: refreshLock } = useAppLock();
@@ -116,14 +115,16 @@ export default function Profile() {
 
   // Share digital visiting card
   const handleShareVisitingCard = async () => {
-    const shopName = user?.shop_name || "मेरी दुकान";
-    const ownerName = user?.name ? `\n👤 प्रोपराइटर: ${user.name}` : "";
+    const shopName = accountName(user) || "मेरी दुकान";
+    const ownerLine = !isPersonal && ownerName ? `\n👤 प्रोपराइटर: ${ownerName}` : "";
     const phone = user?.shop_phone ? `\n📞 फ़ोन / संपर्क: ${formatPhone(user.shop_phone)}` : "";
     const addr = user?.shop_address ? `\n📍 पता: ${user.shop_address}` : "";
     const gst = user?.shop_gst ? `\n🏛️ GSTIN: ${user.shop_gst}` : "";
     const upi = user?.shop_upi ? `\n💳 UPI भुगतान ID: ${user.shop_upi}` : "";
 
-    const cardMessage = `🏪 *${shopName}*${ownerName}${phone}${addr}${gst}${upi}\n\n🙏 हमारे साथ व्यापार करने के लिए धन्यवाद!\n✨ बही खाता ऐप द्वारा सुरक्षित।`;
+    const cardMessage = isPersonal
+      ? `👤 *${shopName}*${phone}${addr}${upi}`
+      : `🏪 *${shopName}*${ownerLine}${phone}${addr}${gst}${upi}\n\n🙏 धन्यवाद!`;
     await shareMessage(cardMessage);
   };
 
@@ -255,10 +256,10 @@ export default function Profile() {
         <View style={styles.cardMain}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={styles.cardShopName} numberOfLines={1}>
-              {user?.shop_name || (isPersonal ? user?.name : "दुकान का नाम जोड़ें")}
+              {accountName(user) || (isPersonal ? "अपना नाम जोड़ें" : "दुकान का नाम जोड़ें")}
             </Text>
             <Text style={styles.cardOwnerName} numberOfLines={1}>
-              {user?.name ? `प्रोपराइटर: ${user.name}` : user?.email}
+              {isPersonal ? user?.email : ownerName ? `प्रोपराइटर: ${ownerName}` : user?.email}
             </Text>
 
             {/* Phone & Address */}
@@ -294,7 +295,7 @@ export default function Profile() {
           ) : (
             <View style={styles.cardAvatarFallback}>
               <Text style={styles.cardAvatarInitials}>
-                {(user?.shop_name || user?.name || "B")[0].toUpperCase()}
+                {(accountName(user) || user?.name || "B")[0].toUpperCase()}
               </Text>
             </View>
           )}
@@ -343,7 +344,7 @@ export default function Profile() {
 
       {/* IMPROVEMENT 2: Instant Dual Persona Switcher */}
       <View style={styles.personaContainer}>
-        <Text style={styles.sectionMiniLabel}>खाता मोड (PERSONA MODE)</Text>
+        <Text style={styles.sectionMiniLabel}>खाता मोड</Text>
         <View style={styles.personaSwitchRow}>
           <Pressable
             style={[styles.personaSegment, !isPersonal && styles.personaSegmentActive]}
@@ -377,9 +378,7 @@ export default function Profile() {
         </View>
 
         <Text style={styles.personaHelper}>
-          {isPersonal
-            ? "💡 व्यक्तिगत मोड सक्रिय: दोस्तों और रिश्तेदारों का निजी लेन-देन, सरल हिसाब।"
-            : "💡 व्यापार मोड सक्रिय: ग्राहकों का उधारी बही खाता, बिलिंग, डिलीवरी तारीखें व काउंटर चालू।"}
+          {isPersonal ? "दोस्तों, रिश्तेदारों का लेन-देन" : "ग्राहक, काम, काउंटर और गल्ला"}
         </Text>
       </View>
 
@@ -516,9 +515,9 @@ export default function Profile() {
           <View style={{ flex: 1 }}>
             <Text style={styles.rowValue}>{labels.profileHeading}</Text>
             <Text style={styles.rowLabel} numberOfLines={1}>
-              {user?.shop_name
-                ? `${user.shop_name} · ${user.shop_phone || "फ़ोन"}`
-                : "नाम, फ़ोन, पता व बिल फुटर सेट करें"}
+              {accountName(user)
+                ? `${accountName(user)} · ${user?.shop_phone || "फ़ोन"}`
+                : "नाम, फ़ोन, पता"}
             </Text>
           </View>
           <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
@@ -541,25 +540,6 @@ export default function Profile() {
           <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
         </Pressable>
 
-        {!isPersonal ? (
-          <View style={[styles.settingRow, styles.rowBorder]}>
-            <View style={[styles.iconCircle, { backgroundColor: "#FDF4FF" }]}>
-              <MaterialIcon name="fingerprint" size={20} color="#9333EA" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowValue}>काउंटर सेवा (AEPS / नकद / UPI)</Text>
-              <Text style={styles.rowLabel} numberOfLines={1}>
-                आधार निकासी, मनी ट्रांसफर व काउंटर गल्ला ट्रैकिंग
-              </Text>
-            </View>
-            <Switch
-              value={counter.on}
-              onValueChange={counter.toggle}
-              trackColor={{ true: colors.brandPrimary, false: colors.border }}
-              testID="counter-toggle"
-            />
-          </View>
-        ) : null}
       </View>
 
       {/* Category 2: सुरक्षा व गोपनीयता */}
@@ -677,7 +657,7 @@ export default function Profile() {
       {/* App Branding & Version Footer */}
       <View style={styles.footerWrap}>
         <Text style={styles.footerBrand}>
-          {user?.shop_name || "बही खाता"} · प्रो संस्करण v1.2
+          {accountName(user) || "बही खाता"} · प्रो संस्करण v1.2
         </Text>
         <Text style={styles.footerSub}>
           Nain Photo State & Khata · 100% मेड इन इंडिया 🇮🇳
@@ -693,7 +673,7 @@ export default function Profile() {
       <QrCodeModal
         visible={qrModalOpen}
         onClose={() => setQrModalOpen(false)}
-        shopName={user?.shop_name || user?.name || "दुकान"}
+        shopName={accountName(user) || user?.name || "दुकान"}
         upiId={user?.shop_upi || ""}
         onSetupUpi={() => {
           setQrModalOpen(false);

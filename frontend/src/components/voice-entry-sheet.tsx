@@ -7,6 +7,7 @@ import { formatINR, todayISO } from "@/src/lib/format";
 import { useCustomers, type Customer, type EntryType } from "@/src/lib/data";
 import { parseQuickText } from "@/src/lib/quick-parser";
 import { store } from "@/src/lib/store";
+import { usePersona } from "@/src/lib/persona";
 
 export function VoiceEntryModal({
   visible,
@@ -18,20 +19,28 @@ export function VoiceEntryModal({
   onSuccess?: () => void;
 }) {
   const [text, setText] = useState("");
-  const customers = useCustomers().data ?? [];
+  const { isPersonal } = usePersona();
+  const allCustomers = useCustomers().data;
+  const customers = useMemo(
+    () => (allCustomers ?? []).filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal")),
+    [allCustomers, isPersonal]
+  );
 
   const parsed = useMemo(() => parseQuickText(text, customers), [text, customers]);
   const [overrideType, setOverrideType] = useState<EntryType | null>(null);
+  const [mode, setMode] = useState<"cash" | "online">("cash");
 
-  const finalType = overrideType || parsed.type;
+  const parsedType = isPersonal && parsed.type === "work" ? "given" : parsed.type;
+  const finalType = overrideType || parsedType;
+  const types: EntryType[] = isPersonal ? ["given", "payment"] : ["work", "payment", "given"];
 
   const handleSave = () => {
     if (!parsed.amount || parsed.amount <= 0) {
-      Alert.alert("रकम लिखें", "कृपया सही रकम (रुपये) लिखें या बोलें।");
+      Alert.alert("रकम लिखें");
       return;
     }
     if (!parsed.customerName) {
-      Alert.alert("नाम लिखें", "कृपया ग्राहक का नाम लिखें या बोलें।");
+      Alert.alert("नाम लिखें");
       return;
     }
 
@@ -41,7 +50,8 @@ export function VoiceEntryModal({
         name: parsed.customerName,
         phone: "",
         address: "",
-        notes: "बोलकर/क्विक एंट्री से जोड़ा",
+        notes: "",
+        persona: isPersonal ? "personal" : "business",
       });
       custId = created.id;
     }
@@ -53,26 +63,25 @@ export function VoiceEntryModal({
       description: parsed.description,
       amount: parsed.amount,
       paid: finalType === "work" ? 0 : undefined,
-      notes: "क्विक एंट्री",
+      mode: finalType === "work" ? undefined : mode,
+      notes: "",
     });
 
     setText("");
     setOverrideType(null);
+    setMode("cash");
     onClose();
     if (onSuccess) onSuccess();
   };
 
-  const chips = ["राजू 500 मिले", "अमित 250 फोटोकॉपी", "सुनील 1000 दिए", "राहुल 150 प्रिंट"];
+  const chips = isPersonal ? ["राजू 500 मिले", "सुनील 1000 दिए"] : ["राजू 500 मिले", "अमित 250 फोटोकॉपी", "सुनील 1000 दिए"];
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={styles.sheet}>
           <View style={styles.header}>
-            <View>
-              <Text style={styles.title}>🎙️ बोलकर या लिखकर हिसाब जोड़ें</Text>
-              <Text style={styles.subtitle}>कीबोर्ड के माइक बटन से बोलें या नीचे टाइप करें</Text>
-            </View>
+            <Text style={styles.title}>बोलकर हिसाब</Text>
             <Pressable onPress={onClose} hitSlop={12} testID="voice-close">
               <MaterialIcon name="close" size={24} color={colors.onSurface} />
             </Pressable>
@@ -121,7 +130,7 @@ export function VoiceEntryModal({
               <Text style={styles.previewHeading}>पहचाना गया हिसाब:</Text>
 
               <View style={styles.previewRow}>
-                <Text style={styles.previewLabel}>ग्राहक:</Text>
+                <Text style={styles.previewLabel}>{isPersonal ? "व्यक्ति:" : "ग्राहक:"}</Text>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                   <Text style={styles.previewValue}>{parsed.customerName || "—"}</Text>
                   {parsed.customerName ? (
@@ -144,7 +153,7 @@ export function VoiceEntryModal({
               <View style={styles.previewRow}>
                 <Text style={styles.previewLabel}>प्रकार:</Text>
                 <View style={styles.typeSelector}>
-                  {(["work", "payment", "given"] as EntryType[]).map((t) => {
+                  {types.map((t) => {
                     const active = finalType === t;
                     const label = t === "work" ? "काम" : t === "payment" ? "मिले" : "दिए";
                     return (
@@ -161,6 +170,19 @@ export function VoiceEntryModal({
                   })}
                 </View>
               </View>
+
+              {finalType !== "work" ? (
+                <View style={styles.previewRow}>
+                  <Text style={styles.previewLabel}>कैसे</Text>
+                  <View style={styles.typeSelector}>
+                    {(["cash", "online"] as const).map((m) => (
+                      <Pressable key={m} style={[styles.typeBtn, mode === m && styles.typeBtnActive]} onPress={() => setMode(m)} testID={`voice-mode-${m}`}>
+                        <Text style={[styles.typeBtnText, mode === m && styles.typeBtnTextActive]}>{m === "cash" ? "नकद" : "ऑनलाइन"}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
 
               <View style={styles.previewRow}>
                 <Text style={styles.previewLabel}>विवरण:</Text>
@@ -181,8 +203,7 @@ export function VoiceEntryModal({
             <View style={styles.tipBox}>
               <MaterialIcon name="lightbulb-on-outline" size={24} color={colors.brandPrimary} />
               <Text style={styles.tipText}>
-                टिप: अपने मोबाइल कीबोर्ड के माइक आइकन पर टैप करें और बोलें, जैसे:{"\n"}
-                "राकेश पांच सौ रुपये मिले"
+                कीबोर्ड का माइक दबाकर बोलें: "राकेश 500 मिले"
               </Text>
             </View>
           )}

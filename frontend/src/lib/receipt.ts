@@ -7,6 +7,7 @@ import type { Ledger, WorkStatus } from "@/src/lib/records";
 import { formatDate, formatDateShort, formatINR, formatPhone, todayISO } from "@/src/lib/format";
 import type { ShopProfile } from "@/src/context/AuthContext";
 import { AEPS_META, STATUS_META } from "@/src/lib/aeps";
+import { accountName } from "@/src/lib/persona";
 
 type Tone = "due" | "ok";
 export type Line = { label: string; value: string; tone?: Tone };
@@ -24,8 +25,8 @@ export type ShareDoc = {
   fileName: string;
 };
 
-const fullShop = (s: Partial<ShopProfile>): ShopProfile => ({
-  shop_name: s.shop_name || "बही खाता",
+const fullShop = (s: Partial<ShopProfile> & { name?: string }): ShopProfile => ({
+  shop_name: accountName(s) || "बही खाता",
   shop_phone: s.shop_phone || "",
   shop_address: s.shop_address || "",
   shop_gst: s.shop_gst || "",

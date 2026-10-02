@@ -16,6 +16,7 @@ import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import { receiptDoc, statementDoc, reminderDoc, type ShareDoc } from "@/src/lib/receipt";
 import { UpiQrModal } from "@/src/components/upi-qr-sheet";
 import { addRecentCustomer } from "@/src/lib/recent";
+import { accountName } from "@/src/lib/persona";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -156,10 +157,12 @@ export default function CustomerDetail() {
           ) : null}
           {customer.notes ? <Text style={styles.notes}>{customer.notes}</Text> : null}
           <View style={styles.actionsRow}>
-            <Pressable style={[styles.actionBtn, { backgroundColor: colors.brandPrimary }]} onPress={() => setJobSheet("now")} testID="add-work-btn">
-              <MaterialIcon name="plus" size={16} color="#fff" />
-              <Text style={styles.actionText}>काम लिखें</Text>
-            </Pressable>
+            {customer.persona === "personal" ? null : (
+              <Pressable style={[styles.actionBtn, { backgroundColor: colors.brandPrimary }]} onPress={() => setJobSheet("now")} testID="add-work-btn">
+                <MaterialIcon name="plus" size={16} color="#fff" />
+                <Text style={styles.actionText}>काम लिखें</Text>
+              </Pressable>
+            )}
             <Pressable style={[styles.actionBtn, { backgroundColor: colors.success }]} onPress={() => setEntrySheet("payment")} testID="add-jama-btn">
               <MaterialIcon name="arrow-bottom-left" size={16} color="#fff" />
               <Text style={styles.actionText}>मिले</Text>
@@ -285,7 +288,7 @@ export default function CustomerDetail() {
         visible={qrModal}
         onClose={() => setQrModal(false)}
         upiId={user?.shop_upi || ""}
-        shopName={user?.shop_name || "खाता"}
+        shopName={accountName(user) || "खाता"}
         amount={due}
         customerName={customer.name}
       />

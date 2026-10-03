@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { formatINR } from "./format";
 import { store } from "./store";
+import { syncAepsDue } from "./aeps-due";
+import type { AepsTxn } from "./data";
 
 export type TrashColl = "customers" | "entries" | "jobs" | "aeps";
 
@@ -83,6 +85,12 @@ export async function removeFromTrash(trashId: string): Promise<TrashItem | null
   return target;
 }
 
+/** Forget the cached list (sign-out); the storage key is removed by the caller. */
+export function resetTrashMemory() {
+  trashMemory = null;
+  notify();
+}
+
 export async function clearAllTrash(): Promise<void> {
   trashMemory = [];
   await AsyncStorage.removeItem(TRASH_KEY).catch(() => {});
@@ -93,6 +101,10 @@ export async function restoreTrashItem(trashId: string): Promise<boolean> {
   const item = await removeFromTrash(trashId);
   if (!item || !item.data) return false;
   store.restoreRaw(item.coll, item.data as any);
+  if (item.coll === "aeps") {
+    const { id, createdAt: _c, ...body } = item.data as AepsTxn;
+    syncAepsDue(id, body);
+  }
   return true;
 }
 

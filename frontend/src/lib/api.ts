@@ -68,11 +68,14 @@ export const api = {
   deleteAeps: (id: string) => req(`/aeps/${id}`, { method: "DELETE" }),
   listExpenses: () => req("/expenses"),
   createExpense: (b: unknown) => req("/expenses", { method: "POST", body: JSON.stringify(b) }),
+  updateExpense: (id: string, b: unknown) => req(`/expenses/${id}`, { method: "PUT", body: JSON.stringify(b) }),
   deleteExpense: (id: string) => req(`/expenses/${id}`, { method: "DELETE" }),
   // The server names the move ends src/dst; the app uses from/to.
   listMoves: async () =>
     ((await req("/moves")) as ({ src: string; dst: string } & Record<string, unknown>)[]).map(({ src, dst, ...m }) => ({ ...m, from: src, to: dst })),
   createMove: ({ from, to, ...m }: { from: string; to: string } & Record<string, unknown>) =>
     req("/moves", { method: "POST", body: JSON.stringify({ ...m, src: from, dst: to }) }),
+  updateMove: (id: string, { from, to, ...m }: { from: string; to: string } & Record<string, unknown>) =>
+    req(`/moves/${id}`, { method: "PUT", body: JSON.stringify({ ...m, src: from, dst: to }) }),
   deleteMove: (id: string) => req(`/moves/${id}`, { method: "DELETE" }),
 };

@@ -13,7 +13,7 @@ import { useAuth } from "@/src/context/AuthContext";
 import { Pressable } from "@/src/components/tap";
 import { AepsSheet } from "@/src/components/aeps-sheet";
 import { aepsReceiptDoc, sharePdf } from "@/src/lib/receipt";
-import { cashSettledAeps, completeAeps, failAeps, removeAeps } from "@/src/lib/aeps-due";
+import { cashSettledAeps, completeAeps, failAeps, khataPaid, removeAeps } from "@/src/lib/aeps-due";
 
 const TONE = { in: colors.success, out: colors.error, wait: colors.warning, muted: colors.muted } as const;
 
@@ -91,7 +91,9 @@ export default function AepsDetail() {
   };
 
   const remove = () => {
-    confirmAction("एंट्री हटाएँ?", `${t.customerName} · ${meta.short}${t.amount > 0 ? ` · ${formatINR(t.amount)}` : ""}`, "हटा दें", () => {
+    const paidOnKhata = khataPaid(t.id);
+    const note = paidOnKhata > 0 ? `\nग्राहक ने खाते में ${formatINR(paidOnKhata)} दिए हैं, वो उनके खाते में जमा रहेंगे।` : "";
+    confirmAction("एंट्री हटाएँ?", `${t.customerName} · ${meta.short}${t.amount > 0 ? ` · ${formatINR(t.amount)}` : ""}${note}`, "हटा दें", () => {
       removeAeps(t);
       router.back();
     });

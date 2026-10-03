@@ -152,7 +152,9 @@ export default function DayScreen() {
     expectedBank,
     actualBank: null,
     bankDiff: null,
-    netProfitEstimate: workProfit - (flows.cash.expense + flows.bank.expense),
+    cashFlow: flows.cash,
+    bankFlow: flows.bank,
+    netProfitEstimate: workProfit + flows.cash.commission + flows.bank.commission - (flows.cash.expense + flows.bank.expense),
   };
 
   return (

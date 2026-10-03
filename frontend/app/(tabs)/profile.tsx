@@ -25,7 +25,7 @@ import { ShopProfileSheet } from "@/src/components/sheets";
 import { PinSetupModal, useAppLock } from "@/src/components/app-lock";
 import { biometricAvailable, disableLock, lockSupported, setBiometric, setPin } from "@/src/lib/app-lock";
 import { exportFullLedgerCsv } from "@/src/lib/export-data";
-import { usePendingCount } from "@/src/lib/store";
+import { flush, usePendingCount } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
 import { accountName, usePersona } from "@/src/lib/persona";
 import { RecycleBinModal } from "@/src/components/recycle-bin-sheet";
@@ -51,7 +51,14 @@ export default function Profile() {
 
   // Each book (shop / personal) shows only its own people and money.
   const allCustomers = useCustomers().data;
-  const allEntries = useEntries().data;
+  const entriesQ = useEntries();
+  const allEntries = entriesQ.data;
+  const lastSync = entriesQ.dataUpdatedAt ? new Date(entriesQ.dataUpdatedAt) : null;
+  const syncFailed = entriesQ.isError;
+  const syncTime = (d: Date) => {
+    const hm = d.toTimeString().slice(0, 5);
+    return d.toDateString() === new Date().toDateString() ? `आज ${hm}` : `${d.getDate()}/${d.getMonth() + 1} ${hm}`;
+  };
   const customers = useMemo(
     () => (allCustomers ?? []).filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal")),
     [allCustomers, isPersonal]
@@ -149,6 +156,7 @@ export default function Profile() {
   const handleForceSync = async () => {
     setSyncing(true);
     try {
+      await flush();
       await queryClient.refetchQueries();
     } catch {}
     setTimeout(() => setSyncing(false), 600);
@@ -488,16 +496,31 @@ export default function Profile() {
             <Text style={styles.syncBtnSmallText}>सिंक करें</Text>
           </Pressable>
         </View>
+      ) : syncFailed ? (
+        <View style={[styles.syncCard, { backgroundColor: colors.errorSoft }]} testID="sync-offline">
+          <MaterialIcon name="cloud-off-outline" size={22} color={colors.error} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.syncTitle, { color: colors.error }]}>सर्वर से नहीं जुड़ पाया</Text>
+            <Text style={styles.syncSub}>
+              {lastSync ? `आख़िरी सिंक: ${syncTime(lastSync)}` : "अभी तक सिंक नहीं हुआ"}
+            </Text>
+          </View>
+          <Pressable style={styles.syncBtnSmall} onPress={handleForceSync} disabled={syncing}>
+            <Text style={styles.syncBtnSmallText}>दोबारा</Text>
+          </Pressable>
+        </View>
       ) : (
         <View style={styles.syncCard}>
           <MaterialIcon name="cloud-check-outline" size={22} color={colors.success} />
           <View style={{ flex: 1 }}>
-            <Text style={styles.syncTitle}>Google क्लाउड बैकअप सुरक्षित है</Text>
+            <Text style={styles.syncTitle}>सारा डेटा सर्वर पर सेव है</Text>
             <Text style={styles.syncSub}>
-              सारा डेटा रीयल-टाइम सुरक्षित है। बिना इंटरनेट भी ऐप बिना रुके चलेगा।
+              {lastSync ? `आख़िरी सिंक: ${syncTime(lastSync)}` : "सिंक हो रहा है…"}
             </Text>
           </View>
-          <MaterialIcon name="check-circle" size={18} color={colors.success} />
+          <Pressable onPress={handleForceSync} disabled={syncing} hitSlop={8} testID="sync-refresh">
+            <MaterialIcon name={syncing ? "sync" : "refresh"} size={20} color={colors.success} />
+          </Pressable>
         </View>
       )}
 
@@ -622,7 +645,7 @@ export default function Profile() {
                 </View>
               ) : null}
             </View>
-            <Text style={styles.rowLabel}>हटाए गए रिकॉर्ड 30 दिन तक सुरक्षित रहते हैं</Text>
+            <Text style={styles.rowLabel}>हाल में हटाए गए आख़िरी 50 रिकॉर्ड</Text>
           </View>
           <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
         </Pressable>

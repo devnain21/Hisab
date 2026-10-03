@@ -211,11 +211,13 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
     const flow = flowOf(line);
     const got = flow === "in" ? Math.min(collectedNum(line), num(line.amount)) : 0;
     const cashNow = status !== "failed" && (flow === "in" ? got > 0 : flow === "out" ? status === "success" || line.cashTaken : true);
+    // A side settled on the entry's own day moves with it when the date is changed; a later settlement keeps its day.
+    const follow = (d: string | null | undefined) => (d && prev && d !== prev.date ? d : date);
     const prevCash = prev ? cashLegDate(prev) : null;
     return {
       status,
-      cashDate: cashNow ? prevCash || date : "",
-      doneDate: status === "success" ? prev?.doneDate || date : "",
+      cashDate: cashNow ? follow(prevCash) : "",
+      doneDate: status === "success" ? follow(prev?.doneDate) : "",
       dueDate: line.status === "later" ? line.dueDate : "",
       commissionMode: num(line.commission) > 0 ? line.commissionMode : ("" as AepsCommissionMode),
       collected: flow === "in" ? got : null,

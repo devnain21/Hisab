@@ -855,7 +855,15 @@ function DeleteEntryLink({ entry, onDone }: { entry: Entry; onDone: () => void }
   const entries = useEntries().data ?? [];
   const jobs = useJobs().data ?? [];
   const remove = () => {
-    const extra = entry.type === "work" ? "\nइसके साथ लिखे मिले और काम कार्ड भी हटेंगे।" : entry.type === "given" && !entry.linkId ? "\nइसके वापस मिले पैसे भी हटेंगे।" : entry.type === "purchase" ? "\nइसके चुकाए पैसे भी हटेंगे।" : "";
+    const later = "\nदूसरे दिन लिए-दिए पैसे खाते में बने रहेंगे।";
+    const extra =
+      entry.type === "work"
+        ? `\nउसी दिन मिले पैसे और काम कार्ड भी हटेंगे।${later}`
+        : entry.type === "given" && !entry.linkId
+          ? `\nउसी दिन वापस मिले पैसे भी हटेंगे।${later}`
+          : entry.type === "purchase"
+            ? `\nउसी दिन चुकाए पैसे भी हटेंगे।${later}`
+            : "";
     confirmAction("एंट्री हटाएँ?", `${entry.description || ENTRY_UI[entry.type].title} · ${formatINR(entry.amount)}${extra}`, "हटा दें", () => {
       removeEntryWithLinks(entry, entries, jobs);
       onDone();
@@ -900,7 +908,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
     if (!entry) return;
     items.reset(itemsOf(entry));
     money.reset(String(entry.amount), String(((entry.paid ?? 0) || (legacyLink?.amount ?? 0)) + extraSum));
-    setPayMode(entry.mode ?? "cash");
+    setPayMode(entry.mode ?? legacyLink?.mode ?? "cash");
     setGovtFee(entry.fee ? String(entry.fee) : "");
     setFeeMode(entry.feeMode ?? "online");
     setDate(entry.date);

@@ -20,7 +20,7 @@ export function usePersona() {
   }, [user?.persona]);
 
   // A shop exists once it has a name, or for older accounts that already keep shop customers.
-  const hasShop = !!user?.shop_name || (customers ?? []).some((c) => c.persona !== "personal");
+  const hasShop = !!user?.shop_name || user?.persona === "business" || (customers ?? []).some((c) => c.persona !== "personal");
   const persona: Persona = hasShop ? (user?.persona as Persona) || stored || "business" : "personal";
 
   const setPersona = useCallback(

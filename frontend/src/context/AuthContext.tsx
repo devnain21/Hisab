@@ -12,6 +12,8 @@ import {
 import { api, setTokenProvider } from "@/src/lib/api";
 import { getFirebaseAuth, getGoogleClientIds, isFirebaseConfigured } from "@/src/lib/firebase";
 import { clearOutbox, flush } from "@/src/lib/store";
+import { resetTrashMemory } from "@/src/lib/trash";
+import { resetRecentCustomers } from "@/src/lib/recent";
 import { disableLock } from "@/src/lib/app-lock";
 import { queryClient } from "@/src/query-client";
 
@@ -168,6 +170,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await clearOutbox();
     queryClient.clear();
     await AsyncStorage.removeItem(PROFILE_KEY).catch(() => {});
+    // Recycle bin, recent customers, mode, counted cash and old local copies all belong to this account.
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      const mine = keys.filter((k) => k.startsWith("hisab_") && !k.startsWith("hisab_applock_"));
+      if (mine.length) await AsyncStorage.multiRemove(mine);
+    } catch {}
+    resetTrashMemory();
+    resetRecentCustomers();
     await disableLock().catch(() => {});
     setState({ status: "unauthenticated", user: null });
   }, []);

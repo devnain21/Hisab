@@ -453,7 +453,7 @@ async def logout():
 # --- Customers ---
 @api_router.get("/customers", response_model=List[Customer])
 async def list_customers(user: dict = Depends(get_current_user)):
-    rows = await db.customers.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(2000)
+    rows = await db.customers.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(None)
     return [Customer(**r) for r in rows]
 
 
@@ -477,13 +477,15 @@ async def delete_customer(customer_id: str, user: dict = Depends(get_current_use
     await db.customers.delete_one({"id": customer_id, "user_id": user["user_id"]})
     await db.entries.delete_many({"customerId": customer_id, "user_id": user["user_id"]})
     await db.jobs.delete_many({"customerId": customer_id, "user_id": user["user_id"]})
+    # Counter rows carry their own galla / bank movement, so they stay; only the link goes.
+    await db.aeps.update_many({"customerId": customer_id, "user_id": user["user_id"]}, {"$set": {"customerId": ""}})
     return {"ok": True}
 
 
 # --- Entries ---
 @api_router.get("/entries", response_model=List[Entry])
 async def list_entries(user: dict = Depends(get_current_user)):
-    rows = await db.entries.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(5000)
+    rows = await db.entries.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(None)
     return [Entry(**r) for r in rows]
 
 
@@ -517,7 +519,7 @@ async def delete_entry(entry_id: str, user: dict = Depends(get_current_user)):
 # --- Jobs ---
 @api_router.get("/jobs", response_model=List[Job])
 async def list_jobs(user: dict = Depends(get_current_user)):
-    rows = await db.jobs.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(5000)
+    rows = await db.jobs.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(None)
     return [Job(**r) for r in rows]
 
 
@@ -547,7 +549,7 @@ async def delete_job(job_id: str, user: dict = Depends(get_current_user)):
 # --- AEPS / money services ---
 @api_router.get("/aeps", response_model=List[AepsTxn])
 async def list_aeps(user: dict = Depends(get_current_user)):
-    rows = await db.aeps.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(10000)
+    rows = await db.aeps.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(None)
     return [AepsTxn(**r) for r in rows]
 
 
@@ -575,13 +577,23 @@ async def delete_aeps(txn_id: str, user: dict = Depends(get_current_user)):
 # --- Expenses and money moves (cash / bank adjustments) ---
 @api_router.get("/expenses", response_model=List[Expense])
 async def list_expenses(user: dict = Depends(get_current_user)):
-    rows = await db.expenses.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(20000)
+    rows = await db.expenses.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(None)
     return [Expense(**r) for r in rows]
 
 
 @api_router.post("/expenses", response_model=Expense)
 async def create_expense(payload: ExpenseCreate, user: dict = Depends(get_current_user)):
     return await _create_idempotent(db.expenses, Expense, payload, user)
+
+
+@api_router.put("/expenses/{expense_id}", response_model=Expense)
+async def update_expense(expense_id: str, payload: ExpenseFields, user: dict = Depends(get_current_user)):
+    existing = await db.expenses.find_one({"id": expense_id, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    if not existing:
+        raise HTTPException(404, "Not found")
+    patch = payload.dict()
+    await db.expenses.update_one({"id": expense_id, "user_id": user["user_id"]}, {"$set": patch})
+    return Expense(**{**existing, **patch})
 
 
 @api_router.delete("/expenses/{expense_id}")
@@ -592,13 +604,23 @@ async def delete_expense(expense_id: str, user: dict = Depends(get_current_user)
 
 @api_router.get("/moves", response_model=List[MoneyMove])
 async def list_moves(user: dict = Depends(get_current_user)):
-    rows = await db.moves.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(20000)
+    rows = await db.moves.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(None)
     return [MoneyMove(**r) for r in rows]
 
 
 @api_router.post("/moves", response_model=MoneyMove)
 async def create_move(payload: MoneyMoveCreate, user: dict = Depends(get_current_user)):
     return await _create_idempotent(db.moves, MoneyMove, payload, user)
+
+
+@api_router.put("/moves/{move_id}", response_model=MoneyMove)
+async def update_move(move_id: str, payload: MoneyMoveFields, user: dict = Depends(get_current_user)):
+    existing = await db.moves.find_one({"id": move_id, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    if not existing:
+        raise HTTPException(404, "Not found")
+    patch = payload.dict()
+    await db.moves.update_one({"id": move_id, "user_id": user["user_id"]}, {"$set": patch})
+    return MoneyMove(**{**existing, **patch})
 
 
 @api_router.delete("/moves/{move_id}")

@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
 import { useAeps, type AepsTxn, type AepsType } from "@/src/lib/data";
-import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, cashLegDate, cashOf, isLater } from "@/src/lib/aeps";
+import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, bankLegDate, cashLegDate, cashOf, commissionDate, isLater } from "@/src/lib/aeps";
 import { formatDateShort, formatINR, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { SlowServerHint } from "@/src/components/slow-server-hint";
@@ -44,7 +44,11 @@ export default function AepsScreen() {
     () => (d: string) => (range === "today" ? d === today : range === "yesterday" ? d === yesterday : range === "month" ? d.startsWith(monthPrefix) : true),
     [range, today, yesterday, monthPrefix],
   );
-  const inRange = useMemo(() => txns.filter((t) => inRangeDate(t.date)), [txns, inRangeDate]);
+  // Same rule as the totals: a row belongs to every day one of its sides moved money.
+  const inRange = useMemo(
+    () => txns.filter((t) => [t.date, cashLegDate(t), bankLegDate(t), commissionDate(t)].some((d) => !!d && inRangeDate(d))),
+    [txns, inRangeDate],
+  );
 
   const pending = useMemo(
     () => txns.filter((t) => t.status === "pending").sort((a, b) => (a.dueDate || a.date).localeCompare(b.dueDate || b.date)),
@@ -73,7 +77,9 @@ export default function AepsScreen() {
           t.reference.toLowerCase().includes(needle) ||
           t.accountNumber.includes(needle) ||
           t.billAccount.toLowerCase().includes(needle) ||
-          t.rechargeNumber.includes(needle),
+          t.rechargeNumber.includes(needle) ||
+          (t.upiId ?? "").toLowerCase().includes(needle) ||
+          t.beneficiaryName.toLowerCase().includes(needle),
       )
       .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : (b.time || b.createdAt).localeCompare(a.time || a.createdAt)));
   }, [inRange, type, search, typesInRange.length]);
@@ -84,7 +90,6 @@ export default function AepsScreen() {
   const header = (
       <View style={{ paddingTop: insets.top + spacing.md }}>
         <Text style={styles.h1}>काउंटर</Text>
-        <Text style={styles.sub}>निकासी, UPI, रिचार्ज — खाते से अलग</Text>
         <View style={styles.segment}>
           {RANGES.map((r) => (
             <Pressable key={r.key} onPress={() => setRange(r.key)} style={[styles.segmentBtn, range === r.key && styles.segmentActive]} testID={`aeps-range-${r.key}`}>

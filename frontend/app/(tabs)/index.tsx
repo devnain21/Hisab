@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TextInput } from "react-native";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TextInput, Alert } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { Pressable } from "@/src/components/tap";
 import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
@@ -7,12 +7,13 @@ import { useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { cashIn, useAeps, useCustomers, useEntries, useJobs, computeBalance, type Job } from "@/src/lib/data";
+import { cashIn, onlineIn, useAeps, useCustomers, useEntries, useJobs, computeBalance, type Job } from "@/src/lib/data";
 import { aepsTotals } from "@/src/lib/aeps";
 import { formatDateShort, formatINR, formatPhone, formatWeekdayDate, todayISO } from "@/src/lib/format";
 import { AddEntrySheet, AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
 import { useAuth } from "@/src/context/AuthContext";
-import { usePendingCount } from "@/src/lib/store";
+import { clearRejected, flush, rejectedChanges, usePendingCount, useRejectedCount } from "@/src/lib/store";
+import { computeFlows, pocketNet, useMoneyBook } from "@/src/lib/wallet";
 import { useCounterMode } from "@/src/lib/counter";
 import { accountName, usePersona } from "@/src/lib/persona";
 import { useRecentCustomerIds } from "@/src/lib/recent";
@@ -35,6 +36,14 @@ export default function Home() {
   const [expenseSheet, setExpenseSheet] = useState(false);
   const { user } = useAuth();
   const pending = usePendingCount();
+  const rejectedCount = useRejectedCount();
+  const showRejected = () =>
+    Alert.alert(
+      "ये बदलाव सेव नहीं हुए",
+      `${rejectedChanges().map((r) => `• ${r.label}`).join("\n")}\n\nइन्हें दोबारा लिख दें।`,
+      [{ text: "बाद में" }, { text: "ठीक है, हटाएँ", onPress: () => void clearRejected() }],
+    );
+  const book = useMoneyBook();
   const counter = useCounterMode();
   const { isPersonal, labels } = usePersona();
   const recentIds = useRecentCustomerIds();
@@ -83,8 +92,12 @@ export default function Home() {
     const totalDue = dues.reduce((s, d) => s + d, 0);
     const totalWeOwe = weOwe.reduce((s, d) => s + d, 0);
     // The personal book has no work; its day is everything given and received.
-    const todayWork = entries.filter((e) => e.date === today && (isPersonal || e.type === "work") && personaCustIds.has(e.customerId));
-    const todayPay = entries.filter((e) => e.date === today && cashIn(e) > 0 && (!e.customerId || personaCustIds.has(e.customerId)));
+    // Personal: money handed out today (given / goods), the same rows as the day screen's first tab.
+    const todayWork = entries.filter(
+      (e) => e.date === today && (isPersonal ? e.type === "given" || e.type === "purchase" : e.type === "work") && personaCustIds.has(e.customerId),
+    );
+    const got = (e: (typeof entries)[0]) => cashIn(e) + onlineIn(e);
+    const todayPay = entries.filter((e) => e.date === today && got(e) > 0 && (!e.customerId || personaCustIds.has(e.customerId)));
     const open = jobs.filter((j) => j.status !== "done");
     return {
       totalDue,
@@ -93,12 +106,17 @@ export default function Home() {
       weOweCount: weOwe.length,
       todayWork: todayWork.reduce((n, e) => n + e.amount, 0),
       todayWorkCount: todayWork.length,
-      todayPay: todayPay.reduce((n, e) => n + cashIn(e), 0),
+      todayPay: todayPay.reduce((n, e) => n + got(e), 0),
       todayPayCount: todayPay.length,
       openJobs: open.length,
       overdue: open.filter((j) => j.dueDate < today).length,
     };
   }, [customers, entries, jobs, today, personaCustIds, isPersonal]);
+
+  const persona = isPersonal ? "personal" : "business";
+  const pockets = useMemo(() => computeFlows(book, persona, (d) => d <= today), [book, persona, today]);
+  const cashBal = pocketNet(pockets.cash);
+  const bankBal = pocketNet(pockets.bank);
 
   const aepsToday = useMemo(() => aepsTotals(aeps, (d) => d === today), [aeps, today]);
   const aepsDue = useMemo(() => aeps.filter((t) => t.status === "pending" && (t.dueDate || t.date) <= today).length, [aeps, today]);
@@ -227,10 +245,16 @@ export default function Home() {
         ) : null}
 
         {pending > 0 ? (
-          <View style={styles.pendingPill} testID="home-sync-pending">
+          <Pressable style={styles.pendingPill} onPress={() => void flush()} testID="home-sync-pending">
             <MaterialIcon name="cloud-upload-outline" size={14} color={colors.warning} />
-            <Text style={styles.pendingText}>{pending} बदलाव फ़ोन में सेव, इंटरनेट आने पर सिंक होंगे</Text>
-          </View>
+            <Text style={styles.pendingText}>{pending} बदलाव फ़ोन में सेव · अभी भेजें</Text>
+          </Pressable>
+        ) : null}
+        {rejectedCount > 0 ? (
+          <Pressable style={[styles.pendingPill, { backgroundColor: colors.errorSoft }]} onPress={showRejected} testID="home-sync-rejected">
+            <MaterialIcon name="alert-circle-outline" size={14} color={colors.error} />
+            <Text style={[styles.pendingText, { color: colors.error }]}>{rejectedCount} बदलाव सर्वर ने नहीं लिए · देखें</Text>
+          </Pressable>
         ) : null}
 
         {loadFailed ? (
@@ -264,9 +288,9 @@ export default function Home() {
                     testID="stat-total-we-owe"
                   />
                   <StatCard
-                    label="आज का लेन-देन"
+                    label="आज दिए"
                     value={formatINR(stats.todayWork)}
-                    hint={`${stats.todayWorkCount} एंट्री`}
+                    hint={`मिले ${formatINR(stats.todayPay)}`}
                     icon="swap-horizontal"
                     tone="neutral"
                     onPress={() => router.push({ pathname: "/day", params: { type: "work" } })}
@@ -323,6 +347,21 @@ export default function Home() {
                 </>
               )}
             </View>
+
+            <Pressable style={styles.walletLine} onPress={() => router.push("/balance" as never)} testID="home-wallet">
+              <View style={styles.walletCell}>
+                <MaterialIcon name="cash" size={16} color={colors.success} />
+                <Text style={styles.walletLabel}>{labels.cash}</Text>
+                <Text style={[styles.walletValue, cashBal < 0 && { color: colors.error }]}>{formatINR(cashBal)}</Text>
+              </View>
+              <View style={styles.walletDivider} />
+              <View style={styles.walletCell}>
+                <MaterialIcon name="bank-outline" size={16} color={colors.info} />
+                <Text style={styles.walletLabel}>बैंक</Text>
+                <Text style={[styles.walletValue, bankBal < 0 && { color: colors.error }]}>{formatINR(bankBal)}</Text>
+              </View>
+              <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
+            </Pressable>
 
             <View style={styles.actionRow}>
               <Pressable style={styles.primaryAction} onPress={() => (isPersonal ? setMoneySheet(true) : setJobSheet(true))} testID="quick-work">
@@ -434,6 +473,11 @@ const styles = StyleSheet.create({
   statBottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xs },
   statHint: { fontSize: 12, color: colors.muted, flexShrink: 1 },
   actionRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },
+  walletLine: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm, paddingVertical: spacing.md, paddingHorizontal: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+  walletCell: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6 },
+  walletLabel: { fontSize: 13, color: colors.muted, fontWeight: "600" },
+  walletValue: { fontSize: 16, fontWeight: "800", color: colors.onSurface, flexShrink: 1 },
+  walletDivider: { width: 1, alignSelf: "stretch", backgroundColor: colors.border },
   primaryAction: { flex: 3, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
   primaryActionText: { color: colors.onBrandPrimary, fontSize: 15, fontWeight: "700" },
   secondaryAction: { flex: 2.5, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.surface },

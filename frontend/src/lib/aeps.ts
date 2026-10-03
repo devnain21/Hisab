@@ -204,8 +204,12 @@ export function bankLegDate(t: LegRow): string | null {
 export function commissionPocket(t: LegRow): "cash" | "bank" {
   return t.commissionMode === "cash" ? "cash" : "bank";
 }
-export function commissionDate(t: LegRow): string | null {
-  return t.commissionMode === "cash" || t.commissionMode === "online" ? cashLegDate(t) : bankLegDate(t);
+/** Customer-paid commission arrives with the cash only when the customer paid in full; otherwise it stays on the khata. */
+export function commissionDate(t: LegRow & { amount?: number }): string | null {
+  if (t.commissionMode !== "cash" && t.commissionMode !== "online") return bankLegDate(t);
+  const leg = cashLegDate(t);
+  if (!leg || cashOf(t) !== "in" || t.collected == null || t.amount == null) return leg;
+  return t.collected >= t.amount ? leg : null;
 }
 
 export const COMMISSION_MODES: { id: Exclude<AepsCommissionMode, "">; label: string }[] = [
@@ -259,7 +263,7 @@ export function aepsBill(t: MoneyRow): AepsBill {
   }
   if (flow === "in") {
     const total = t.amount + charge;
-    const settled = collectedOf(t) + (legDone ? charge : 0);
+    const settled = collectedOf(t) + (commissionDate(t) ? charge : 0);
     return { flow, amount: t.amount, charge, total, settled, due: Math.max(0, total - settled) };
   }
   const settled = legDone ? charge : 0;

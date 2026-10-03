@@ -11,6 +11,11 @@ function notify() {
   listeners.forEach((fn) => fn());
 }
 
+export function resetRecentCustomers() {
+  recentCache = [];
+  notify();
+}
+
 export async function addRecentCustomer(customerId: string): Promise<void> {
   if (!customerId) return;
   try {

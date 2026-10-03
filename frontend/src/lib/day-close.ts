@@ -4,6 +4,7 @@ import type { Expense } from "./expenses";
 import type { ContraTransfer } from "./contra";
 import type { ShopProfile } from "../context/AuthContext";
 import { shareMessage } from "./share-text";
+import type { PocketFlow } from "./wallet";
 
 export type DaySummaryData = {
   date: string;
@@ -37,6 +38,9 @@ export type DaySummaryData = {
   expectedBank: number;
   actualBank: number | null;
   bankDiff: number | null;
+  // Every rupee through each pocket that day (same numbers as the galla / bank cards)
+  cashFlow: PocketFlow;
+  bankFlow: PocketFlow;
   // Net
   netProfitEstimate: number;
 };
@@ -70,6 +74,30 @@ export function buildDayCloseMessage(data: DaySummaryData): string {
     `☕ *आज का दुकान खर्च:* ${formatINR(data.expenseCash + data.expenseOnline)}`,
     `  • गल्ले से दिया: ${formatINR(data.expenseCash)}`,
     `  • बैंक/UPI से दिया: ${formatINR(data.expenseOnline)}`,
+  );
+
+  const c = data.cashFlow;
+  const b = data.bankFlow;
+  const counter = c.counterIn + c.counterOut + b.counterIn + b.counterOut + c.commission + b.commission;
+  if (counter > 0) {
+    lines.push(
+      ``,
+      `👆 *काउंटर (AEPS / UPI):*`,
+      `  • गल्ला: +${formatINR(c.counterIn)} / −${formatINR(c.counterOut)}`,
+      `  • बैंक: +${formatINR(b.counterIn)} / −${formatINR(b.counterOut)}`,
+      `  • कमीशन: ${formatINR(c.commission + b.commission)}`,
+    );
+  }
+  const handedOut = c.given + c.purchase + b.given + b.purchase;
+  if (handedOut > 0) lines.push(``, `🤝 *दिए / सामान के पैसे:* ${formatINR(handedOut)} (गल्ला ${formatINR(c.given + c.purchase)} · बैंक ${formatINR(b.given + b.purchase)})`);
+  if (data.bankToCash + data.cashToBank > 0) {
+    lines.push(``, `🔁 *गल्ला ↔ बैंक:* बैंक से गल्ले में ${formatINR(data.bankToCash)} · गल्ले से बैंक में ${formatINR(data.cashToBank)}`);
+  }
+  const otherIn = c.moveIn - data.bankToCash;
+  const otherOut = c.moveOut - data.cashToBank;
+  if (otherIn > 0 || otherOut > 0) lines.push(`  • गल्ले में बाहर से जोड़े ${formatINR(Math.max(otherIn, 0))} · बाहर निकाले ${formatINR(Math.max(otherOut, 0))}`);
+
+  lines.push(
     ``,
     `--------------------------------`,
     `💵 *दुकान का गल्ला (Cash Drawer):*`,
@@ -103,8 +131,8 @@ export function buildDayCloseMessage(data: DaySummaryData): string {
 
   lines.push(
     `--------------------------------`,
-    `🎯 *आज का शुद्ध नकद बहाव:* ${formatINR(data.workCash + data.paymentCash - (data.expenseCash + (data.feePaidCash || 0)))}`,
-    `✨ *आज की शुद्ध बचत (काम - फीस - खर्च):* ${formatINR(realNetProfit)}`,
+    `🎯 *आज गल्ले में बदलाव:* ${data.expectedCash - data.openingCash < 0 ? "−" : "+"}${formatINR(Math.abs(data.expectedCash - data.openingCash))}`,
+    `✨ *आज की शुद्ध बचत (काम − फीस + कमीशन − खर्च):* ${formatINR(realNetProfit)}`,
     `--------------------------------`,
     `🙏 हिसाब पूरा हुआ · शुभ रात्रि!`,
   );

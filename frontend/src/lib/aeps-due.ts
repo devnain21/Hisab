@@ -6,6 +6,7 @@ import { store } from "@/src/lib/store";
 import type { AepsTxn, Entry } from "@/src/lib/data";
 import { AEPS_META, aepsDue, cashLegDate, cashOf, viaBill } from "@/src/lib/aeps";
 import { todayISO } from "@/src/lib/format";
+import { settlementsFor } from "@/src/lib/records";
 
 type AepsBody = Omit<AepsTxn, "id" | "createdAt">;
 
@@ -20,18 +21,34 @@ function dueTitle(t: AepsBody): string {
   return `${AEPS_META[t.type]?.label ?? "काउंटर सेवा"}${via ? ` · ${via}` : ""}`;
 }
 
+/** Money the customer already paid on the khata against this row's due. */
+export function khataPaid(aepsId: string, entries: Entry[] = entriesNow()): number {
+  const due = aepsDueEntry(aepsId, entries);
+  return due ? settlementsFor(due, entries).reduce((s, p) => s + p.amount, 0) : 0;
+}
+
 /** Brings the khata entry in line with the row: created, resized, moved or removed. */
 export function syncAepsDue(id: string, t: AepsBody) {
-  const due = aepsDue(t);
   const existing = aepsDueEntry(id);
-  if (existing && (due <= 0 || existing.customerId !== t.customerId)) {
-    // Payments already taken against it stay on the khata as jama.
-    store.deleteEntry(existing.id);
-  }
-  if (due <= 0 || !t.customerId) return;
+  const paid = existing ? khataPaid(id) : 0;
+  // Once the customer paid something on the khata the entry must keep covering it, or that payment turns into a false advance.
+  const due = Math.max(aepsDue(t), paid);
   const body = { type: "aeps" as const, date: t.doneDate || t.date, description: dueTitle(t), amount: due, notes: t.reference ? `Txn ${t.reference}` : "", linkId: id };
+  if (existing && paid > 0) {
+    store.updateEntry(existing.id, { ...body, amount: due });
+    return;
+  }
+  if (existing && (due <= 0 || existing.customerId !== t.customerId)) store.deleteEntry(existing.id);
+  if (due <= 0 || !t.customerId) return;
   if (existing && existing.customerId === t.customerId) store.updateEntry(existing.id, body);
   else store.createEntry({ customerId: t.customerId, paid: 0, ...body });
+}
+
+/** Counter cash can't also cover what the customer already paid on the khata, or the galla counts it twice. */
+function withKhata(id: string | null, t: AepsBody): AepsBody {
+  const paid = id ? khataPaid(id) : 0;
+  if (paid <= 0 || cashOf(t) !== "in" || t.collected == null) return t;
+  return { ...t, collected: Math.min(t.collected, Math.max(0, t.amount - paid)) };
 }
 
 export function createAeps(t: AepsBody): AepsTxn {
@@ -41,8 +58,9 @@ export function createAeps(t: AepsBody): AepsTxn {
 }
 
 export function saveAeps(id: string, t: AepsBody) {
-  store.updateAeps(id, t);
-  syncAepsDue(id, t);
+  const body = withKhata(id, t);
+  store.updateAeps(id, body);
+  syncAepsDue(id, body);
 }
 
 const bodyOf = ({ id: _id, createdAt: _c, ...body }: AepsTxn): AepsBody => body;

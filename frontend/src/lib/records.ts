@@ -72,11 +72,22 @@ function legacyAdvancesForWork(work: Entry, entries: Entry[]): Entry[] {
   );
 }
 
+/**
+ * Money that changed hands on another day is a past galla / bank event: it stays on the khata
+ * (unlinked) instead of disappearing with the entry it was booked against.
+ */
+function dropOrKeep(rows: Entry[], day: string) {
+  rows.forEach((p) => {
+    if (p.date === day) store.deleteEntry(p.id);
+    else if (p.linkId) store.updateEntry(p.id, { linkId: "" });
+  });
+}
+
 /** Removes a khata entry together with the rows that were booked with it. */
 export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]) {
   if (entry.type === "given" || entry.type === "purchase") {
     store.deleteEntry(entry.id);
-    settlementsFor(entry, entries).forEach((p) => store.deleteEntry(p.id));
+    dropOrKeep(settlementsFor(entry, entries), entry.date);
     return;
   }
   const work = entry.type === "work" ? entry : workForPayment(entry, entries);
@@ -86,13 +97,10 @@ export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]
     return;
   }
   const job = jobForWork(work, jobs);
-  const linked = new Set<string>([
-    ...settlementsFor(work, entries).map((p) => p.id),
-    ...legacyAdvancesForWork(work, entries).map((p) => p.id),
-    ...(job ? advancesForJob(job, entries).map((p) => p.id) : []),
-  ]);
+  const linked = new Map<string, Entry>();
+  [...settlementsFor(work, entries), ...legacyAdvancesForWork(work, entries), ...(job ? advancesForJob(job, entries) : [])].forEach((p) => linked.set(p.id, p));
   store.deleteEntry(work.id);
-  linked.forEach((id) => store.deleteEntry(id));
+  dropOrKeep([...linked.values()], work.date);
   if (job) store.deleteJob(job.id);
 }
 

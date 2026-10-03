@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Linking } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Linking, ActivityIndicator } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
@@ -94,11 +94,18 @@ export default function CustomerDetail() {
     return { work, given, got, bought, paidOut, any: work + given + got + bought + paidOut > 0 };
   }, [entries]);
   // Money left with us by a customer is an advance; with a personal contact it's money we owe back.
-  const isCustomer = entries.some((e) => e.type === "work" || e.type === "aeps") || jobs.length > 0 || aepsList.length > 0;
+  const isCustomer = customer?.persona !== "personal";
   const balanceLabel = due > 0 ? "लेने हैं" : due < 0 ? (isCustomer ? "एडवांस" : "देने हैं") : "हिसाब";
   const openJobs = jobs.filter((j) => j.status !== "done");
   const showMoreFilters = rows.length > 8;
 
+  if (!customer && customersQ.isLoading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }}>
+        <ActivityIndicator color={colors.brandPrimary} />
+      </View>
+    );
+  }
   if (!customer) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center", padding: spacing.xl }}>

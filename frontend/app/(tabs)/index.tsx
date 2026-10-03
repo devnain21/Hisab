@@ -7,7 +7,11 @@ import { useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { cashIn, onlineIn, useAeps, useCustomers, useEntries, useJobs, computeBalance, type Job } from "@/src/lib/data";
+import { cashIn, onlineIn, useAeps, useCustomers, useEntries, useJobs, computeBalance, type Entry, type Job } from "@/src/lib/data";
+import { buildAllLedgers, workForJob } from "@/src/lib/records";
+import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
+import { ReceiptSheet } from "@/src/components/receipt-sheet";
+import * as Updates from "expo-updates";
 import { aepsTotals } from "@/src/lib/aeps";
 import { formatDateShort, formatINR, formatPhone, formatWeekdayDate, todayISO } from "@/src/lib/format";
 import { AddEntrySheet, AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
@@ -34,7 +38,9 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [voiceModal, setVoiceModal] = useState(false);
   const [expenseSheet, setExpenseSheet] = useState(false);
+  const [shareDoc, setShareDoc] = useState<ShareDoc | null>(null);
   const { user } = useAuth();
+  const { isUpdatePending } = Updates.useUpdates();
   const pending = usePendingCount();
   const rejectedCount = useRejectedCount();
   const showRejected = () =>
@@ -141,6 +147,24 @@ export default function Home() {
     () => jobs.filter((j) => j.status !== "done").sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 8),
     [jobs]
   );
+
+  // A finished job's dueDate is its completion day, so the newest few are found without scanning every job's entry.
+  const recentDone = useMemo(() => {
+    if (isPersonal) return [];
+    const out: { job: Job; work: Entry }[] = [];
+    const done = jobs.filter((j) => j.status === "done" && j.customerId).sort((a, b) => b.dueDate.localeCompare(a.dueDate) || b.createdAt.localeCompare(a.createdAt));
+    for (const j of done) {
+      const w = workForJob(j, entries);
+      if (w) out.push({ job: j, work: w });
+      if (out.length === 5) break;
+    }
+    return out;
+  }, [jobs, entries, isPersonal]);
+  const sendReceipt = (work: Entry) => {
+    const c = customers.find((x) => x.id === work.customerId);
+    if (!c) return;
+    setShareDoc(receiptDoc(work, buildAllLedgers(entries).get(work.id), c, computeBalance(entries, c.id), true, user ?? {}));
+  };
 
   const loading = customersQ.isLoading || entriesQ.isLoading || jobsQ.isLoading;
   const loadFailed =
@@ -261,6 +285,12 @@ export default function Home() {
           </View>
         ) : null}
 
+        {isUpdatePending && pending === 0 ? (
+          <Pressable style={[styles.pendingPill, { backgroundColor: colors.successSoft }]} onPress={() => void Updates.reloadAsync().catch(() => {})} testID="home-update-ready">
+            <MaterialIcon name="download-circle-outline" size={14} color={colors.success} />
+            <Text style={[styles.pendingText, { color: colors.success }]}>नया अपडेट तैयार · अभी लगाएँ</Text>
+          </Pressable>
+        ) : null}
         {pending > 0 ? (
           <Pressable style={styles.pendingPill} onPress={() => void flush()} testID="home-sync-pending">
             <MaterialIcon name="cloud-upload-outline" size={14} color={colors.warning} />
@@ -484,6 +514,34 @@ export default function Home() {
             )}
             </>
             )}
+
+            {recentDone.length > 0 ? (
+              <>
+                <View style={styles.sectionRow}>
+                  <Text style={styles.sectionHead}>हाल में पूरा हुआ काम</Text>
+                  <Pressable onPress={() => go("/(tabs)/work", { filter: "all" })} hitSlop={8} testID="home-done-more">
+                    <Text style={styles.link}>सभी देखें</Text>
+                  </Pressable>
+                </View>
+                <View style={{ gap: spacing.sm }}>
+                  {recentDone.map(({ job: j, work: w }) => (
+                    <Pressable key={j.id} style={styles.jobCard} onPress={() => setEditingJob(j)} testID={`home-done-${j.id}`}>
+                      <MaterialIcon name="check-circle-outline" size={20} color={colors.success} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.rowTitle} numberOfLines={1}>{j.title}</Text>
+                        <Text style={styles.rowSub} numberOfLines={1}>
+                          {nameOf(j.customerId)} · {w.date === today ? "आज" : formatDateShort(w.date)} · {formatINR(w.amount)}
+                        </Text>
+                      </View>
+                      <Pressable style={styles.receiptBtn} onPress={() => sendReceipt(w)} hitSlop={6} testID={`home-receipt-${j.id}`}>
+                        <MaterialIcon name="file-document-outline" size={16} color={colors.brandPrimary} />
+                        <Text style={styles.receiptBtnText}>रसीद</Text>
+                      </Pressable>
+                    </Pressable>
+                  ))}
+                </View>
+              </>
+            ) : null}
           </Animated.View>
         )}
       </ScrollView>
@@ -493,6 +551,7 @@ export default function Home() {
       <AddExpenseSheet visible={expenseSheet} onClose={() => setExpenseSheet(false)} />
       <EditRecordSheet job={editingJob} onClose={() => setEditingJob(null)} />
       <VoiceEntryModal visible={voiceModal} onClose={() => setVoiceModal(false)} />
+      <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
     </View>
   );
 }
@@ -644,6 +703,8 @@ const styles = StyleSheet.create({
   sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xl, marginBottom: spacing.md },
   sectionHead: { fontSize: 18, fontWeight: "700", color: colors.onSurface },
   link: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
+  receiptBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandPrimary },
+  receiptBtnText: { fontSize: 12, fontWeight: "700", color: colors.brandPrimary },
   rowTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   rowSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   emptyRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.lg, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },

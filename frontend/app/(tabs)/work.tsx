@@ -13,16 +13,14 @@ import { AddEntrySheet, AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSh
 import { Pressable } from "@/src/components/tap";
 import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
 import { usePersona } from "@/src/lib/persona";
-type Filter = "open" | "late" | "today" | "unpaid" | "done" | "all";
-const FILTERS: Filter[] = ["open", "late", "today", "unpaid", "done", "all"];
-const FILTER_LABEL: Record<Filter, string> = { open: "काम बाकी", late: "देर", today: "आज", unpaid: "लेने हैं", done: "पूरा", all: "सभी" };
+type Filter = "open" | "late" | "unpaid" | "all";
+const FILTERS: Filter[] = ["open", "late", "unpaid", "all"];
+const FILTER_LABEL: Record<Filter, string> = { open: "काम बाकी", late: "देर", unpaid: "लेने हैं", all: "सभी" };
 
 function matches(j: Job, f: Filter, today: string, pay?: WorkStatus) {
   if (f === "open") return j.status !== "done";
   if (f === "late") return j.status !== "done" && j.dueDate < today;
-  if (f === "today") return j.status !== "done" && j.dueDate === today;
   if (f === "unpaid") return j.status === "done" && !!pay && pay.remaining > 0;
-  if (f === "done") return j.status === "done";
   return true;
 }
 
@@ -83,6 +81,8 @@ function ShopWork() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobs, today, ledger, workOf]);
 
+  const todayCount = useMemo(() => jobs.filter((j) => j.status !== "done" && j.dueDate === today).length, [jobs, today]);
+
   const unpaidTotal = useMemo(
     () => jobs.reduce((s, j) => s + (j.status === "done" ? payOf(j)?.remaining ?? 0 : 0), 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -113,7 +113,7 @@ function ShopWork() {
         <Text style={styles.h1}>काम</Text>
         <SearchBox value={q} onChange={setQ} placeholder="काम या ग्राहक खोजें" testID="work-search" />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.md }}>
-          {FILTERS.filter((f) => f === "open" || f === "done" || f === "all" || counts[f] > 0 || filter === f).map((f) => {
+          {FILTERS.filter((f) => f === "open" || f === "all" || counts[f] > 0 || filter === f).map((f) => {
             const active = filter === f;
             const warn = (f === "late" || f === "unpaid") && counts[f] > 0;
             return (
@@ -130,11 +130,11 @@ function ShopWork() {
             );
           })}
         </ScrollView>
-        {!loading && (filter === "open" || filter === "late" || filter === "today") ? (
+        {!loading && (filter === "open" || filter === "late") ? (
           <Text style={styles.summary} testID="work-summary">
             <Text onPress={() => setFilter("open")} style={filter === "open" ? styles.summaryOn : undefined}>{counts.open} काम बाकी</Text>
             {" · "}
-            <Text onPress={() => setFilter("today")} style={filter === "today" ? styles.summaryOn : undefined}>आज {counts.today}</Text>
+            <Text>आज {todayCount}</Text>
             {counts.late > 0 ? <Text onPress={() => setFilter("late")} style={{ color: colors.error, fontWeight: "700" }}> · {counts.late} देर से</Text> : null}
             {openValue > 0 ? ` · अनुमानित ${formatINR(openValue)}` : ""}
           </Text>

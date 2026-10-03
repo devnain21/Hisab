@@ -128,8 +128,9 @@ def _check_paid(m):
 
 # work: service done (raises what they owe) · payment: money received from them ·
 # given: money handed to them, e.g. a personal loan (raises what they owe, no work involved) ·
-# purchase: goods / service we took from them (raises what we owe; `paid` = paid on the spot).
-EntryType = Literal["work", "payment", "given", "purchase"]
+# purchase: goods / service we took from them (raises what we owe; `paid` = paid on the spot) ·
+# aeps: what a customer still owes for a counter service (linkId = the AEPS row; money moves on that row).
+EntryType = Literal["work", "payment", "given", "purchase", "aeps"]
 PAID_TYPES = ("work", "purchase")
 
 
@@ -264,6 +265,13 @@ class AepsFields(BaseModel):
     # Pending row the customer asked to be sent on a later day.
     dueDate: str = ""
     notes: str = ""
+    # Shop customer this service was done for.
+    customerId: str = ""
+    # How it was done: AEPS (Aadhaar) / UPI / bank account / EMI.
+    via: Literal["", "aeps", "upi", "bank", "emi"] = ""
+    # Money the customer has handed over toward the amount, and how. None on older rows (= the full amount).
+    collected: Optional[float] = Field(None, ge=0)
+    payMode: Literal["", "cash", "online"] = ""
 
 
 class AepsTxn(AepsFields):

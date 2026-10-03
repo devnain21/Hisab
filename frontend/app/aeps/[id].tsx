@@ -4,18 +4,18 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { useAeps, type AepsTxn } from "@/src/lib/data";
-import { AEPS_META, FIELD_LABEL, STATUS_META, cashLegDate, cashOf, commissionModeLabel, isLater, moneyLines, statusLabel, type AepsField } from "@/src/lib/aeps";
-import { formatDate, formatINR, formatPhone, todayISO } from "@/src/lib/format";
-
-const TONE = { in: colors.success, out: colors.error, wait: colors.warning, muted: colors.muted } as const;
+import { useAeps, useCustomers, type AepsTxn } from "@/src/lib/data";
+import { AEPS_META, STATUS_META, aepsBill, aepsDue, cashLegDate, cashOf, commissionModeLabel, defaultVia, fieldLabel, isLater, moneyLines, statusLabel, viaBill, type AepsField } from "@/src/lib/aeps";
+import { formatDate, formatINR, formatPhone } from "@/src/lib/format";
 import { shareMessage } from "@/src/lib/share-text";
-import { store } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
 import { useAuth } from "@/src/context/AuthContext";
 import { Pressable } from "@/src/components/tap";
 import { AepsSheet } from "@/src/components/aeps-sheet";
 import { aepsReceiptDoc, sharePdf } from "@/src/lib/receipt";
+import { cashSettledAeps, completeAeps, failAeps, removeAeps } from "@/src/lib/aeps-due";
+
+const TONE = { in: colors.success, out: colors.error, wait: colors.warning, muted: colors.muted } as const;
 
 const DETAIL_ORDER: AepsField[] = [
   "mobile", "aadhaarLast4", "beneficiaryName", "upiId", "bankName", "accountNumber", "ifsc",
@@ -38,6 +38,7 @@ export default function AepsDetail() {
   const { user } = useAuth();
   const [editing, setEditing] = useState(false);
   const [sharingPdf, setSharingPdf] = useState(false);
+  const customers = useCustomers().data ?? [];
   const t = (q.data ?? []).find((x) => x.id === id);
 
   if (!t) {
@@ -54,21 +55,17 @@ export default function AepsDetail() {
 
   const meta = AEPS_META[t.type];
   const st = STATUS_META[t.status];
+  const via = t.via || defaultVia(t.type);
+  const bill = aepsBill(t);
+  const due = aepsDue(t);
+  const linked = t.customerId ? customers.find((c) => c.id === t.customerId) : undefined;
   const later = isLater(t);
   const cashPending = t.status === "pending" && cashOf(t) !== "none" && !cashLegDate(t);
-  const { id: _id, createdAt: _c, ...body } = t;
-
-  const markDone = () => {
-    const today = todayISO();
-    confirmAction("ट्रांज़ैक्शन हो गया?", `${t.customerName} · ${formatINR(t.amount)} · आज की तारीख में जुड़ेगा`, "हाँ, हो गया", () =>
-      store.updateAeps(t.id, { ...body, status: "success", doneDate: today, cashDate: cashLegDate(t) || today, dueDate: "" })
-    );
-  };
-  const markCash = () => store.updateAeps(t.id, { ...body, cashDate: todayISO() });
+  const markDone = () =>
+    confirmAction("ट्रांज़ैक्शन हो गया?", `${t.customerName} · ${formatINR(t.amount)} · आज की तारीख में जुड़ेगा`, "हाँ, हो गया", () => completeAeps(t));
+  const markCash = () => cashSettledAeps(t);
   const markFailed = () =>
-    confirmAction("फेल मार्क करें?", cashLegDate(t) ? "लिया हुआ कैश वापस कर दें, गल्ले से हट जाएगा।" : "हिसाब में नहीं जुड़ेगा।", "फेल करें", () =>
-      store.updateAeps(t.id, { ...body, status: "failed", cashDate: "", doneDate: "", dueDate: "" })
-    );
+    confirmAction("फेल मार्क करें?", cashLegDate(t) ? "लिया हुआ कैश वापस कर दें, गल्ले से हट जाएगा।" : "हिसाब में नहीं जुड़ेगा।", "फेल करें", () => failAeps(t));
   const details = DETAIL_ORDER.map((f) => ({ f, v: displayValue(t, f) })).filter((d) => d.v);
 
   const share = async () => {
@@ -95,7 +92,7 @@ export default function AepsDetail() {
 
   const remove = () => {
     confirmAction("एंट्री हटाएँ?", `${t.customerName} · ${meta.short}${t.amount > 0 ? ` · ${formatINR(t.amount)}` : ""}`, "हटा दें", () => {
-      store.deleteAeps(t.id);
+      removeAeps(t);
       router.back();
     });
   };
@@ -120,8 +117,9 @@ export default function AepsDetail() {
           <View style={[styles.heroIcon, { backgroundColor: meta.soft }]}>
             <MaterialIcon name={meta.icon as any} size={28} color={meta.color} />
           </View>
-          <Text style={[styles.heroType, { color: meta.color }]}>{meta.label}</Text>
-          {t.amount > 0 ? <Text style={styles.heroAmount}>{formatINR(t.amount)}</Text> : null}
+          <Text style={[styles.heroType, { color: meta.color }]}>{t.type === "other" && t.billerName ? t.billerName : meta.label}</Text>
+          {via ? <Text style={styles.heroVia}>via {viaBill(via)}</Text> : null}
+          {t.amount > 0 ? <Text style={styles.heroAmount}>{formatINR(t.amount)}</Text> : bill.total > 0 ? <Text style={styles.heroAmount}>{formatINR(bill.total)}</Text> : null}
           <View style={[styles.statusPill, { backgroundColor: later ? colors.infoSoft : st.soft }]}>
             <MaterialIcon name={(later ? "calendar-clock" : st.icon) as any} size={14} color={later ? colors.info : st.color} />
             <Text style={[styles.statusText, { color: later ? colors.info : st.color }]}>{statusLabel(t)}</Text>
@@ -138,6 +136,29 @@ export default function AepsDetail() {
             </View>
           ))}
         </View>
+
+        {bill.flow !== "out" && bill.total > 0 && t.status !== "failed" ? (
+          <View style={styles.billBox}>
+            <View style={styles.billCell}>
+              <Text style={styles.billLabel}>कुल</Text>
+              <Text style={styles.billValue}>{formatINR(bill.total)}</Text>
+            </View>
+            <View style={[styles.billCell, styles.billMid]}>
+              <Text style={styles.billLabel}>जमा</Text>
+              <Text style={[styles.billValue, { color: colors.success }]}>{formatINR(bill.settled)}</Text>
+            </View>
+            <View style={styles.billCell}>
+              <Text style={styles.billLabel}>बाकी</Text>
+              <Text style={[styles.billValue, { color: bill.due > 0 ? colors.error : colors.success }]}>{bill.due > 0 ? formatINR(bill.due) : "✔"}</Text>
+            </View>
+          </View>
+        ) : null}
+        {due > 0 && linked ? (
+          <Pressable style={[styles.actBtn, { backgroundColor: colors.brandPrimary, marginTop: spacing.sm }]} onPress={() => router.push(`/customer/${linked.id}`)} testID="aeps-open-khata">
+            <MaterialIcon name="notebook-outline" size={18} color="#fff" />
+            <Text style={styles.actText}>बाकी {formatINR(due)} · खाते में पैसे लें</Text>
+          </Pressable>
+        ) : null}
 
         {t.status === "pending" ? (
           <View style={styles.actions}>
@@ -158,11 +179,19 @@ export default function AepsDetail() {
           </View>
         ) : null}
 
-        <Text style={styles.sectionHead}>{t.type === "transfer" ? "भेजने वाला" : "ग्राहक"}</Text>
+        <Text style={styles.sectionHead}>ग्राहक</Text>
         <View style={styles.card}>
-          <Row label="नाम" value={t.customerName} />
+          {linked ? (
+            <Pressable style={styles.row} onPress={() => router.push(`/customer/${linked.id}`)} testID="aeps-open-customer">
+              <Text style={styles.rowLabel}>नाम</Text>
+              <Text style={[styles.rowValue, { color: colors.brandPrimary }]} numberOfLines={1}>{linked.name}</Text>
+              <MaterialIcon name="chevron-right" size={18} color={colors.brandPrimary} />
+            </Pressable>
+          ) : (
+            <Row label="नाम" value={t.customerName} />
+          )}
           {details.map((d) => (
-            <Row key={d.f} label={FIELD_LABEL[d.f]} value={d.v} mono={d.f === "reference" || d.f === "accountNumber" || d.f === "ifsc" || d.f === "billAccount" || d.f === "upiId"} />
+            <Row key={d.f} label={fieldLabel(t.type, via, d.f).replace(/ \(वैकल्पिक\)$/, "")} value={d.v} mono={d.f === "reference" || d.f === "accountNumber" || d.f === "ifsc" || d.f === "billAccount" || d.f === "upiId"} />
           ))}
         </View>
 
@@ -226,6 +255,12 @@ const styles = StyleSheet.create({
   hero: { alignItems: "center", padding: spacing.xl, borderRadius: radius.lg, backgroundColor: colors.surfaceSecondary, borderTopWidth: 4, borderWidth: 1 },
   heroIcon: { width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center" },
   heroType: { fontSize: 15, fontWeight: "700", marginTop: spacing.md },
+  heroVia: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 2 },
+  billBox: { flexDirection: "row", marginTop: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+  billCell: { flex: 1, alignItems: "center", paddingVertical: spacing.md },
+  billMid: { borderLeftWidth: 1, borderRightWidth: 1, borderColor: colors.border },
+  billLabel: { fontSize: 12, color: colors.muted, fontWeight: "600" },
+  billValue: { fontSize: 17, fontWeight: "800", color: colors.onSurface, marginTop: 2 },
   heroAmount: { fontSize: 36, fontWeight: "800", color: colors.onSurface, marginTop: spacing.xs },
   statusPill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.pill, marginTop: spacing.sm },
   statusText: { fontSize: 12, fontWeight: "700" },

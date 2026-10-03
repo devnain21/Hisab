@@ -131,6 +131,8 @@ export function computeFlows(book: Book, persona: Persona, keep: (date: string) 
       if ((e.fee ?? 0) > 0) f[e.feeMode === "cash" ? "cash" : "bank"].fee += e.fee ?? 0;
     } else if (e.type === "payment") {
       f[pocketOf(e.mode)].received += e.amount;
+    } else if (e.type === "aeps") {
+      continue;
     } else if (e.type === "purchase") {
       f[pocketOf(e.mode)].purchase += e.paid ?? 0;
     } else if (isRepayment(e)) {

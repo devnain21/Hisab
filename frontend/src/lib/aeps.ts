@@ -1,4 +1,4 @@
-import type { AepsCash, AepsCommissionMode, AepsStatus, AepsTxn, AepsType } from "@/src/lib/data";
+import type { AepsCash, AepsCommissionMode, AepsStatus, AepsTxn, AepsType, AepsVia } from "@/src/lib/data";
 import { formatDate, formatINR, isBackdated } from "@/src/lib/format";
 
 export type AepsField =
@@ -20,56 +20,99 @@ export type AepsField =
 // "out": shop hands cash to the customer, "in": customer hands cash to the shop.
 type Meta = { label: string; short: string; icon: string; color: string; soft: string; cash: "in" | "out" | "none"; amountLabel: string; fields: AepsField[] };
 
-export const AEPS_TYPES: AepsType[] = ["withdrawal", "cash", "upi", "deposit", "transfer", "recharge", "bill", "balance", "other"];
+/** Services offered when adding; the rest only exist on older rows. */
+export const AEPS_SERVICES: AepsType[] = ["withdrawal", "deposit", "transfer", "bill", "recharge", "other"];
+export const AEPS_TYPES: AepsType[] = [...AEPS_SERVICES, "upi", "cash", "balance"];
 
 export const AEPS_META: Record<AepsType, Meta> = {
   withdrawal: {
-    label: "नकद निकासी (AEPS)", short: "निकासी", icon: "cash-fast", color: "#C62828", soft: "#FDECEA", cash: "out",
-    amountLabel: "निकाली गई रकम (₹)",
-    fields: ["mobile", "aadhaarLast4", "bankName", "amount", "reference", "commission"],
-  },
-  cash: {
-    label: "नकद दिया", short: "नकद", icon: "cash", color: "#9A3412", soft: "#FFEDD5", cash: "out",
-    amountLabel: "दिए गए नकद (₹)",
-    fields: ["amount", "reference", "commission"],
+    label: "Money Withdrawal", short: "Withdrawal", icon: "cash-fast", color: "#C62828", soft: "#FDECEA", cash: "out",
+    amountLabel: "निकासी रकम (₹)",
+    fields: ["mobile", "aadhaarLast4", "bankName", "ifsc", "upiId", "amount", "reference", "commission"],
   },
   deposit: {
-    label: "खाते में जमा", short: "जमा", icon: "bank-plus", color: "#2E7D32", soft: "#E8F5E9", cash: "in",
-    amountLabel: "जमा की गई रकम (₹)",
-    fields: ["mobile", "bankName", "accountNumber", "amount", "reference", "commission"],
+    label: "Money Deposit", short: "Deposit", icon: "bank-plus", color: "#2E7D32", soft: "#E8F5E9", cash: "in",
+    amountLabel: "जमा रकम (₹)",
+    fields: ["mobile", "beneficiaryName", "bankName", "accountNumber", "ifsc", "upiId", "amount", "reference", "commission"],
   },
   transfer: {
-    label: "मनी ट्रांसफर", short: "ट्रांसफर", icon: "bank-transfer", color: "#1D4ED8", soft: "#E0E9FF", cash: "in",
-    amountLabel: "भेजी गई रकम (₹)",
-    fields: ["mobile", "beneficiaryName", "bankName", "accountNumber", "ifsc", "amount", "reference", "commission"],
-  },
-  upi: {
-    label: "UPI", short: "UPI", icon: "qrcode", color: "#5B21B6", soft: "#EDE9FE", cash: "in",
-    amountLabel: "नकद रकम (₹)",
-    fields: ["mobile", "beneficiaryName", "upiId", "amount", "reference", "commission"],
-  },
-  recharge: {
-    label: "मोबाइल / DTH रिचार्ज", short: "रिचार्ज", icon: "cellphone-arrow-down", color: "#7C3AED", soft: "#F1E9FF", cash: "in",
-    amountLabel: "रिचार्ज रकम (₹)",
-    fields: ["operator", "rechargeNumber", "amount", "reference", "commission"],
+    label: "Money Transfer", short: "Transfer", icon: "bank-transfer", color: "#1D4ED8", soft: "#E0E9FF", cash: "in",
+    amountLabel: "भेजी रकम (₹)",
+    fields: ["mobile", "beneficiaryName", "bankName", "accountNumber", "ifsc", "upiId", "billerName", "billAccount", "amount", "reference", "commission"],
   },
   bill: {
-    label: "बिल भुगतान", short: "बिल", icon: "receipt-text-outline", color: "#B45309", soft: "#FEF3E2", cash: "in",
+    label: "Bill Payment", short: "Bill", icon: "receipt-text-outline", color: "#B45309", soft: "#FEF3E2", cash: "in",
     amountLabel: "बिल रकम (₹)",
     fields: ["mobile", "billerName", "billAccount", "amount", "reference", "commission"],
   },
+  recharge: {
+    label: "Mobile / DTH Recharge", short: "Recharge", icon: "cellphone-arrow-down", color: "#7C3AED", soft: "#F1E9FF", cash: "in",
+    amountLabel: "रिचार्ज रकम (₹)",
+    fields: ["operator", "rechargeNumber", "amount", "reference", "commission"],
+  },
+  other: {
+    label: "Other Service", short: "Other", icon: "dots-horizontal-circle-outline", color: "#2D2D2D", soft: "#EBE4D5", cash: "none",
+    amountLabel: "रकम (₹)",
+    fields: ["mobile", "billerName", "amount", "reference", "commission"],
+  },
+  upi: {
+    label: "UPI Transfer", short: "UPI", icon: "qrcode", color: "#5B21B6", soft: "#EDE9FE", cash: "in",
+    amountLabel: "नकद रकम (₹)",
+    fields: ["mobile", "beneficiaryName", "upiId", "amount", "reference", "commission"],
+  },
+  cash: {
+    label: "Cash Given", short: "Cash", icon: "cash", color: "#9A3412", soft: "#FFEDD5", cash: "out",
+    amountLabel: "दिए गए नकद (₹)",
+    fields: ["amount", "reference", "commission"],
+  },
   balance: {
-    label: "बैलेंस / मिनी स्टेटमेंट", short: "बैलेंस", icon: "bank-outline", color: "#00796B", soft: "#E0F2F1", cash: "none",
+    label: "Balance Enquiry", short: "Balance", icon: "bank-outline", color: "#00796B", soft: "#E0F2F1", cash: "none",
     amountLabel: "खाते का बैलेंस (₹, वैकल्पिक)",
     fields: ["mobile", "aadhaarLast4", "bankName", "amount", "reference", "commission"],
   },
-  other: {
-    label: "अन्य सेवा", short: "अन्य", icon: "dots-horizontal-circle-outline", color: "#2D2D2D", soft: "#EBE4D5", cash: "none",
-    amountLabel: "रकम (₹)",
-    fields: ["mobile", "amount", "reference", "commission"],
-  },
 };
 
+type ViaOption = { id: Exclude<AepsVia, "">; label: string; bill: string };
+const VIA: Record<Exclude<AepsVia, "">, ViaOption> = {
+  aeps: { id: "aeps", label: "AEPS (आधार)", bill: "AEPS (Aadhaar)" },
+  upi: { id: "upi", label: "UPI", bill: "UPI" },
+  bank: { id: "bank", label: "बैंक खाता", bill: "Bank Account (IMPS / NEFT)" },
+  emi: { id: "emi", label: "EMI / लोन", bill: "EMI / Loan" },
+};
+
+/** How each service can be done; the first one is the default. */
+export const VIA_FOR: Partial<Record<AepsType, ViaOption[]>> = {
+  withdrawal: [VIA.aeps, VIA.upi],
+  deposit: [VIA.bank, VIA.upi],
+  transfer: [VIA.bank, VIA.upi, VIA.emi],
+};
+
+export const defaultVia = (type: AepsType): AepsVia => VIA_FOR[type]?.[0].id ?? "";
+export const viaBill = (via?: AepsVia) => (via ? VIA[via].bill : "");
+
+/** Fields that apply to this service done this way. */
+export function fieldsFor(type: AepsType, via: AepsVia = ""): AepsField[] {
+  const v = via || defaultVia(type);
+  const pick = (...f: AepsField[]): AepsField[] => ["mobile", ...f, "amount", "reference", "commission"];
+  if (type === "withdrawal") return v === "upi" ? pick("upiId") : pick("aadhaarLast4", "bankName", "ifsc");
+  if (type === "deposit") return v === "upi" ? pick("beneficiaryName", "upiId") : pick("beneficiaryName", "bankName", "accountNumber", "ifsc");
+  if (type === "transfer") {
+    if (v === "upi") return pick("beneficiaryName", "upiId");
+    if (v === "emi") return pick("billerName", "billAccount", "beneficiaryName");
+    return pick("beneficiaryName", "bankName", "accountNumber", "ifsc");
+  }
+  return AEPS_META[type].fields;
+}
+
+/** Field labels that depend on the service. */
+export function fieldLabel(type: AepsType, via: AepsVia, f: AepsField): string {
+  const v = via || defaultVia(type);
+  if (f === "beneficiaryName") return type === "deposit" ? "खाताधारक का नाम" : v === "emi" ? "लोन किसके नाम (वैकल्पिक)" : "किसको भेजे (नाम)";
+  if (f === "upiId") return type === "withdrawal" ? "ग्राहक का UPI ID (वैकल्पिक)" : "किसको भेजे (UPI ID / नंबर)";
+  if (f === "billerName") return type === "other" ? "सेवा का नाम" : v === "emi" ? "लोन कंपनी / बैंक" : FIELD_LABEL.billerName;
+  if (f === "billAccount" && v === "emi") return "लोन / EMI खाता नंबर";
+  return FIELD_LABEL[f];
+}
 export const FIELD_LABEL: Record<AepsField, string> = {
   mobile: "मोबाइल नंबर",
   aadhaarLast4: "आधार (आख़िरी 4 अंक)",
@@ -141,7 +184,8 @@ export function bankOf(t: { type: AepsType; cash?: AepsCash }): CashFlow {
   return c === "in" ? "out" : c === "out" ? "in" : "none";
 }
 
-type LegRow = Pick<AepsTxn, "type" | "date" | "status" | "cash" | "cashDate" | "doneDate" | "commissionMode">;
+type LegRow = Pick<AepsTxn, "type" | "date" | "status" | "cash" | "cashDate" | "doneDate" | "commissionMode"> &
+  Partial<Pick<AepsTxn, "collected" | "payMode">>;
 
 /** Day the counter cash changed hands, or null if it has not. */
 export function cashLegDate(t: LegRow): string | null {
@@ -174,6 +218,61 @@ export function commissionModeLabel(m?: AepsCommissionMode) {
   return m === "cash" ? "कैश में मिला" : m === "online" ? "ऑनलाइन मिला" : "ऐप से मिला";
 }
 
+type MoneyRow = LegRow & { amount: number; commission: number };
+
+/** Service charge the customer pays (app commission never reaches the customer's bill). */
+export function customerCharge(t: MoneyRow): number {
+  return t.commission > 0 && (t.commissionMode === "cash" || t.commissionMode === "online") ? t.commission : 0;
+}
+
+/** Money the customer has handed over toward the amount of an incoming service. */
+export function collectedOf(t: MoneyRow): number {
+  if (cashOf(t) !== "in" || !cashLegDate(t)) return 0;
+  return t.collected == null ? t.amount : Math.min(Math.max(t.collected, 0), t.amount);
+}
+
+/** Pocket the customer's money landed in. */
+export const customerPocket = (t: Pick<AepsTxn, "payMode">): "cash" | "bank" => (t.payMode === "online" ? "bank" : "cash");
+
+export type AepsBill = {
+  flow: CashFlow;
+  amount: number;
+  charge: number;
+  /** in: amount + charge the customer pays · out: cash the customer gets. */
+  total: number;
+  /** in: received from the customer · out: cash handed over. */
+  settled: number;
+  /** in: customer still owes us · out: cash we still have to hand over. */
+  due: number;
+};
+
+/** The customer's side of one row, the way the bill shows it. */
+export function aepsBill(t: MoneyRow): AepsBill {
+  const flow = cashOf(t);
+  const charge = customerCharge(t);
+  const legDone = !!cashLegDate(t);
+  if (t.status === "failed") return { flow, amount: t.amount, charge: 0, total: 0, settled: 0, due: 0 };
+  if (flow === "out") {
+    const total = Math.max(0, t.amount - (t.commissionMode === "cash" ? charge : 0));
+    const settled = legDone ? total : 0;
+    return { flow, amount: t.amount, charge, total, settled, due: total - settled };
+  }
+  if (flow === "in") {
+    const total = t.amount + charge;
+    const settled = collectedOf(t) + (legDone ? charge : 0);
+    return { flow, amount: t.amount, charge, total, settled, due: Math.max(0, total - settled) };
+  }
+  const settled = legDone ? charge : 0;
+  return { flow, amount: t.amount, charge, total: charge, settled, due: charge - settled };
+}
+
+/** What goes on the customer's khata: unpaid money for a service that has gone through. */
+export function aepsDue(t: MoneyRow & Pick<AepsTxn, "customerId">): number {
+  if (!t.customerId || t.status !== "success") return 0;
+  const b = aepsBill(t);
+  return b.flow === "out" ? 0 : b.due;
+}
+
 export function isLater(t: Pick<AepsTxn, "status" | "dueDate">) {
   return t.status === "pending" && !!t.dueDate;
 }
@@ -195,8 +294,10 @@ export function aepsTotals(list: AepsTxn[], keep: (date: string) => boolean = ()
     let touched = false;
     if (cd && keep(cd)) {
       const dir = cashOf(t);
-      if (dir === "in") m.cashIn += t.amount;
-      else if (dir === "out") m.cashOut += t.amount;
+      if (dir === "in") {
+        if (customerPocket(t) === "bank") m.bankIn += collectedOf(t);
+        else m.cashIn += collectedOf(t);
+      } else if (dir === "out") m.cashOut += t.amount;
       touched = true;
     }
     if (bd && keep(bd)) {
@@ -221,19 +322,28 @@ export function aepsTotals(list: AepsTxn[], keep: (date: string) => boolean = ()
 }
 
 /** Plain lines for one row: what happened to galla, bank and commission. */
-export function moneyLines(t: LegRow & { amount: number; commission: number }): { label: string; value: string; tone: "in" | "out" | "wait" | "muted" }[] {
+export function moneyLines(t: MoneyRow): { label: string; value: string; tone: "in" | "out" | "wait" | "muted" }[] {
   if (t.status === "failed") return [{ label: "फेल", value: "कुछ नहीं बदला", tone: "muted" }];
   const out: { label: string; value: string; tone: "in" | "out" | "wait" | "muted" }[] = [];
   const amt = formatINR(t.amount);
   const c = cashOf(t);
-  if (c !== "none" && t.amount > 0) {
-    const done = !!cashLegDate(t);
-    out.push({ label: "गल्ला", value: done ? `${c === "in" ? "+" : "−"}${amt}` : c === "in" ? "कैश अभी नहीं मिला" : "कैश अभी नहीं दिया", tone: done ? (c === "in" ? "in" : "out") : "wait" });
-  }
   const b = bankOf(t);
+  if (c === "out" && t.amount > 0) {
+    const done = !!cashLegDate(t);
+    out.push({ label: "गल्ला", value: done ? `−${amt}` : "कैश अभी नहीं दिया", tone: done ? "out" : "wait" });
+  }
+  if (c === "in" && t.amount > 0) {
+    const got = collectedOf(t);
+    const where = customerPocket(t) === "bank" ? "बैंक (ग्राहक से)" : "गल्ला";
+    out.push({ label: where, value: got > 0 ? `+${formatINR(got)}` : "अभी नहीं मिले", tone: got > 0 ? "in" : "wait" });
+  }
   if (b !== "none" && t.amount > 0) {
     const done = !!bankLegDate(t);
     out.push({ label: "बैंक", value: done ? `${b === "in" ? "+" : "−"}${amt}` : "पेंडिंग", tone: done ? (b === "in" ? "in" : "out") : "wait" });
+  }
+  if (c === "in" && t.amount > 0 && t.status === "success") {
+    const left = t.amount - collectedOf(t);
+    if (left > 0) out.push({ label: "ग्राहक पर बाकी", value: formatINR(left), tone: "wait" });
   }
   if (t.commission > 0) {
     const done = !!commissionDate(t);
@@ -254,9 +364,17 @@ export function aepsDetailLine(t: AepsTxn): string {
     case "upi":
       return [t.upiId, t.beneficiaryName && `→ ${t.beneficiaryName}`].filter(Boolean).join(" · ");
     case "transfer":
+      if (t.via === "upi") return ["UPI", t.beneficiaryName && `→ ${t.beneficiaryName}`, t.upiId].filter(Boolean).join(" · ");
+      if (t.via === "emi") return ["EMI", t.billerName, t.billAccount].filter(Boolean).join(" · ");
       return [t.beneficiaryName && `→ ${t.beneficiaryName}`, t.bankName, maskAccount(t.accountNumber)].filter(Boolean).join(" · ");
     case "deposit":
+      if (t.via === "upi") return ["UPI", t.beneficiaryName, t.upiId].filter(Boolean).join(" · ");
       return [t.bankName, maskAccount(t.accountNumber)].filter(Boolean).join(" · ");
+    case "other":
+      return t.billerName;
+    case "withdrawal":
+      if (t.via === "upi") return ["UPI", t.upiId].filter(Boolean).join(" · ");
+      return ["AEPS", t.bankName, t.aadhaarLast4 && `आधार XXXX${t.aadhaarLast4}`].filter(Boolean).join(" · ");
     default:
       return [t.bankName, t.aadhaarLast4 && `आधार XXXX${t.aadhaarLast4}`].filter(Boolean).join(" · ");
   }
@@ -265,28 +383,4 @@ export function aepsDetailLine(t: AepsTxn): string {
 export function maskAccount(acc: string): string {
   const a = (acc || "").replace(/\s/g, "");
   return a.length > 4 ? `XX${a.slice(-4)}` : a;
-}
-
-export function receiptText(t: AepsTxn, shop: string): string {
-  const meta = AEPS_META[t.type];
-  const rows: [string, string][] = [
-    ["सेवा", meta.label],
-    ["तारीख", `${formatDate(t.date)}${t.time ? `, ${t.time}` : ""}`],
-    ["ग्राहक", t.customerName],
-  ];
-  const add = (label: string, v: string) => { if (v) rows.push([label, v]); };
-  add("बैंक", t.bankName);
-  add("आधार", t.aadhaarLast4 ? `XXXX XXXX ${t.aadhaarLast4}` : "");
-  add("UPI", t.upiId ?? "");
-  add("पाने वाला", t.beneficiaryName);
-  add("खाता", maskAccount(t.accountNumber));
-  add("IFSC", t.ifsc);
-  add("ऑपरेटर", t.operator);
-  add("नंबर", t.rechargeNumber);
-  add("बिल", t.billerName);
-  add("कंज़्यूमर नं.", t.billAccount);
-  if (t.amount > 0) rows.push(["रकम", formatINR(t.amount)]);
-  add("Txn ID", t.reference);
-  rows.push(["स्थिति", statusLabel(t)]);
-  return [`*${shop}*`, "रसीद", "", ...rows.map(([k, v]) => `${k}: ${v}`), "", "धन्यवाद 🙏"].join("\n");
 }

@@ -6,11 +6,11 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
 import { useAeps, type AepsTxn, type AepsType } from "@/src/lib/data";
 import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, cashLegDate, cashOf, isLater } from "@/src/lib/aeps";
-import { store } from "@/src/lib/store";
 import { formatDateShort, formatINR, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { SlowServerHint } from "@/src/components/slow-server-hint";
 import { AepsSheet } from "@/src/components/aeps-sheet";
+import { completeAeps } from "@/src/lib/aeps-due";
 
 type Range = "today" | "yesterday" | "month" | "all";
 const RANGES: { key: Range; label: string }[] = [
@@ -49,11 +49,7 @@ export default function AepsScreen() {
     () => txns.filter((t) => t.status === "pending").sort((a, b) => (a.dueDate || a.date).localeCompare(b.dueDate || b.date)),
     [txns],
   );
-  const completeNow = (t: AepsTxn) => {
-    const { id, createdAt, ...body } = t;
-    const d = todayISO();
-    store.updateAeps(id, { ...body, status: "success", doneDate: d, cashDate: cashLegDate(t) || d, dueDate: "" });
-  };
+  const completeNow = (t: AepsTxn) => completeAeps(t);
 
   const countByType = useMemo(() => {
     const m: Partial<Record<AepsType, number>> = {};

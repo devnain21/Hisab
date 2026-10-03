@@ -39,15 +39,20 @@ export default function CustomersScreen() {
   }, [params.filter, params.t]);
 
   const all = useMemo(() => {
-    const stats = new Map<string, { due: number; last: string; work: boolean }>();
+    // `latest` orders by the newest entry: its date, then when it was typed.
+    const stats = new Map<string, { due: number; last: string; latest: string }>();
     for (const e of entries) {
-      const s = stats.get(e.customerId) ?? { due: 0, last: "", work: false };
+      const s = stats.get(e.customerId) ?? { due: 0, last: "", latest: "" };
       s.due += entryDelta(e);
       if (e.date > s.last) s.last = e.date;
-      if (e.type === "work") s.work = true;
+      const key = `${e.date}|${e.createdAt}`;
+      if (key > s.latest) s.latest = key;
       stats.set(e.customerId, s);
     }
-    return customers.map((c) => ({ c, due: stats.get(c.id)?.due ?? 0, last: stats.get(c.id)?.last ?? "", work: stats.get(c.id)?.work ?? false }));
+    return customers.map((c) => {
+      const s = stats.get(c.id);
+      return { c, due: s?.due ?? 0, last: s?.last ?? "", latest: s?.latest ?? "" };
+    });
   }, [customers, entries]);
 
   const counts = useMemo(
@@ -63,7 +68,7 @@ export default function CustomersScreen() {
     return all
       .filter(({ c }) => !needle || c.name.toLowerCase().includes(needle) || c.phone.includes(needle) || c.address.toLowerCase().includes(needle))
       .filter(({ due }) => (filter === "due" ? due > 0 : filter === "owe" ? due < 0 : true))
-      .sort((a, b) => (filter === "due" ? b.due - a.due : filter === "owe" ? a.due - b.due : a.c.name.localeCompare(b.c.name, "hi")));
+      .sort((a, b) => (filter === "all" ? a.c.name.localeCompare(b.c.name, "hi") : b.latest.localeCompare(a.latest)));
   }, [all, q, filter]);
 
   const loading = customersQ.isLoading || entriesQ.isLoading;

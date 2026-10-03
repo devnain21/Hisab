@@ -5,7 +5,8 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { computeBalance, isRepayment, itemsOf, useCustomers, useEntries, useJobs, type Entry, type EntryType, type Job } from "@/src/lib/data";
+import { computeBalance, isRepayment, itemsOf, useAeps, useCustomers, useEntries, useJobs, type AepsTxn, type Entry, type EntryType, type Job } from "@/src/lib/data";
+import { AEPS_META, STATUS_META, aepsBill, aepsDue, defaultVia, statusLabel, viaBill } from "@/src/lib/aeps";
 import { formatDate, formatINR, formatPhone, initials } from "@/src/lib/format";
 import { store } from "@/src/lib/store";
 import { buildLedger, type WorkState, type WorkStatus } from "@/src/lib/records";
@@ -13,7 +14,7 @@ import { AddEntrySheet, AddJobSheet, AddCustomerSheet, CompleteJobSheet, EditRec
 import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
-import { receiptDoc, statementDoc, reminderDoc, type ShareDoc } from "@/src/lib/receipt";
+import { aepsReceiptDoc, receiptDoc, statementDoc, reminderDoc, type ShareDoc } from "@/src/lib/receipt";
 import { UpiQrModal } from "@/src/components/upi-qr-sheet";
 import { addRecentCustomer } from "@/src/lib/recent";
 import { accountName } from "@/src/lib/persona";
@@ -25,6 +26,8 @@ export default function CustomerDetail() {
   const customersQ = useCustomers();
   const entriesQ = useEntries();
   const jobsQ = useJobs();
+  const aepsQ = useAeps();
+  const [allAeps, setAllAeps] = useState(false);
   const [entrySheet, setEntrySheet] = useState<EntryType | null>(null);
   const [jobSheet, setJobSheet] = useState<"now" | "later" | null>(null);
   const [editSheet, setEditSheet] = useState(false);
@@ -37,6 +40,10 @@ export default function CustomerDetail() {
   const entries = useMemo(() => (entriesQ.data ?? []).filter((e) => e.customerId === id), [entriesQ.data, id]);
   const jobs = useMemo(() => (jobsQ.data ?? []).filter((j) => j.customerId === id), [jobsQ.data, id]);
   const ledger = useMemo(() => buildLedger(entries), [entries]);
+  const phone10 = (customer?.phone ?? "").replace(/\D/g, "").slice(-10);
+  const aepsList = (aepsQ.data ?? [])
+    .filter((t) => t.customerId === id || (!t.customerId && phone10.length === 10 && t.mobile.replace(/\D/g, "").slice(-10) === phone10))
+    .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : (b.time || "").localeCompare(a.time || "") || b.createdAt.localeCompare(a.createdAt)));
   const [filter, setFilter] = useState<LedgerFilter>("all");
   const [settling, setSettling] = useState<Entry | null>(null);
   const [shareDoc, setShareDoc] = useState<ShareDoc | null>(null);
@@ -87,7 +94,7 @@ export default function CustomerDetail() {
     return { work, given, got, bought, paidOut, any: work + given + got + bought + paidOut > 0 };
   }, [entries]);
   // Money left with us by a customer is an advance; with a personal contact it's money we owe back.
-  const isCustomer = entries.some((e) => e.type === "work") || jobs.length > 0;
+  const isCustomer = entries.some((e) => e.type === "work" || e.type === "aeps") || jobs.length > 0 || aepsList.length > 0;
   const balanceLabel = due > 0 ? "लेने हैं" : due < 0 ? (isCustomer ? "एडवांस" : "देने हैं") : "हिसाब";
   const openJobs = jobs.filter((j) => j.status !== "done");
   const showMoreFilters = rows.length > 8;
@@ -104,7 +111,10 @@ export default function CustomerDetail() {
     );
   }
 
-  const openReceipt = (e: Entry) => setShareDoc(receiptDoc(e, ledger.work.get(e.id), customer, due, isCustomer, user ?? {}));
+  const openReceipt = (e: Entry) => {
+    const txn = e.type === "aeps" ? aepsList.find((t) => t.id === e.linkId) : undefined;
+    setShareDoc(txn ? aepsReceiptDoc(txn, user ?? {}) : receiptDoc(e, ledger.work.get(e.id), customer, due, isCustomer, user ?? {}));
+  };
   const openStatement = () => setShareDoc(statementDoc(entries, ledger, customer, isCustomer, user ?? {}));
   const openReminder = () => setShareDoc(reminderDoc(customer, due, user ?? {}));
   return (
@@ -238,6 +248,24 @@ export default function CustomerDetail() {
           </>
         )}
 
+        {aepsList.length > 0 ? (
+          <>
+            <View style={styles.sectionRow}>
+              <Text style={[styles.sectionHead, { marginTop: 0, marginBottom: 0 }]}>काउंटर सेवाएँ ({aepsList.length})</Text>
+              {aepsList.length > 4 ? (
+                <Pressable onPress={() => setAllAeps((v) => !v)} hitSlop={8} testID="cust-aeps-all">
+                  <Text style={styles.linkText}>{allAeps ? "कम दिखाएँ" : "सभी देखें"}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+            <View style={{ gap: spacing.sm }}>
+              {(allAeps ? aepsList : aepsList.slice(0, 4)).map((t) => (
+                <AepsRow key={t.id} t={t} onPress={() => router.push(`/aeps/${t.id}`)} />
+              ))}
+            </View>
+          </>
+        ) : null}
+
         <Text style={styles.sectionHead}>खाता</Text>
         {rows.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.md }}>
@@ -332,6 +360,39 @@ const STATE_UI: Record<WorkState, { label: string; icon: string; fg: string; bg:
   partial: { label: "कुछ लेने हैं", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
   settled: { label: "चुकता", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
 };
+
+function AepsRow({ t, onPress }: { t: AepsTxn; onPress: () => void }) {
+  const m = AEPS_META[t.type] ?? AEPS_META.other;
+  const via = viaBill(t.via || defaultVia(t.type));
+  const bill = aepsBill(t);
+  const due = aepsDue(t);
+  const st = STATUS_META[t.status];
+  const big = bill.flow === "none" ? bill.total : t.amount;
+  return (
+    <Pressable style={[styles.jobRow, due > 0 && { borderLeftWidth: 4, borderLeftColor: colors.error }]} onPress={onPress} testID={`cust-aeps-${t.id}`}>
+      <View style={[styles.iconBadge, { backgroundColor: m.soft }]}>
+        <MaterialIcon name={m.icon as any} size={18} color={m.color} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.jobTitle} numberOfLines={1}>{t.type === "other" && t.billerName ? t.billerName : m.label}</Text>
+        <Text style={styles.sub} numberOfLines={1}>{[via, t.beneficiaryName, formatDate(t.date)].filter(Boolean).join(" · ")}</Text>
+      </View>
+      <View style={{ alignItems: "flex-end" }}>
+        <Text style={[styles.amount, { color: m.color }]}>{formatINR(big)}</Text>
+        {due > 0 ? (
+          <View style={[styles.statePill, { backgroundColor: colors.errorSoft }]}>
+            <Text style={[styles.stateText, { color: colors.error }]}>बाकी {formatINR(due)}</Text>
+          </View>
+        ) : (
+          <View style={[styles.statePill, { backgroundColor: st.soft }]}>
+            <MaterialIcon name={st.icon as any} size={12} color={st.color} />
+            <Text style={[styles.stateText, { color: st.color }]}>{statusLabel(t)}</Text>
+          </View>
+        )}
+      </View>
+    </Pressable>
+  );
+}
 
 function ReceiptButton({ entryId, onPress }: { entryId: string; onPress: () => void }) {
   return (
@@ -477,6 +538,7 @@ const styles = StyleSheet.create({
   sectionHead: { fontSize: 17, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xl, marginBottom: spacing.md },
   sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xl, marginBottom: spacing.md },  jobRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   jobTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
+  linkText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
   pillBtn: { paddingHorizontal: spacing.md, paddingVertical: 7, backgroundColor: colors.brandPrimary, borderRadius: radius.pill },
   pillBtnText: { color: colors.onBrandPrimary, fontWeight: "700", fontSize: 12 },
   filterChip: { height: 32, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },

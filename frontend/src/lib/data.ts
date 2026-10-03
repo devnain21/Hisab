@@ -15,11 +15,12 @@ export type Customer = {
 // paying back a purchase when linkId points at it) · purchase: goods / service taken from them on credit.
 // paid: money settled on the spot (work: taken from them, purchase: paid to them; 0..amount).
 // items: line items of a work / purchase; amount is their sum.
+// aeps: what a customer still owes for a counter service (linkId = AEPS row; its money moves on that row).
 // mode: payment mode ("cash" = cash drawer, "online" = UPI/Bank account).
 // fee: government/portal fee or direct cost incurred by shopkeeper.
 // feeMode: where government fee was paid from ("online" = Bank/UPI, "cash" = Drawer).
 // linkId: a payment that settles a specific work/given entry points at that entry.
-export type EntryType = "work" | "payment" | "given" | "purchase";
+export type EntryType = "work" | "payment" | "given" | "purchase" | "aeps";
 export type PaymentMode = "cash" | "online";
 export type EntryItem = { title: string; amount: number };
 
@@ -47,6 +48,7 @@ export type AepsType = "withdrawal" | "cash" | "deposit" | "transfer" | "upi" | 
 export type AepsCash = "" | "in" | "out" | "none";
 export type AepsStatus = "success" | "pending" | "failed";
 export type AepsCommissionMode = "" | "cash" | "online" | "app";
+export type AepsVia = "" | "aeps" | "upi" | "bank" | "emi";
 export type AepsTxn = {
   id: string;
   type: AepsType;
@@ -77,6 +79,13 @@ export type AepsTxn = {
   doneDate?: string;
   /** Pending row to be sent on this day. */
   dueDate?: string;
+  /** Shop customer the service was done for ("" on older rows). */
+  customerId?: string;
+  via?: AepsVia;
+  /** Money the customer handed over toward the amount; null/undefined on older rows = all of it. */
+  collected?: number | null;
+  /** How the customer paid: cash lands in the galla, online in the bank. */
+  payMode?: "" | "cash" | "online";
   notes: string;
   createdAt: string;
 };
@@ -103,6 +112,7 @@ export function computeBalance(entries: Entry[], customerId?: string): number {
 export function entryDelta(e: Entry): number {
   if (e.type === "work") return e.amount - (e.paid ?? 0);
   if (e.type === "purchase") return -(e.amount - (e.paid ?? 0));
+  if (e.type === "aeps") return e.amount;
   return e.type === "given" ? e.amount : -e.amount;
 }
 
@@ -134,7 +144,7 @@ export function entryProfit(e: Entry): number {
 }
 
 /** Rows the customer owes on (payments settle these, oldest first). */
-export const isDebt = (e: Entry) => e.type === "work" || (e.type === "given" && !e.linkId);
+export const isDebt = (e: Entry) => e.type === "work" || e.type === "aeps" || (e.type === "given" && !e.linkId);
 
 /** Money paid back against a purchase (shown inside that purchase). */
 export const isRepayment = (e: Entry) => e.type === "given" && !!e.linkId;

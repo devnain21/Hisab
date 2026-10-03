@@ -23,6 +23,7 @@ import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
 import { useContactPicker } from "@/src/components/contact-picker-modal";
 import { usePersona } from "@/src/lib/persona";
+import { useRouter } from "expo-router";
 
 // Android modals don't resize for the keyboard under edge-to-edge, so pad by the measured overlap instead.
 function useKeyboardOverlap(ref: React.RefObject<View | null>) {
@@ -163,7 +164,7 @@ const SELF = "__self__";
 
 // Lets a sheet pick an existing customer (searchable, most recent first), create one from the
 // typed name, or — for jobs — mark it as the shopkeeper's own task.
-function useCustomerChoice(visible: boolean, fixedCustomerId?: string) {
+export function useCustomerChoice(visible: boolean, fixedCustomerId?: string) {
   const { isPersonal } = usePersona();
   const allCustomers = useCustomers().data ?? [];
   const entries = useEntries().data ?? [];
@@ -217,7 +218,7 @@ function useCustomerChoice(visible: boolean, fixedCustomerId?: string) {
   return { recent, matches, exact, customerId, setCustomerId, existingId, isNew, isSelf, query, setQuery, newPhone, setNewPhone, ready, resolve };
 }
 
-function CustomerPicker({ choice, label = "नाम", allowSelf, testPrefix }: { choice: ReturnType<typeof useCustomerChoice>; label?: string; allowSelf?: boolean; testPrefix: string }) {
+export function CustomerPicker({ choice, label = "नाम", allowSelf, testPrefix }: { choice: ReturnType<typeof useCustomerChoice>; label?: string; allowSelf?: boolean; testPrefix: string }) {
   const { recent, matches, exact, customerId, setCustomerId, isNew, isSelf, query, setQuery } = choice;
   const picked = recent.find((c) => c.id === customerId);
   const contacts = useContactPicker((name, phone) => {
@@ -683,9 +684,10 @@ const ENTRY_UI: Record<EntryType, { title: string; short: string; icon: string; 
   payment: { title: "पैसे मिले", short: "मिले", icon: "arrow-bottom-left", color: colors.success, placeholder: "जैसे पुराना हिसाब, UPI" },
   given: { title: "पैसे दिए", short: "दिए", icon: "arrow-top-right", color: colors.error, placeholder: "जैसे घर के लिए दिए" },
   purchase: { title: "सामान / सेवा ली", short: "सामान / सेवा", icon: "cart-outline", color: colors.warning, placeholder: "जैसे राशन, दवाई, मरम्मत" },
+  aeps: { title: "काउंटर सेवा बाकी", short: "AEPS", icon: "fingerprint", color: colors.error, placeholder: "" },
 };
 
-const PICKER_LABEL: Record<EntryType, string> = { work: "ग्राहक", payment: "किससे मिले", given: "किसको दिए", purchase: "किससे ली (दुकान / व्यक्ति)" };
+const PICKER_LABEL: Record<EntryType, string> = { work: "ग्राहक", payment: "किससे मिले", given: "किसको दिए", purchase: "किससे ली (दुकान / व्यक्ति)", aeps: "ग्राहक" };
 
 /** Plain khata row. With `kinds`, the sheet lets you switch between them (e.g. मिले / दिए / सामान). */
 export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixedCustomerId, initial }: { visible: boolean; type: EntryType; kinds?: EntryType[]; onClose: () => void; customerId?: string; initial?: Entry }) {
@@ -1035,13 +1037,22 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
  */
 export function EditRecordSheet({ entry, job, onClose }: { entry?: Entry | null; job?: Job | null; onClose: () => void }) {
   const entries = useEntries().data ?? [];
+  const router = useRouter();
+  const aepsId = entry?.type === "aeps" ? entry.linkId : "";
+  // A counter-service due is edited on its AEPS row.
+  useEffect(() => {
+    if (!aepsId) return;
+    onClose();
+    router.push(`/aeps/${aepsId}` as never);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aepsId]);
   let work: Entry | null = null;
   let plainEntry: Entry | null = null;
   let plainJob: Job | null = null;
   if (job) {
     work = workForJob(job, entries) ?? null;
     if (!work) plainJob = job;
-  } else if (entry) {
+  } else if (entry && entry.type !== "aeps") {
     if (entry.type === "work") work = entry;
     else if (entry.type === "given" || entry.type === "purchase") plainEntry = entry;
     else {

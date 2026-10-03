@@ -22,8 +22,8 @@ export function buildBackupCsv(customers: Customer[], entries: Entry[], jobs: Jo
     .forEach((e) => {
       const c = byId.get(e.customerId);
       const paid = e.type === "work" ? e.paid ?? 0 : 0;
-      const kind = e.type === "payment" ? "मिले" : e.type === "given" ? "दिए" : e.type === "purchase" ? "सामान / सेवा ली" : paid >= e.amount ? "पूरे मिले" : paid > 0 ? "कुछ मिले" : "लेने हैं";
-      const due = e.type === "work" ? e.amount - paid : e.type === "purchase" ? -(e.amount - (e.paid ?? 0)) : "";
+      const kind = e.type === "payment" ? "मिले" : e.type === "given" ? "दिए" : e.type === "purchase" ? "सामान / सेवा ली" : e.type === "aeps" ? "AEPS बाकी" : paid >= e.amount ? "पूरे मिले" : paid > 0 ? "कुछ मिले" : "लेने हैं";
+      const due = e.type === "work" || e.type === "aeps" ? e.amount - paid : e.type === "purchase" ? -(e.amount - (e.paid ?? 0)) : "";
       lines.push(row([e.date, c?.name ?? "", c?.phone ?? "", kind, itemsText(e), e.amount, e.type === "work" ? paid : "", due, e.notes]));
     });
 

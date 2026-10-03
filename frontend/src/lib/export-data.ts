@@ -65,7 +65,7 @@ export async function exportFullLedgerCsv(params: {
 
   sortedEntries.forEach((e, i) => {
     const custName = custMap.get(e.customerId) || "अन्य / नकद";
-    const typeLabel = e.type === "work" ? "काम" : e.type === "payment" ? "पैसे मिले" : e.type === "purchase" ? "सामान / सेवा ली" : "पैसे दिए";
+    const typeLabel = e.type === "work" ? "काम" : e.type === "payment" ? "पैसे मिले" : e.type === "purchase" ? "सामान / सेवा ली" : e.type === "aeps" ? "AEPS बाकी" : "पैसे दिए";
     const cashReceived = e.type === "work" ? (e.paid || 0) : e.type === "payment" ? e.amount : 0;
     const due = entryDelta(e);
 

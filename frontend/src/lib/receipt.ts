@@ -6,7 +6,7 @@ import { itemsOf, type Customer, type Entry, type AepsTxn } from "@/src/lib/data
 import type { Ledger, WorkStatus } from "@/src/lib/records";
 import { formatDate, formatDateShort, formatINR, formatPhone, todayISO } from "@/src/lib/format";
 import type { ShopProfile } from "@/src/context/AuthContext";
-import { AEPS_META, STATUS_META, statusLabel } from "@/src/lib/aeps";
+import { AEPS_META, aepsBill, customerCharge, defaultVia, maskAccount, statusLabel, viaBill } from "@/src/lib/aeps";
 import { accountName } from "@/src/lib/persona";
 
 type Tone = "due" | "ok";
@@ -332,86 +332,108 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
 </body></html>`;
 }
 
-/**
- * Counter / AEPS receipt slip for customers.
- */
+/** Counter service receipt: what was done, through which channel, and where the money stands. */
 export function aepsReceiptDoc(t: AepsTxn, shopIn: Partial<ShopProfile>): ShareDoc {
   const shop = fullShop(shopIn);
-  const m = AEPS_META[t.type] || { label: "काउंटर सेवा", short: "काउंटर" };
-  const st = { ...(STATUS_META[t.status] || { label: "सफल" }), label: STATUS_META[t.status] ? statusLabel(t) : "सफल" };
-  const lines: Line[] = [
-    { label: "सेवा का नाम", value: m.label },
-    { label: "तारीख व समय", value: `${formatDate(t.date)}${t.time ? ` ${t.time}` : ""}` },
-    { label: "ग्राहक / व्यक्ति", value: t.customerName || "—" },
-    ...(t.mobile ? [{ label: "मोबाइल", value: formatPhone(t.mobile) }] : []),
-    ...(t.amount > 0 ? [{ label: "रकम", value: formatINR(t.amount), tone: "ok" as Tone }] : []),
+  const m = AEPS_META[t.type] ?? AEPS_META.other;
+  const service = t.type === "other" && t.billerName ? t.billerName : m.label;
+  const via = viaBill(t.via || defaultVia(t.type));
+  const bill = aepsBill(t);
+  const failed = t.status === "failed";
+  const charge = customerCharge(t);
+  const emi = t.via === "emi";
+
+  const details: Line[] = [
     ...(t.bankName ? [{ label: "बैंक", value: t.bankName }] : []),
-    ...(t.aadhaarLast4 ? [{ label: "आधार", value: `XXXX XXXX ${t.aadhaarLast4}` }] : []),
-    ...(t.accountNumber ? [{ label: "खाता संख्या", value: t.accountNumber }] : []),
-    ...(t.ifsc ? [{ label: "IFSC कोड", value: t.ifsc }] : []),
-    ...(t.reference ? [{ label: "संदर्भ / RRN / UTR", value: t.reference }] : []),
+    ...(t.aadhaarLast4 ? [{ label: "आधार नंबर", value: `XXXX XXXX ${t.aadhaarLast4}` }] : []),
+    ...(t.beneficiaryName ? [{ label: emi ? "लोन धारक" : t.type === "deposit" ? "खाताधारक" : "प्राप्तकर्ता", value: t.beneficiaryName }] : []),
+    ...(t.accountNumber ? [{ label: "खाता नंबर", value: maskAccount(t.accountNumber) }] : []),
+    ...(t.ifsc ? [{ label: "IFSC", value: t.ifsc }] : []),
+    ...(t.upiId ? [{ label: t.type === "withdrawal" ? "ग्राहक UPI" : "UPI ID", value: t.upiId }] : []),
     ...(t.operator ? [{ label: "ऑपरेटर", value: t.operator }] : []),
     ...(t.rechargeNumber ? [{ label: "रिचार्ज नंबर", value: t.rechargeNumber }] : []),
-    ...(t.billerName ? [{ label: "बिलर", value: t.billerName }] : []),
-    ...(t.billAccount ? [{ label: "उपभोक्ता सं.", value: t.billAccount }] : []),
-    ...(t.beneficiaryName ? [{ label: "प्राप्तकर्ता", value: t.beneficiaryName }] : []),
-    ...(t.upiId ? [{ label: "UPI ID", value: t.upiId }] : []),
-    { label: "लेन-देन स्थिति", value: st.label, tone: t.status === "success" ? ("ok" as Tone) : ("due" as Tone) },
+    ...(t.billerName && t.type !== "other" ? [{ label: emi ? "लोन कंपनी" : "बिलर", value: t.billerName }] : []),
+    ...(t.billAccount ? [{ label: emi ? "लोन खाता नं." : "उपभोक्ता नं.", value: t.billAccount }] : []),
+    ...(t.reference ? [{ label: "Txn ID / RRN", value: t.reference }] : []),
+    { label: "तारीख व समय", value: `${formatDate(t.date)}${t.time ? `, ${t.time}` : ""}` },
   ];
 
+  const summary: Line[] = [];
+  if (failed) {
+    if (t.amount > 0) summary.push({ label: m.amountLabel.replace(" (₹)", ""), value: formatINR(t.amount) });
+    summary.push({ label: "लेन-देन फेल", value: "कोई पैसा नहीं लिया", tone: "due" });
+  } else if (bill.flow === "out") {
+    summary.push({ label: m.amountLabel.replace(" (₹)", ""), value: formatINR(t.amount) });
+    if (charge > 0) summary.push({ label: t.commissionMode === "cash" ? "सेवा शुल्क (कटौती)" : "सेवा शुल्क (ऑनलाइन)", value: t.commissionMode === "cash" ? `− ${formatINR(charge)}` : formatINR(charge) });
+    summary.push(
+      bill.due > 0
+        ? { label: "ग्राहक को देने बाकी", value: formatINR(bill.due), tone: "due" }
+        : { label: "ग्राहक को नकद दिए", value: formatINR(bill.total), tone: "ok" },
+    );
+  } else {
+    if (bill.flow === "in") summary.push({ label: m.amountLabel.replace(" (₹)", ""), value: formatINR(t.amount) });
+    if (charge > 0) summary.push({ label: "सेवा शुल्क", value: formatINR(charge) });
+    if (summary.length > 1) summary.push({ label: "कुल", value: formatINR(bill.total) });
+    else if (bill.flow === "none") summary.push({ label: "कुल", value: formatINR(bill.total) });
+    summary.push({ label: "जमा", value: formatINR(bill.settled), tone: bill.settled > 0 ? "ok" : undefined });
+    summary.push({ label: "बाकी", value: formatINR(bill.due), tone: bill.due > 0 ? "due" : "ok" });
+  }
+
+  const stamp: { text: string; color: string } = failed
+    ? { text: "FAILED", color: DUE }
+    : t.status === "pending"
+      ? { text: statusLabel(t).toUpperCase(), color: "#B45309" }
+      : bill.due > 0 && bill.flow !== "out"
+        ? { text: `बाकी ${formatINR(bill.due)}`, color: DUE }
+        : { text: "SUCCESS", color: OK };
+
   const no = t.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase();
-  const heading = "काउंटर सेवा रसीद";
-  const title = `${m.label}${t.amount > 0 ? ` · ${formatINR(t.amount)}` : ""}`;
-  const sub = `${t.customerName || "ग्राहक"} · ${formatDate(t.date)} · नं. ${no}`;
+  const heading = "रसीद";
+  const title = `${service}${t.amount > 0 ? ` · ${formatINR(t.amount)}` : ""}`;
+  const name = t.customerName || "ग्राहक";
 
   const message = [
-    `🧾 *${heading}*`,
-    `🏪 *${shop.shop_name}*`,
-    ...(shop.shop_phone ? [`📞 फ़ोन: ${formatPhone(shop.shop_phone)}`] : []),
-    ...(shop.shop_address ? [`📍 पता: ${shop.shop_address}`] : []),
-    `--------------------------------`,
-    `रसीद नं: ${no}`,
-    `तारीख: ${formatDate(t.date)}${t.time ? ` ${t.time}` : ""}`,
-    `सेवा: *${m.label}*`,
-    `ग्राहक: ${t.customerName || "ग्राहक"}`,
-    ...(t.mobile ? [`मोबाइल: ${formatPhone(t.mobile)}`] : []),
-    ...(t.amount > 0 ? [`रकम: *${formatINR(t.amount)}*`] : []),
-    ...(t.reference ? [`संदर्भ / UTR: ${t.reference}`] : []),
-    `स्थिति: *${st.label}*`,
-    `--------------------------------`,
-    `धन्यवाद, फिर पधारें 🙏`,
+    ...messageHead(shop),
+    `🧾 *${service}*${via ? ` · via ${via}` : ""}`,
+    `रसीद नं. ${no} · ${formatDate(t.date)}${t.time ? `, ${t.time}` : ""}`,
+    `ग्राहक: ${name}`,
+    "",
+    ...details.filter((d) => d.label !== "तारीख व समय").map(lineText),
+    "──────────",
+    ...summary.map(lineText),
+    `स्थिति: *${failed ? "फेल" : t.status === "pending" ? statusLabel(t) : "सफल"}*`,
+    "",
+    "धन्यवाद 🙏",
   ].join("\n");
 
+  const big = bill.flow === "none" ? bill.total : t.amount;
   const body = `
-  <div style="background:#F0FAF8;border:1.5px solid ${BRAND};border-radius:8px;padding:12px;margin-bottom:16px;text-align:center;">
-    <div style="font-size:12px;color:#666;text-transform:uppercase;font-weight:700;">${esc(m.label)}</div>
-    ${t.amount > 0 ? `<div style="font-size:28px;font-weight:800;color:${BRAND};margin:4px 0;">${esc(formatINR(t.amount))}</div>` : ""}
-    <div style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:700;background:${t.status === "success" ? "#E8F5E9" : "#FDECEA"};color:${t.status === "success" ? "#2E7D32" : "#C62828"};">${esc(st.label)}</div>
+  <div style="border:1.5px solid ${m.color};border-radius:10px;overflow:hidden;margin-bottom:14px;">
+    <div style="background:${m.color};color:#FFF;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      <div>
+        <div style="font-size:17px;font-weight:800;letter-spacing:0.5px;">${esc(service)}</div>
+        ${via ? `<div style="font-size:11px;opacity:0.9;margin-top:2px;">via ${esc(via)}</div>` : ""}
+      </div>
+      ${big > 0 ? `<div style="font-size:24px;font-weight:800;white-space:nowrap;">${esc(formatINR(big))}</div>` : ""}
+    </div>
+    <table>
+      ${details.map((d) => `<tr><td style="color:#666;width:40%;">${esc(d.label)}</td><td style="font-weight:600;">${esc(d.value)}</td></tr>`).join("")}
+    </table>
   </div>
-  <table>
-    <tr><th>विवरण</th><th class="amt">जानकारी</th></tr>
-    ${lines.map((l) => `<tr><td style="color:#666;">${esc(l.label)}</td><td class="amt" style="font-weight:600;font-family:monospace;">${esc(l.value)}</td></tr>`).join("")}
-  </table>
-  <div class="stamp" style="border-color:${t.status === "success" ? "#2E7D32" : "#C62828"};color:${t.status === "success" ? "#2E7D32" : "#C62828"};">${esc(st.label)}</div>`;
+  <table class="sum">${summary.map(sumRow).join("")}</table>
+  <div class="stamp" style="border-color:${stamp.color};color:${stamp.color}">${esc(stamp.text)}</div>`;
 
-  const customerObj: Customer = {
-    id: "",
-    name: t.customerName || "ग्राहक",
-    phone: t.mobile || "",
-    address: "",
-    notes: "",
-    createdAt: t.createdAt,
-  };
+  const customer: Customer = { id: "", name, phone: t.mobile || "", address: "", notes: "", createdAt: t.createdAt };
 
   return {
     heading,
     title,
-    sub,
+    sub: `${name} · ${formatDate(t.date)} · नं. ${no}`,
     phone: t.mobile || "",
-    lines,
+    lines: summary,
     message,
-    html: page(shop, heading, `नं. ${esc(no)}<br/>${esc(formatDate(t.date))}`, customerObj, body, "A5"),
-    fileName: `${fileSafe(t.customerName || "aeps")}-${m.short}-${no}.pdf`,
+    html: page(shop, heading, `नं. ${esc(no)}<br/>${esc(formatDate(t.date))}`, customer, body, "A5"),
+    fileName: `${m.short}-${no}-${fileSafe(name)}.pdf`,
   };
 }
 

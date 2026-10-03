@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, StyleSheet, TextInput, Alert } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { formatINR, isValidISO, todayISO } from "@/src/lib/format";
-import { useCustomers, type Customer, type EntryType } from "@/src/lib/data";
+import { useCustomers, type EntryType } from "@/src/lib/data";
 import { parseQuickText } from "@/src/lib/quick-parser";
 import { store } from "@/src/lib/store";
 import { usePersona } from "@/src/lib/persona";
@@ -32,23 +32,31 @@ export function VoiceEntryModal({
   const [mode, setMode] = useState<"cash" | "online">("cash");
   const [dateOverride, setDateOverride] = useState<string | null>(null);
 
+  const busy = useRef(false);
+
   useEffect(() => {
     if (!visible) return;
     setText("");
     setOverrideType(null);
     setMode("cash");
     setDateOverride(null);
+    busy.current = false;
   }, [visible]);
 
-  const parsedType: EntryType = isPersonal
-    ? parsed.type === "work" ? "given" : parsed.type
-    : parsed.type === "purchase" ? "work" : parsed.type;
+  // The shop book has no "goods taken" row; guessing "work" would flip who owes whom, so ask.
+  const shopPurchase = !isPersonal && parsed.type === "purchase";
+  const parsedType: EntryType | null = isPersonal ? (parsed.type === "work" ? "given" : parsed.type) : shopPurchase ? null : parsed.type;
   const finalType = overrideType || parsedType;
   const types: EntryType[] = isPersonal ? ["given", "payment", "purchase"] : ["work", "payment", "given"];
   const date = dateOverride ?? todayISO(parsed.dateOffset);
   const typeLabel = (t: EntryType) => (t === "work" ? "काम" : t === "payment" ? "मिले" : t === "purchase" ? "सामान लिया" : "दिए");
 
   const handleSave = () => {
+    if (busy.current) return;
+    if (!finalType) {
+      Alert.alert("प्रकार चुनें", "काम, मिले या दिए में से एक चुनें।");
+      return;
+    }
     if (!parsed.amount || parsed.amount <= 0) {
       Alert.alert("रकम लिखें");
       return;
@@ -62,6 +70,8 @@ export function VoiceEntryModal({
       return;
     }
 
+    busy.current = true;
+    const day = dateOverride ?? todayISO(parsed.dateOffset);
     let custId = parsed.customerId;
     if (parsed.isNewCustomer || !custId) {
       const created = store.createCustomer({
@@ -77,7 +87,7 @@ export function VoiceEntryModal({
     store.createEntry({
       customerId: custId,
       type: finalType,
-      date,
+      date: day,
       description: parsed.description,
       amount: parsed.amount,
       paid: finalType === "work" || finalType === "purchase" ? 0 : undefined,
@@ -180,8 +190,11 @@ export function VoiceEntryModal({
                   })}
                 </View>
               </View>
+              {shopPurchase && !overrideType ? (
+                <Text style={styles.warnText}>दुकान खाते में &quot;सामान लिया&quot; नहीं लिखा जाता। सही प्रकार चुनें या निजी खाते में लिखें।</Text>
+              ) : null}
 
-              {finalType !== "work" && finalType !== "purchase" ? (
+              {finalType && finalType !== "work" && finalType !== "purchase" ? (
                 <View style={styles.previewRow}>
                   <Text style={styles.previewLabel}>कैसे</Text>
                   <View style={styles.typeSelector}>
@@ -202,8 +215,8 @@ export function VoiceEntryModal({
               <DateField label="तारीख" value={date} onChange={setDateOverride} money testID="voice-date" />
 
               <Pressable
-                style={[styles.saveBtn, (!parsed.amount || !parsed.customerName) && { opacity: 0.5 }]}
-                disabled={!parsed.amount || !parsed.customerName}
+                style={[styles.saveBtn, (!parsed.amount || !parsed.customerName || !finalType) && { opacity: 0.5 }]}
+                disabled={!parsed.amount || !parsed.customerName || !finalType}
                 onPress={handleSave}
                 testID="voice-save"
               >
@@ -364,6 +377,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     color: colors.onBrandPrimary,
+  },
+  warnText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.warning,
+    marginTop: 2,
+    marginBottom: 4,
   },
   tipBox: {
     flexDirection: "row",

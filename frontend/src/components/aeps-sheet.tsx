@@ -25,7 +25,7 @@ import {
   type CashFlow,
 } from "@/src/lib/aeps";
 import { createAeps, saveAeps } from "@/src/lib/aeps-due";
-import { formatINR, nowHM, todayISO } from "@/src/lib/format";
+import { dateOnSave, formatINR, nowHM, parseAmount, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { Chip, CustomerPicker, DateField, Field, PrimaryButton, SheetShell, inputStyle, useCustomerChoice } from "@/src/components/sheets";
 
@@ -139,7 +139,7 @@ const lineFrom = (t: AepsTxn): Line => {
 };
 
 const digits = (v: string, max: number) => v.replace(/\D/g, "").slice(0, max);
-const num = (v: string) => Math.max(parseFloat(v) || 0, 0);
+const num = (v: string) => parseAmount(v);
 const collectedNum = (l: Line) => (l.collected === null ? num(l.amount) : num(l.collected));
 
 type InputSpec = { placeholder: string; keyboard?: KeyboardTypeOptions; caps?: "none" | "words" | "characters"; max?: number; clean?: (v: string) => string; presets?: string[] };
@@ -162,6 +162,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
   const [mobile, setMobile] = useState("");
   const [date, setDate] = useState(todayISO());
   const [time, setTime] = useState(nowHM());
+  const [openedOn, setOpenedOn] = useState(todayISO());
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
   const [saving, setSaving] = useState(false);
 
@@ -170,6 +171,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
     setMobile(initial?.mobile ?? "");
     setDate(initial?.date ?? todayISO());
     setTime(initial?.time || nowHM());
+    setOpenedOn(todayISO());
     setLines([initial ? lineFrom(initial) : emptyLine()]);
     // Older rows only carry a name and mobile: find that customer, or offer them as new.
     if (initial && !initial.customerId) {
@@ -184,8 +186,9 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
         choice.setCustomerId("__new__");
       }
     }
+    // Only when the sheet opens for a record, not when a sync hands over a fresh copy of it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, initial]);
+  }, [visible, initial?.id]);
 
   const picked = choice.recent.find((c) => c.id === choice.customerId);
   const name = picked ? picked.name : choice.query.trim();
@@ -205,7 +208,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
   const valid = choice.ready && !choice.isSelf && lines.every(lineValid);
 
   /** Status fields for the server. Editing keeps the days a side already settled on. */
-  const statusFields = (line: Line, i: number) => {
+  const statusFields = (line: Line, i: number, date: string) => {
     const prev = initial && i === 0 ? initial : null;
     const status: AepsStatus = line.status === "later" ? "pending" : line.status;
     const flow = flowOf(line);
@@ -233,14 +236,16 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
       if (picked && !picked.phone && finalMobile) {
         store.updateCustomer(picked.id, { name: picked.name, phone: finalMobile, address: picked.address, notes: picked.notes, persona: picked.persona ?? "business" });
       }
+      const day = initial ? date : dateOnSave(date, openedOn);
+      const at = day !== date ? nowHM() : time;
       lines.forEach((line, i) => {
         const keep = new Set<AepsField>(fieldsFor(line.type, line.via));
         const val = (f: AepsField, v: string) => (keep.has(f) ? v.trim() : "");
         const payload = {
           type: line.type,
           via: VIA_FOR[line.type] ? line.via : ("" as AepsVia),
-          date,
-          time,
+          date: day,
+          time: at,
           customerId,
           customerName: name,
           mobile: finalMobile,
@@ -248,7 +253,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
           bankName: val("bankName", line.bankName),
           amount: num(line.amount),
           commission: num(line.commission),
-          ...statusFields(line, i),
+          ...statusFields(line, i, day),
           reference: line.reference.trim(),
           operator: val("operator", line.operator),
           rechargeNumber: val("rechargeNumber", line.rechargeNumber),

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/src/lib/api";
 import { withPending } from "@/src/lib/store";
+import { roundMoney } from "@/src/lib/format";
 
 export type Customer = {
   id: string;
@@ -105,7 +106,7 @@ export function useAeps() {
 
 export function computeBalance(entries: Entry[], customerId?: string): number {
   const list = customerId ? entries.filter((e) => e.customerId === customerId) : entries;
-  return list.reduce((s, e) => s + entryDelta(e), 0);
+  return roundMoney(list.reduce((s, e) => s + entryDelta(e), 0));
 }
 
 /** How much this row moves the customer's balance: udhaar part of work and money given up, payments down. */

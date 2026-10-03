@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Text, TextInput, View, StyleSheet } from "react-native";
 import { colors, spacing } from "@/src/theme";
-import { formatINR, isValidISO, todayISO } from "@/src/lib/format";
+import { dateOnSave, formatINR, isValidISO, parseAmount, todayISO } from "@/src/lib/format";
 import { usePersona, type Persona } from "@/src/lib/persona";
 import { accountKey, accountLabel, addMove, balanceOf, deleteMove, pocketName, useMoneyBook, type AccountKey, type Move, type Pocket } from "@/src/lib/wallet";
 import { Chip, DangerLink, DateField, Field, PrimaryButton, SheetShell, inputStyle } from "@/src/components/sheets";
@@ -32,6 +32,7 @@ export function MoneyMoveSheet({ kind: newKind, onClose, initialDate, initial }:
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [date, setDate] = useState(todayISO());
+  const [openedOn, setOpenedOn] = useState(todayISO());
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const amountRef = useRef<TextInput>(null);
@@ -53,6 +54,7 @@ export function MoneyMoveSheet({ kind: newKind, onClose, initialDate, initial }:
     setAmount("");
     setNote("");
     setDate(initialDate ?? todayISO());
+    setOpenedOn(todayISO());
     setError("");
     const t = setTimeout(() => amountRef.current?.focus(), 350);
     return () => clearTimeout(t);
@@ -78,11 +80,14 @@ export function MoneyMoveSheet({ kind: newKind, onClose, initialDate, initial }:
     to = accountKey(persona, pocket === "cash" ? "bank" : "cash");
   }
 
-  const amt = Math.max(parseFloat(amount) || 0, 0);
+  const amt = parseAmount(amount);
   // Taking money out on an earlier date must not leave a later day short either.
   // While editing, the row's own old amount is still inside the balance; give it back first.
   const own0 = initial && from && initial.from === from ? initial.amount : 0;
-  const available = from ? Math.min(balanceOf(book, from, date), balanceOf(book, from, date > todayISO() ? date : todayISO())) + own0 : Infinity;
+  const available = useMemo(
+    () => (from ? Math.min(balanceOf(book, from, date), balanceOf(book, from, date > todayISO() ? date : todayISO())) + own0 : Infinity),
+    [book, from, date, own0],
+  );
   const short = !!from && amt > available;
   const valid = amt > 0 && isValidISO(date);
 
@@ -105,7 +110,7 @@ export function MoneyMoveSheet({ kind: newKind, onClose, initialDate, initial }:
     if (!kind) return;
     setSaving(true);
     try {
-      const body = { date, from, to, amount: amt, note: other ? "" : note.trim() };
+      const body = { date: initial ? date : dateOnSave(date, openedOn), from, to, amount: amt, note: other ? "" : note.trim() };
       if (initial) store.updateMove(initial.id, body);
       else await addMove(body);
       onClose();

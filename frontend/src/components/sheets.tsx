@@ -15,10 +15,10 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
 import { advanceOf, computeBalance, itemsOf, useCustomers, useEntries, useJobs, type Customer, type Entry, type EntryItem, type EntryType, type Job } from "@/src/lib/data";
-import { ADVANCE, advancesForJob, buildLedger, jobForWork, linkedPayment, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
+import { ADVANCE, advancesForJob, buildLedger, jobForWork, linkedPayment, olderAdvances, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
-import { formatDate, formatINR, isValidISO, todayISO } from "@/src/lib/format";
+import { dateOnSave, formatDate, formatINR, isValidISO, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
 import { CalendarModal } from "@/src/components/calendar-modal";
 import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
@@ -364,16 +364,13 @@ function useMoneyInput() {
   const [touched, setTouched] = useState(false);
   // Already-received money (e.g. a job advance) that the "received now" default leaves out.
   const [less, setLess] = useState(0);
-  const follow = (t: string) => {
-    if (!less) return t;
-    const n = parseFloat(t);
-    return Number.isFinite(n) ? String(Math.max(n - less, 0)) : "";
-  };
+  const minus = (t: string, by: number) => (t.trim() ? String(Math.max(roundMoney(parseAmount(t) - by), 0)) : "");
+  const follow = (t: string) => (less ? minus(t, less) : t);
   return {
     total,
     received,
-    totalNum: Math.max(parseFloat(total) || 0, 0),
-    receivedNum: Math.max(parseFloat(received) || 0, 0),
+    totalNum: parseAmount(total),
+    receivedNum: parseAmount(received),
     setTotal: (t: string) => {
       setTotalRaw(t);
       if (!touched) setReceivedRaw(follow(t));
@@ -387,11 +384,7 @@ function useMoneyInput() {
       setTotalRaw(t);
       setTouched(r !== undefined);
       if (r !== undefined) setReceivedRaw(r);
-      else if (!alreadyGot) setReceivedRaw(t);
-      else {
-        const n = parseFloat(t);
-        setReceivedRaw(Number.isFinite(n) ? String(Math.max(n - alreadyGot, 0)) : "");
-      }
+      else setReceivedRaw(alreadyGot ? minus(t, alreadyGot) : t);
     },
   };
 }
@@ -464,7 +457,7 @@ function MoneyFields({
 type ItemRow = { key: number; title: string; amount: string };
 let itemSeq = 0;
 const itemRow = (title = "", amount = ""): ItemRow => ({ key: ++itemSeq, title, amount });
-const rowAmount = (r: ItemRow) => Math.max(parseFloat(r.amount) || 0, 0);
+const rowAmount = (r: ItemRow) => parseAmount(r.amount);
 const isFilled = (r: ItemRow) => !!r.title.trim() || rowAmount(r) > 0;
 
 /** Line items of one work / purchase. `onTotal` hears every edit so the money fields follow the sum. */
@@ -590,7 +583,7 @@ function PayModeField({ label, value, onChange, cashLabel = "नकद", onlineL
 
 /** Portal fee / cost paid by the shop for this work. Never printed on the customer's bill. */
 function FeeField({ fee, setFee, feeMode, setFeeMode, amount }: { fee: string; setFee: (v: string) => void; feeMode: PayMode; setFeeMode: (m: PayMode) => void; amount: number }) {
-  const n = Math.max(parseFloat(fee) || 0, 0);
+  const n = parseAmount(fee);
   return (
     <>
       <Field label="फीस / लागत (₹)">
@@ -689,9 +682,12 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
       setPhone(initial?.phone ?? "");
       setAddress(initial?.address ?? "");
       setNotes(initial?.notes ?? "");
-      setTargetPersona(initial?.persona ?? (isPersonal ? "personal" : "business"));
+      // Rows saved before personas existed belong to the shop.
+      setTargetPersona(initial ? (initial.persona === "personal" ? "personal" : "business") : isPersonal ? "personal" : "business");
     }
-  }, [visible, initial, isPersonal]);
+    // Only when the sheet opens for a record, not when a sync hands over a fresh copy of it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, initial?.id, isPersonal]);
 
   const allCustomers = useCustomers().data ?? [];
   const sameBook = allCustomers.filter((c) => (targetPersona === "personal" ? c.persona === "personal" : c.persona !== "personal"));
@@ -770,7 +766,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
         <DangerLink
           label="यह खाता हटाएँ"
           testID="delete-customer-link"
-          onPress={() => confirmAction(`${name || "यह खाता"} हटाएँ?`, "इनकी सारी एंट्री भी मिट जाएँगी, और पुराने दिनों का गल्ला / बैंक हिसाब बदल जाएगा।", "हटा दें", () => { onDelete(); onClose(); })}
+          onPress={() => confirmAction(`${name || "यह खाता"} हटाएँ?`, "इनकी सारी एंट्री और काम भी हटेंगे, और पुराने दिनों का गल्ला / बैंक हिसाब बदल जाएगा। गलती से हटाया तो प्रोफ़ाइल › कचरा पेटी से पूरा खाता वापस ला सकते हैं।", "हटा दें", () => { onDelete(); onClose(); })}
         />
       ) : null}
       {contacts.modal}
@@ -798,6 +794,7 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
   const items = useItems((sum) => money.setTotal(sum > 0 ? String(sum) : ""));
   const [payMode, setPayMode] = useState<"cash" | "online">("cash");
   const [date, setDate] = useState(todayISO());
+  const [openedOn, setOpenedOn] = useState(todayISO());
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -815,6 +812,7 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
     }
     setPayMode(initial?.mode ?? "cash");
     setDate(initial?.date ?? todayISO());
+    setOpenedOn(todayISO());
     setNotes(initial?.notes ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initial, type]);
@@ -825,7 +823,7 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
   const due = personId ? computeBalance(entries, personId) : 0;
   const ui = ENTRY_UI[kind];
   const isPurchase = kind === "purchase";
-  const amt = isPurchase ? money.totalNum : parseFloat(amount);
+  const amt = isPurchase ? money.totalNum : parseAmount(amount);
   const paidNow = isPurchase ? money.receivedNum : 0;
   const needsDescription = kind === "work";
   const fullChip = kind === "payment" && due > 0 ? due : kind === "given" && due < 0 ? -due : 0;
@@ -836,9 +834,10 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
     if (!valid) return;
     setSaving(true);
     try {
+      const day = initial ? date : dateOnSave(date, openedOn);
       const body = isPurchase
-        ? { type: kind, date, description: items.description, amount: amt, paid: paidNow, mode: payMode, notes: notes.trim(), items: items.saved() }
-        : { type: kind, date, description: description.trim(), amount: amt, mode: payMode, notes: notes.trim() };
+        ? { type: kind, date: day, description: items.description, amount: amt, paid: paidNow, mode: payMode, notes: notes.trim(), items: items.saved() }
+        : { type: kind, date: day, description: description.trim(), amount: amt, mode: payMode, notes: notes.trim() };
       if (initial) await store.updateEntry(initial.id, body);
       else {
         const customerId = await choice.resolve();
@@ -967,7 +966,6 @@ export function DangerLink({ label, onPress, testID }: { label: string; onPress:
 export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose: () => void }) {
   const entries = useEntries().data ?? [];
   const jobs = useJobs().data ?? [];
-  const later = entry ? settlementsFor(entry, entries).filter((p) => p.date !== entry.date) : [];
   const money = useMoneyInput();
   const items = useItems((sum) => money.setTotal(sum > 0 ? String(sum) : ""));
   const [payMode, setPayMode] = useState<"cash" | "online">("cash");
@@ -984,13 +982,17 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   const extras = entry ? entries.filter((e) => e.type === "payment" && e.linkId === entry.id && e.date === entry.date && e.description === ADVANCE && e.notes.endsWith("के साथ")) : [];
   const extraSum = extras.reduce((s, e) => s + e.amount, 0);
   const link = entry ? linkedPayment(entry, entries) : undefined;
-  const legacyLink = link && !extras.some((e) => e.id === link.id) ? link : undefined;
+  // Only an old unlinked two-row record is folded into `paid`. A linked "पैसे मिले" written later
+  // the same day is its own row (own mode, own notes) and must stay as it is.
+  const legacyLink = entry && link && !link.linkId && !(entry.paid ?? 0) && !extras.some((e) => e.id === link.id) ? link : undefined;
+  // Every other payment booked against this work, shown so it can be seen / removed here.
+  const later = entry ? settlementsFor(entry, entries).filter((p) => p.id !== legacyLink?.id && !extras.some((e) => e.id === p.id)) : [];
 
   useEffect(() => {
     if (!entry) return;
     items.reset(itemsOf(entry));
     money.reset(String(entry.amount), String(((entry.paid ?? 0) || (legacyLink?.amount ?? 0)) + extraSum));
-    setPayMode(entry.mode ?? legacyLink?.mode ?? "cash");
+    setPayMode(legacyLink?.mode ?? entry.mode ?? "cash");
     setGovtFee(entry.fee ? String(entry.fee) : "");
     setFeeMode(entry.feeMode ?? "online");
     setDate(entry.date);
@@ -1002,7 +1004,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   }, [entry?.id]);
 
   const amt = money.totalNum;
-  const valid = items.titled && (amt > 0 || (parseFloat(govtFee) || 0) > 0);
+  const valid = items.titled && (amt > 0 || parseAmount(govtFee) > 0);
 
   const save = () => {
     if (!entry || !valid) return;
@@ -1010,7 +1012,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
     try {
       const t = items.description;
       const taken = money.receivedNum;
-      const feeNum = Math.max(parseFloat(govtFee) || 0, 0);
+      const feeNum = parseAmount(govtFee);
       store.updateEntry(entry.id, {
         type: "work",
         date,
@@ -1026,9 +1028,10 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       extras.forEach((e) => store.deleteEntry(e.id));
       bookAdvance(entry.customerId, taken - amt, date, t, entry.id, payMode);
       // Old two-row cash records: the same-day jama is now carried by `paid`.
-      if (legacyLink && !(entry.paid ?? 0)) store.deleteEntry(legacyLink.id);
+      if (legacyLink) store.deleteEntry(legacyLink.id);
       if (job) {
-        store.updateJob(job.id, { title: t, dueDate: date, estimatedAmount: amt, notes: notes.trim(), entryId: entry.id });
+        // The job card keeps its own notes (size, copies…); the work row's notes are separate.
+        store.updateJob(job.id, { title: t, dueDate: date, estimatedAmount: amt, entryId: entry.id });
       }
       if (remark.trim()) {
         store.createJob({ customerId: entry.customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
@@ -1044,7 +1047,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
       <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
       {later.length > 0 ? (
-        <Field label="बाद में मिले पैसे">
+        <Field label="अलग से मिले पैसे">
           {later.map((p) => (
             <View key={p.id} style={styles.settleRow}>
               <MaterialIcon name="check-circle" size={16} color={colors.success} />
@@ -1097,15 +1100,20 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
     if (!job || !title.trim()) return;
     setSaving(true);
     try {
-      store.updateJob(job.id, { title: title.trim(), estimatedAmount: parseFloat(amount) || 0, dueDate: date, notes: notes.trim(), status });
+      store.updateJob(job.id, { title: title.trim(), estimatedAmount: parseAmount(amount), dueDate: date, notes: notes.trim(), status });
       onClose();
     } finally { setSaving(false); }
   };
 
   const remove = () => {
     if (!job) return;
-    const adv = advancesForJob(job, entries).reduce((s, e) => s + e.amount, 0);
-    confirmAction("काम हटाएँ?", adv > 0 ? `${job.title}\nइसका एडवांस ${formatINR(adv)} भी हटेगा।` : job.title, "हटा दें", () => {
+    const all = advancesForJob(job, entries).reduce((s, e) => s + e.amount, 0);
+    const kept = olderAdvances(job, entries).reduce((s, e) => s + e.amount, 0);
+    const gone = all - kept;
+    const lines = [job.title];
+    if (gone > 0) lines.push(`आज का एडवांस ${formatINR(gone)} भी हटेगा।`);
+    if (kept > 0) lines.push(`पहले लिया एडवांस ${formatINR(kept)} खाते में जमा रहेगा (लौटाएँ तो "पैसे दिए" लिखें)।`);
+    confirmAction("काम हटाएँ?", lines.join("\n"), "हटा दें", () => {
       removeJobWithAdvances(job, entries);
       onClose();
     });
@@ -1184,6 +1192,7 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
   const [amount, setAmount] = useState("");
   const [payMode, setPayMode] = useState<"cash" | "online">("cash");
   const [date, setDate] = useState(todayISO());
+  const [openedOn, setOpenedOn] = useState(todayISO());
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -1197,12 +1206,13 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
     setAmount(remaining > 0 ? String(remaining) : "");
     setPayMode("cash");
     setDate(todayISO());
+    setOpenedOn(todayISO());
     setNotes("");
     // Only re-initialise when a different record is opened.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [work?.id]);
 
-  const amt = parseFloat(amount) || 0;
+  const amt = parseAmount(amount);
   const valid = !!work && amt > 0 && (!payBack || amt <= remaining);
 
   const save = () => {
@@ -1212,7 +1222,7 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
       store.createEntry({
         customerId: work.customerId,
         type: payBack ? "given" : "payment",
-        date,
+        date: dateOnSave(date, openedOn),
         description: settleDescription(work.description || ENTRY_UI[work.type].title),
         amount: amt,
         mode: payMode,
@@ -1279,6 +1289,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   const [remarkDate, setRemarkDate] = useState(todayISO(1));
   const [paidNow, setPaidNow] = useState("");
   const [paidDate, setPaidDate] = useState(todayISO());
+  const [openedOn, setOpenedOn] = useState(todayISO());
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -1295,6 +1306,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       setRemarkDate(todayISO(1));
       setPaidNow("");
       setPaidDate(todayISO());
+      setOpenedOn(todayISO());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initialMode]);
@@ -1323,33 +1335,34 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
     try {
       const customerId = await choice.resolve();
       const t = itemized ? items.description : title.trim();
-      const feeNum = Math.max(parseFloat(govtFee) || 0, 0);
+      const feeNum = parseAmount(govtFee);
+      const day = dateOnSave(date, openedOn);
       if (mode === "now") {
         const entryId = recordWork({
           customerId,
           title: t,
           amount: amt,
           received: money.receivedNum,
-          date,
+          date: day,
           notes: remark.trim(),
           mode: payMode,
           fee: feeNum,
           feeMode,
           items: itemized ? items.saved() : [],
         });
-        store.createJob({ customerId, title: t, dueDate: date, status: "done", estimatedAmount: amt, notes: remark.trim(), entryId });
+        store.createJob({ customerId, title: t, dueDate: day, status: "done", estimatedAmount: amt, notes: remark.trim(), entryId });
         if (remark.trim()) {
           await store.createJob({ customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
         }
       } else {
-        const job = store.createJob({ customerId, title: t, dueDate: date, estimatedAmount: amt, notes: remark.trim() });
-        const got = Math.max(parseFloat(paidNow) || 0, 0);
+        const job = store.createJob({ customerId, title: t, dueDate: day, estimatedAmount: amt, notes: remark.trim() });
+        const got = parseAmount(paidNow);
         // The advance lands in the drawer/bank on the day it was received, not on the delivery day.
         if (!self && got > 0) {
           store.createEntry({
             customerId,
             type: "payment",
-            date: paidDate,
+            date: dateOnSave(paidDate, openedOn),
             description: "एडवांस",
             amount: got,
             mode: payMode,
@@ -1397,7 +1410,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
           <Field label="एडवांस मिला (₹)">
             <TextInput style={inputStyle} value={paidNow} onChangeText={setPaidNow} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-paid" />
           </Field>
-          {(parseFloat(paidNow) || 0) > 0 ? (
+          {parseAmount(paidNow) > 0 ? (
             <>
               <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} />
               <DateField label="कब मिले" value={paidDate} onChange={setPaidDate} money testID="input-job-paid-date" />
@@ -1514,8 +1527,9 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
   const [payMode, setPayMode] = useState<PayMode>("cash");
   const [fee, setFee] = useState("");
   const [feeMode, setFeeMode] = useState<PayMode>("online");
-  const [workDate, setWorkDate] = useState(todayISO());
-  const [cashDate, setCashDate] = useState(todayISO());
+  const [workDay, setWorkDate] = useState(todayISO());
+  const [cashDay, setCashDate] = useState(todayISO());
+  const [openedOn, setOpenedOn] = useState(todayISO());
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -1528,9 +1542,11 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
       setFeeMode("online");
       setWorkDate(todayISO());
       setCashDate(todayISO());
+      setOpenedOn(todayISO());
     }
+    // Only re-initialise when a different job is opened, not when a sync refreshes it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job]);
+  }, [job?.id]);
 
   const amt = job?.customerId ? money.totalNum : 0;
   const got = money.receivedNum;
@@ -1539,6 +1555,8 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
     if (!job) return;
     setSaving(true);
     try {
+      const workDate = dateOnSave(workDay, openedOn);
+      const cashDate = dateOnSave(cashDay, openedOn);
       const sameDay = cashDate === workDate;
       const entryId = recordWork({
         customerId: job.customerId,
@@ -1548,7 +1566,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
         date: workDate,
         notes: "काम पूरा",
         mode: payMode,
-        fee: Math.max(parseFloat(fee) || 0, 0),
+        fee: parseAmount(fee),
         feeMode,
       });
       if (entryId) {
@@ -1575,8 +1593,8 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
           <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
         </>
       ) : null}
-      <DateField label="काम की तारीख" value={workDate} onChange={(d) => { setWorkDate(d); setCashDate(d); }} testID="input-complete-date" />
-      {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDate} onChange={setCashDate} money testID="input-complete-cash-date" /> : null}
+      <DateField label="काम की तारीख" value={workDay} onChange={(d) => { setWorkDate(d); setCashDate(d); }} testID="input-complete-date" />
+      {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDay} onChange={setCashDate} money testID="input-complete-cash-date" /> : null}
       <PrimaryButton label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"} color={colors.success} onPress={save} saving={saving} testID="save-complete-btn" />
     </SheetShell>
   );

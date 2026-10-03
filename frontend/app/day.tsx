@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { colors, spacing, radius } from "@/src/theme";
 import { useCustomers, type Entry } from "@/src/lib/data";
-import { formatDateShort, formatINR, formatMonth, formatWeekdayDate, monthRange, shiftISO, todayISO, weekRange } from "@/src/lib/format";
+import { cleanAmountInput, formatDateShort, formatINR, formatMonth, formatWeekdayDate, monthRange, parseAmount, roundMoney, shiftISO, todayISO, weekRange } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { EditRecordSheet } from "@/src/components/sheets";
 import { AEPS_META, bankLegDate, cashLegDate, moneyLines } from "@/src/lib/aeps";
@@ -59,7 +59,7 @@ export default function DayScreen() {
   }, [date, persona]);
 
   const handleSaveCounted = (val: string) => {
-    const clean = val.replace(/[^0-9]/g, "");
+    const clean = cleanAmountInput(val);
     setCountedCash(clean);
     AsyncStorage.setItem(`hisab_counted_cash_${persona}_${date}`, clean).catch(() => {});
   };
@@ -123,8 +123,8 @@ export default function DayScreen() {
     [book.aeps, date, isPersonal]
   );
 
-  const countedNum = countedCash ? parseInt(countedCash, 10) || 0 : null;
-  const diff = countedNum !== null ? countedNum - expectedCash : null;
+  const countedNum = countedCash ? parseAmount(countedCash) : null;
+  const diff = countedNum !== null ? roundMoney(countedNum - expectedCash) : null;
 
   const dateLabel = date === today ? "आज" : date === todayISO(-1) ? "कल" : formatWeekdayDate(date);
 
@@ -156,8 +156,9 @@ export default function DayScreen() {
     feePaidCash: flows.cash.fee,
     paymentCash,
     paymentOnline,
-    expenseCash: flows.cash.expense,
-    expenseOnline: flows.bank.expense,
+    // Same totals as the expense tab (old-dated rows included); the galla figures below leave those out.
+    expenseCash: expenseCashTotal,
+    expenseOnline: roundMoney(expenseTotal - expenseCashTotal),
     bankToCash: dayMoves.filter((m) => m.from === bankKey && m.to === cashKey).reduce((s, m) => s + m.amount, 0),
     cashToBank: dayMoves.filter((m) => m.from === cashKey && m.to === bankKey).reduce((s, m) => s + m.amount, 0),
     openingCash,

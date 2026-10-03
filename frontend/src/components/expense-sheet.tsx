@@ -5,7 +5,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { addExpense, deleteExpense, expensePersona, EXPENSE_CATEGORIES, PERSONAL_EXPENSE_CATEGORIES, type Expense, type ExpenseMode } from "@/src/lib/expenses";
 import { usePersona } from "@/src/lib/persona";
-import { formatDateShort, formatINR, isBackdated, isValidISO, todayISO } from "@/src/lib/format";
+import { dateOnSave, formatDateShort, formatINR, isBackdated, isValidISO, parseAmount, todayISO } from "@/src/lib/format";
 import { DangerLink, DateField, SheetShell } from "@/src/components/sheets";
 import { store } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
@@ -30,6 +30,7 @@ export function AddExpenseSheet({
   const [mode, setMode] = useState<ExpenseMode>("cash");
   const [notes, setNotes] = useState("");
   const [date, setDate] = useState(todayISO());
+  const [openedOn, setOpenedOn] = useState(todayISO());
   const [saving, setSaving] = useState(false);
 
   const amountRef = useRef<TextInput>(null);
@@ -48,12 +49,13 @@ export function AddExpenseSheet({
     setNotes("");
     setMode("cash");
     setDate(initialDate || todayISO());
+    setOpenedOn(todayISO());
     const t = setTimeout(() => amountRef.current?.focus(), 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, isPersonal, initial?.id]);
 
-  const amtNum = parseFloat(amount) || 0;
+  const amtNum = parseAmount(amount);
   const valid = amtNum > 0 && isValidISO(date);
   // An edit that moves the row before the day it was typed takes it out of galla / bank.
   const nowOld = initial ? isBackdated(date, initial.createdAt) && !isBackdated(initial.date, initial.createdAt) : false;
@@ -72,7 +74,7 @@ export function AddExpenseSheet({
           persona: expensePersona(initial),
         });
       } else {
-        await addExpense({ amount: amtNum, title: title.trim() || "खर्च", mode, date, notes, persona });
+        await addExpense({ amount: amtNum, title: title.trim() || "खर्च", mode, date: dateOnSave(date, openedOn), notes, persona });
       }
       onClose();
     } finally {

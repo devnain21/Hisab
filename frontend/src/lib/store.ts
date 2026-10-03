@@ -9,9 +9,9 @@ import { queryClient } from "@/src/query-client";
 import type { AepsTxn, Customer, Entry, Job } from "@/src/lib/data";
 import type { Expense } from "@/src/lib/expenses";
 import type { Move } from "@/src/lib/wallet";
-import { putInTrash } from "@/src/lib/trash";
+import { bundleFor, putInTrash } from "@/src/lib/trash";
 
-type Coll = "customers" | "entries" | "jobs" | "aeps" | "expenses" | "moves";
+export type Coll = "customers" | "entries" | "jobs" | "aeps" | "expenses" | "moves";
 type Op =
   | { kind: "create"; coll: Coll; item: { id: string } & Record<string, unknown> }
   | { kind: "update"; coll: Coll; itemId: string; patch: Record<string, unknown> }
@@ -221,6 +221,36 @@ export async function clearOutbox() {
   notify();
 }
 
+// Outside the "hisab_" prefix so the sign-out wipe keeps it; only the same account gets it back.
+const PARKED_PREFIX = "parked_outbox_";
+
+/** Sign-out with unsynced changes: keep them aside for this account instead of throwing them away. */
+export async function parkOutbox(uid: string) {
+  await ensureLoaded();
+  if (!uid || ops.length === 0) return;
+  try {
+    const raw = await AsyncStorage.getItem(PARKED_PREFIX + uid);
+    const earlier: Op[] = raw ? JSON.parse(raw) : [];
+    await AsyncStorage.setItem(PARKED_PREFIX + uid, JSON.stringify([...earlier, ...ops]));
+  } catch {}
+}
+
+/** Same account signed in again: queue its parked changes ahead of anything new. */
+export async function unparkOutbox(uid: string) {
+  if (!uid) return;
+  try {
+    const raw = await AsyncStorage.getItem(PARKED_PREFIX + uid);
+    if (!raw) return;
+    await ensureLoaded();
+    const parked: Op[] = JSON.parse(raw);
+    ops = [...parked, ...ops];
+    await AsyncStorage.setItem(KEY, JSON.stringify(ops));
+    await AsyncStorage.removeItem(PARKED_PREFIX + uid);
+    for (const coll of COLLS) queryClient.invalidateQueries({ queryKey: [coll] });
+    notify();
+  } catch {}
+}
+
 export function pendingCount() {
   return ops.length;
 }
@@ -253,7 +283,7 @@ export const store = {
   deleteCustomer(id: string) {
     const list = queryClient.getQueryData<Customer[]>(["customers"]);
     const target = list?.find((x) => x.id === id);
-    if (target) void putInTrash("customers", target);
+    if (target) void putInTrash("customers", target, bundleFor(id));
     enqueue({ kind: "delete", coll: "customers", itemId: id });
   },
   createEntry(b: Omit<Entry, "id" | "createdAt">): Entry {
@@ -312,6 +342,8 @@ export const store = {
     enqueue({ kind: "update", coll: "expenses", itemId: id, patch: b });
   },
   deleteExpense(id: string) {
+    const target = queryClient.getQueryData<Expense[]>(["expenses"])?.find((x) => x.id === id);
+    if (target) void putInTrash("expenses", target);
     enqueue({ kind: "delete", coll: "expenses", itemId: id });
   },
   createMove(item: Move) {
@@ -321,9 +353,24 @@ export const store = {
     enqueue({ kind: "update", coll: "moves", itemId: id, patch: b });
   },
   deleteMove(id: string) {
+    const target = queryClient.getQueryData<Move[]>(["moves"])?.find((x) => x.id === id);
+    if (target) void putInTrash("moves", target);
     enqueue({ kind: "delete", coll: "moves", itemId: id });
   },
   restoreRaw(coll: Coll, item: Record<string, unknown> & { id: string }) {
     enqueue({ kind: "create", coll, item });
+  },
+  /** Many creates at once (backup restore): one save and one cache update instead of one per row. */
+  async restoreMany(rows: { coll: Coll; item: Record<string, unknown> & { id: string } }[]) {
+    if (rows.length === 0) return;
+    await ensureLoaded();
+    const added: Op[] = rows.map(({ coll, item }) => ({ kind: "create", coll, item }));
+    ops.push(...added);
+    persist();
+    for (const coll of COLLS) {
+      queryClient.setQueryData<any[]>([coll], (old) => (old === undefined ? old : added.reduce((acc, op) => applyOp(coll, acc, op), old)));
+    }
+    notify();
+    void flush();
   },
 };

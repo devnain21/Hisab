@@ -5,7 +5,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { clearAllTrash, getTrashList, restoreTrashItem, subscribeTrash, type TrashItem } from "@/src/lib/trash";
 import { formatDateShort } from "@/src/lib/format";
-import { confirmAction } from "@/src/lib/confirm";
+import { confirmAction, showNotice } from "@/src/lib/confirm";
 
 export function RecycleBinModal({
   visible,
@@ -28,7 +28,8 @@ export function RecycleBinModal({
   }, [visible]);
 
   const handleRestore = async (id: string) => {
-    await restoreTrashItem(id);
+    const result = await restoreTrashItem(id);
+    if (result === "no-customer") showNotice("पहले खाता वापस लाएं", "जिस खाते की यह एंट्री है वह हटाया जा चुका है। पहले उस खाते को वापस लाएं।");
     load();
   };
 
@@ -80,6 +81,10 @@ export function RecycleBinModal({
                     ? { label: "हिसाब", color: "#047857" }
                     : item.coll === "jobs"
                     ? { label: "काम", color: "#B45309" }
+                    : item.coll === "expenses"
+                    ? { label: "खर्च", color: "#B91C1C" }
+                    : item.coll === "moves"
+                    ? { label: "गल्ला / बैंक", color: "#0E7490" }
                     : { label: "काउंटर", color: "#6D28D9" };
 
                 return (

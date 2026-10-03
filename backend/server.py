@@ -399,6 +399,20 @@ async def _create_idempotent(collection, model, payload: BaseModel, user: dict):
     return obj
 
 
+# Deleted rows are kept for a while so a wrong delete (or a cascade) can be recovered.
+async def _archive_and_delete(coll_name: str, query: dict, user: dict):
+    collection = db[coll_name]
+    q = {**query, "user_id": user["user_id"]}
+    docs = await collection.find(q, {"_id": 0}).to_list(None)
+    if not docs:
+        return
+    now = datetime.now(timezone.utc)
+    await db.deleted_items.insert_many(
+        [{"user_id": user["user_id"], "coll": coll_name, "id": d.get("id", ""), "deletedAt": now, "doc": d} for d in docs]
+    )
+    await collection.delete_many(q)
+
+
 # --- Auth Endpoints ---
 @api_router.post("/auth/login", response_model=AuthResponse)
 async def login_with_firebase(payload: LoginRequest):
@@ -474,9 +488,9 @@ async def update_customer(customer_id: str, payload: CustomerCreate, user: dict 
 
 @api_router.delete("/customers/{customer_id}")
 async def delete_customer(customer_id: str, user: dict = Depends(get_current_user)):
-    await db.customers.delete_one({"id": customer_id, "user_id": user["user_id"]})
-    await db.entries.delete_many({"customerId": customer_id, "user_id": user["user_id"]})
-    await db.jobs.delete_many({"customerId": customer_id, "user_id": user["user_id"]})
+    await _archive_and_delete("customers", {"id": customer_id}, user)
+    await _archive_and_delete("entries", {"customerId": customer_id}, user)
+    await _archive_and_delete("jobs", {"customerId": customer_id}, user)
     # Counter rows carry their own galla / bank movement, so they stay; only the link goes.
     await db.aeps.update_many({"customerId": customer_id, "user_id": user["user_id"]}, {"$set": {"customerId": ""}})
     return {"ok": True}
@@ -514,7 +528,7 @@ async def update_entry(entry_id: str, payload: EntryUpdate, user: dict = Depends
 
 @api_router.delete("/entries/{entry_id}")
 async def delete_entry(entry_id: str, user: dict = Depends(get_current_user)):
-    await db.entries.delete_one({"id": entry_id, "user_id": user["user_id"]})
+    await _archive_and_delete("entries", {"id": entry_id}, user)
     return {"ok": True}
 
 
@@ -544,7 +558,7 @@ async def update_job(job_id: str, payload: JobUpdate, user: dict = Depends(get_c
 
 @api_router.delete("/jobs/{job_id}")
 async def delete_job(job_id: str, user: dict = Depends(get_current_user)):
-    await db.jobs.delete_one({"id": job_id, "user_id": user["user_id"]})
+    await _archive_and_delete("jobs", {"id": job_id}, user)
     return {"ok": True}
 
 
@@ -572,7 +586,7 @@ async def update_aeps(txn_id: str, payload: AepsFields, user: dict = Depends(get
 
 @api_router.delete("/aeps/{txn_id}")
 async def delete_aeps(txn_id: str, user: dict = Depends(get_current_user)):
-    await db.aeps.delete_one({"id": txn_id, "user_id": user["user_id"]})
+    await _archive_and_delete("aeps", {"id": txn_id}, user)
     return {"ok": True}
 
 
@@ -600,7 +614,7 @@ async def update_expense(expense_id: str, payload: ExpenseFields, user: dict = D
 
 @api_router.delete("/expenses/{expense_id}")
 async def delete_expense(expense_id: str, user: dict = Depends(get_current_user)):
-    await db.expenses.delete_one({"id": expense_id, "user_id": user["user_id"]})
+    await _archive_and_delete("expenses", {"id": expense_id}, user)
     return {"ok": True}
 
 
@@ -627,7 +641,7 @@ async def update_move(move_id: str, payload: MoneyMoveFields, user: dict = Depen
 
 @api_router.delete("/moves/{move_id}")
 async def delete_move(move_id: str, user: dict = Depends(get_current_user)):
-    await db.moves.delete_one({"id": move_id, "user_id": user["user_id"]})
+    await _archive_and_delete("moves", {"id": move_id}, user)
     return {"ok": True}
 
 
@@ -660,6 +674,10 @@ async def startup():
     await db.jobs.create_index([("user_id", 1), ("status", 1), ("dueDate", 1)])
     await db.aeps.create_index([("user_id", 1), ("id", 1)])
     await db.aeps.create_index([("user_id", 1), ("date", -1)])
+    await db.expenses.create_index([("user_id", 1), ("id", 1)])
+    await db.moves.create_index([("user_id", 1), ("id", 1)])
+    await db.deleted_items.create_index([("user_id", 1), ("coll", 1), ("id", 1)])
+    await db.deleted_items.create_index("deletedAt", expireAfterSeconds=60 * 60 * 24 * 180)
 
 
 @app.on_event("shutdown")

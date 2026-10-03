@@ -132,8 +132,8 @@ export function DayCloseModal({
                     {data.cashDiff === 0
                       ? "गल्ला मिलान: बिल्कुल सही ✅"
                       : data.cashDiff > 0
-                      ? `अंतर: ₹${data.cashDiff} ज़्यादा हैं`
-                      : `अंतर: ₹${-data.cashDiff} कम हैं`}
+                      ? `अंतर: ${formatINR(data.cashDiff)} ज़्यादा हैं`
+                      : `अंतर: ${formatINR(-data.cashDiff)} कम हैं`}
                   </Text>
                 </View>
               ) : null}

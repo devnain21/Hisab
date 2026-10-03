@@ -26,7 +26,8 @@ import { PinSetupModal, useAppLock } from "@/src/components/app-lock";
 import { biometricAvailable, disableLock, lockSupported, setBiometric, setPin } from "@/src/lib/app-lock";
 import { exportFullLedgerCsv } from "@/src/lib/export-data";
 import { flush, usePendingCount } from "@/src/lib/store";
-import { confirmAction } from "@/src/lib/confirm";
+import { confirmAction, showNotice } from "@/src/lib/confirm";
+import { applyRestore, exportBackupJson, pickBackup } from "@/src/lib/backup";
 import { accountName, usePersona } from "@/src/lib/persona";
 import { RecycleBinModal } from "@/src/components/recycle-bin-sheet";
 import { getTrashList, subscribeTrash } from "@/src/lib/trash";
@@ -211,11 +212,51 @@ export default function Profile() {
     }
   };
 
+  const jsonBackup = async () => {
+    setBackupError(null);
+    setBackingUp(true);
+    try {
+      await exportBackupJson(accountName(user) || "हिसाब");
+    } catch {
+      setBackupError("बैकअप नहीं बन पाया, दोबारा कोशिश करें।");
+    } finally {
+      setBackingUp(false);
+    }
+  };
+
+  const restoreBackup = async () => {
+    setBackupError(null);
+    let restorePlan;
+    try {
+      restorePlan = await pickBackup();
+    } catch {
+      setBackupError("यह हिसाब ऐप की बैकअप फ़ाइल नहीं है।");
+      return;
+    }
+    if (!restorePlan) return;
+    const c = restorePlan.counts;
+    if (restorePlan.rows.length === 0) {
+      showNotice("सब पहले से मौजूद है", "इस बैकअप का हर रिकॉर्ड ऐप में पहले से है।");
+      return;
+    }
+    const parts = [
+      c.customers && `${c.customers} खाते`,
+      c.entries && `${c.entries} एंट्री`,
+      c.jobs && `${c.jobs} काम`,
+      c.aeps && `${c.aeps} काउंटर`,
+      c.expenses && `${c.expenses} खर्च`,
+      c.moves && `${c.moves} गल्ला / बैंक बदलाव`,
+    ].filter(Boolean);
+    confirmAction("बैकअप से वापस लाएं?", `${parts.join(", ")} जो ऐप में नहीं हैं, वापस जोड़े जाएँगे। अभी का कोई रिकॉर्ड नहीं बदलेगा।`, "वापस लाएं", () => {
+      void applyRestore(restorePlan);
+    });
+  };
+
   const handleSignOut = () => {
     if (pending > 0) {
       confirmAction(
         "कुछ बदलाव अभी सर्वर पर नहीं गए",
-        `${pending} बदलाव सिंक होने बाकी हैं। अभी साइन आउट करेंगे तो ये मिट जाएँगे। पहले इंटरनेट चालू करके थोड़ा रुकें।`,
+        `${pending} बदलाव सिंक होने बाकी हैं। ये इसी फ़ोन पर संभाल कर रखे जाएँगे और इसी Google खाते से दोबारा लॉगिन करने पर भेज दिए जाएँगे। बेहतर है पहले इंटरनेट चालू करके थोड़ा रुकें।`,
         "फिर भी साइन आउट",
         () => void signOut()
       );
@@ -674,6 +715,39 @@ export default function Profile() {
             <MaterialIcon name="download" size={20} color={colors.muted} />
           )}
         </Pressable>
+
+        <Pressable
+          style={[styles.settingRow, styles.rowBorder]}
+          onPress={jsonBackup}
+          disabled={backingUp}
+          testID="backup-json-btn"
+        >
+          <View style={[styles.iconCircle, { backgroundColor: "#EFF6FF" }]}>
+            <MaterialIcon name="cloud-download-outline" size={20} color="#1D4ED8" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowValue}>पूरा बैकअप फ़ाइल (.json)</Text>
+            <Text style={styles.rowLabel}>ऐप में वापस लाने लायक पूरी कॉपी</Text>
+          </View>
+          <MaterialIcon name="download" size={20} color={colors.muted} />
+        </Pressable>
+
+        {Platform.OS !== "web" ? (
+          <Pressable
+            style={[styles.settingRow, styles.rowBorder]}
+            onPress={restoreBackup}
+            testID="restore-json-btn"
+          >
+            <View style={[styles.iconCircle, { backgroundColor: "#F5F3FF" }]}>
+              <MaterialIcon name="backup-restore" size={20} color="#6D28D9" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowValue}>बैकअप से वापस लाएं</Text>
+              <Text style={styles.rowLabel}>सिर्फ़ गायब रिकॉर्ड जुड़ेंगे</Text>
+            </View>
+            <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
+          </Pressable>
+        ) : null}
       </View>
       {backupError ? <Text style={styles.errorText}>{backupError}</Text> : null}
 

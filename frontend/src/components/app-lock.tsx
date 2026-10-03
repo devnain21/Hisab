@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/context/AuthContext";
 import { authenticateBiometric, disableLock, getLockConfig, lockSupported, verifyPin, type LockConfig } from "@/src/lib/app-lock";
 import { confirmAction } from "@/src/lib/confirm";
+import { pendingCount } from "@/src/lib/store";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 
@@ -134,7 +135,9 @@ function LockScreen({ config, onUnlock }: { config: LockConfig; onUnlock: () => 
   }, [pin, onUnlock]);
 
   const forgot = () => {
-    confirmAction("PIN भूल गए?", "साइन आउट करके Google से दोबारा लॉगिन करें। लॉक हट जाएगा, डेटा सर्वर पर सुरक्षित है।", "साइन आउट", async () => {
+    const pending = pendingCount();
+    const note = pending > 0 ? ` ${pending} बदलाव अभी सर्वर पर नहीं गए हैं, वे इसी Google खाते से दोबारा लॉगिन करने पर भेज दिए जाएँगे।` : " डेटा सर्वर पर सुरक्षित है।";
+    confirmAction("PIN भूल गए?", `साइन आउट करके Google से दोबारा लॉगिन करें। लॉक हट जाएगा।${note}`, "साइन आउट", async () => {
       await disableLock();
       onUnlock();
       await signOut();

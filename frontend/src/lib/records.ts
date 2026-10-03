@@ -4,6 +4,7 @@
 import { useEffect, useRef } from "react";
 import { store } from "@/src/lib/store";
 import { isDebt, isRepayment, useEntries, type Entry, type Job } from "@/src/lib/data";
+import { roundMoney, todayISO } from "@/src/lib/format";
 
 const isLegacyPairFor = (work: Entry, e: Entry) =>
   work.type === "work" &&
@@ -102,12 +103,35 @@ export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]
   store.deleteEntry(work.id);
   dropOrKeep([...linked.values()], work.date);
   if (job) store.deleteJob(job.id);
+  remindersFor(work, jobs).forEach((j) => store.deleteJob(j.id));
 }
 
-/** Removes an open job card and the advance taken for it. */
+/**
+ * Removes an open job card. An advance taken today goes with it; one taken on an earlier day
+ * already sits in that day's galla / bank, so it stays on the khata as the customer's advance.
+ */
 export function removeJobWithAdvances(job: Job, entries: Entry[]) {
-  advancesForJob(job, entries).forEach((p) => store.deleteEntry(p.id));
+  dropOrKeep(advancesForJob(job, entries), todayISO());
   store.deleteJob(job.id);
+}
+
+/** Advance rows of this job that were taken before today (they stay when the job is removed). */
+export function olderAdvances(job: Job, entries: Entry[]): Entry[] {
+  const today = todayISO();
+  return advancesForJob(job, entries).filter((p) => p.date !== today);
+}
+
+/** Follow-up reminders saved together with this work ("पिछला काम: …", same customer, same save). */
+function remindersFor(work: Entry, jobs: Job[]): Job[] {
+  const at = Date.parse(work.createdAt);
+  return jobs.filter(
+    (j) =>
+      j.status !== "done" &&
+      j.customerId === work.customerId &&
+      j.notes === `पिछला काम: ${work.description}` &&
+      Number.isFinite(at) &&
+      Math.abs(Date.parse(j.createdAt) - at) < 2 * 60_000,
+  );
 }
 
 export function linkedCount(entry: Entry, entries: Entry[], jobs: Job[]): number {
@@ -122,9 +146,21 @@ export function linkedCount(entry: Entry, entries: Entry[], jobs: Job[]): number
  */
 export function foldLegacyCashRows(entries: Entry[]): number {
   let folded = 0;
+  // Old pairs are unlinked payments of the same customer on the same day; index them once.
+  const pairs = new Map<string, Entry[]>();
+  for (const e of entries) {
+    if (e.type !== "payment" || e.linkId) continue;
+    const k = `${e.customerId}|${e.date}`;
+    const list = pairs.get(k);
+    if (list) list.push(e);
+    else pairs.set(k, [e]);
+  }
+  if (pairs.size === 0) return 0;
   for (const w of entries) {
     if (w.type !== "work" || (w.paid ?? 0) > 0) continue;
-    const sameDay = settlementsFor(w, entries).filter((p) => p.date === w.date);
+    const candidates = pairs.get(`${w.customerId}|${w.date}`);
+    if (!candidates) continue;
+    const sameDay = candidates.filter((p) => isLegacyPairFor(w, p));
     const total = sameDay.reduce((s, p) => s + p.amount, 0);
     if (!sameDay.length || total > w.amount) continue;
     // A row has one mode; mixed cash + online same-day payments stay as separate rows.
@@ -212,6 +248,8 @@ export function buildLedger(entries: Entry[]): Ledger {
   const work = new Map<string, WorkStatus>();
   const nested = new Set<string>();
 
+  // Below half a paisa is float noise, not money still owed.
+  const EPS = 0.005;
   for (const w of [...debts, ...purchases]) {
     const settlements = settlementsFor(w, entries).filter((p) => !nested.has(p.id));
     settlements.forEach((p) => nested.add(p.id));
@@ -233,16 +271,14 @@ export function buildLedger(entries: Entry[]): Ledger {
     const st = work.get(ev.e.id);
     if (ev.kind === "debt") {
       const over = st!.received - ev.e.amount;
-      if (over > 0) {
-        credits.push({ left: over });
-        st!.received = ev.e.amount;
-      }
-      if (st!.received < ev.e.amount) open.push(ev.e);
+      if (over > EPS) credits.push({ left: over });
+      if (over > 0) st!.received = ev.e.amount;
+      if (st!.received < ev.e.amount - EPS) open.push(ev.e);
     } else if (ev.kind === "jama") {
       credits.push({ left: ev.e.amount });
     } else {
       const unpaid = ev.e.amount - st!.received;
-      if (unpaid > 0) credits.push({ left: unpaid, purchase: ev.e });
+      if (unpaid > EPS) credits.push({ left: unpaid, purchase: ev.e });
     }
     while (credits.length && open.length) {
       const credit = credits[0];
@@ -256,21 +292,24 @@ export function buildLedger(entries: Entry[]): Ledger {
         const pst = work.get(credit.purchase.id)!;
         pst.received += take;
         pst.fromJama += take;
-        if (pst.received >= credit.purchase.amount) pst.settledOn = ev.e.date;
+        if (pst.received >= credit.purchase.amount - EPS) pst.settledOn = ev.e.date;
       }
-      if (dst.received >= debt.amount) {
+      if (dst.received >= debt.amount - EPS) {
         open.shift();
         dst.settledOn = ev.e.date;
       }
-      if (credit.left <= 0) credits.shift();
+      if (credit.left <= EPS) credits.shift();
     }
   }
 
   for (const w of [...debts, ...purchases]) {
     const st = work.get(w.id)!;
-    st.remaining = Math.max(0, w.amount - st.received);
+    const left = w.amount - st.received;
+    st.remaining = left > EPS ? roundMoney(left) : 0;
+    st.received = roundMoney(st.received);
+    st.fromJama = roundMoney(st.fromJama);
     if (st.paidAtBooking >= w.amount && st.settlements.length === 0) st.state = "cash";
-    else if (st.settlements.length > 0 && st.settlements.every((p) => p.date === w.date) && st.received >= w.amount && st.fromJama === 0) st.state = "cash";
+    else if (st.settlements.length > 0 && st.settlements.every((p) => p.date === w.date) && st.remaining <= 0 && st.fromJama === 0) st.state = "cash";
     else if (st.remaining <= 0) {
       st.state = "settled";
       if (!st.settledOn) st.settledOn = st.settlements.length ? st.settlements[st.settlements.length - 1].date : w.date;

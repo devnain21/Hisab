@@ -11,7 +11,8 @@ import {
 } from "firebase/auth";
 import { api, setTokenProvider } from "@/src/lib/api";
 import { getFirebaseAuth, getGoogleClientIds, isFirebaseConfigured } from "@/src/lib/firebase";
-import { clearOutbox, flush } from "@/src/lib/store";
+import { clearOutbox, flush, parkOutbox, unparkOutbox } from "@/src/lib/store";
+import { clearFileStore } from "@/src/lib/file-store";
 import { resetTrashMemory } from "@/src/lib/trash";
 import { resetRecentCustomers } from "@/src/lib/recent";
 import { disableLock } from "@/src/lib/app-lock";
@@ -93,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       // The free backend can take up to a minute to wake up (or we may be offline), so don't block on it.
       const cached = await readCachedProfile(fbUser.uid);
+      await unparkOutbox(fbUser.uid);
       setState({ status: "authenticated", user: cached ?? mapFirebaseUser(fbUser) });
       void flush();
       try {
@@ -153,6 +155,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    const uid = isFirebaseConfigured() ? getFirebaseAuth().currentUser?.uid : undefined;
+    // Changes not yet on the server would otherwise be lost; they come back when this account signs in again.
+    if (uid) await parkOutbox(uid);
     try {
       await api.logout();
     } catch {}
@@ -176,6 +181,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const mine = keys.filter((k) => k.startsWith("hisab_") && !k.startsWith("hisab_applock_"));
       if (mine.length) await AsyncStorage.multiRemove(mine);
     } catch {}
+    await clearFileStore();
     resetTrashMemory();
     resetRecentCustomers();
     await disableLock().catch(() => {});

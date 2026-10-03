@@ -6,7 +6,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
 import { useAeps, type AepsTxn, type AepsType } from "@/src/lib/data";
 import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, bankLegDate, cashLegDate, cashOf, commissionDate, isLater } from "@/src/lib/aeps";
-import { formatDateShort, formatINR, todayISO } from "@/src/lib/format";
+import { cleanAmountInput, formatDateShort, formatINR, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { SlowServerHint } from "@/src/components/slow-server-hint";
 import { AepsSheet } from "@/src/components/aeps-sheet";
@@ -52,12 +52,12 @@ export default function AepsScreen() {
     AsyncStorage.getItem(portalKey).then((v) => setPortal(v || "")).catch(() => {});
   }, [portalKey]);
   const savePortal = (v: string) => {
-    const clean = v.replace(/[^0-9]/g, "");
+    const clean = cleanAmountInput(v);
     setPortal(clean);
     AsyncStorage.setItem(portalKey, clean).catch(() => {});
   };
-  const portalNum = portal ? parseInt(portal, 10) || 0 : null;
-  const portalDiff = portalNum !== null ? portalNum - appBank : null;
+  const portalNum = portal ? parseAmount(portal) : null;
+  const portalDiff = portalNum !== null ? roundMoney(portalNum - appBank) : null;
   const matchPortal = () => {
     if (!portalDiff) return;
     confirmAction(
@@ -184,7 +184,7 @@ export default function AepsScreen() {
               style={styles.portalInput}
               value={portal}
               onChangeText={savePortal}
-              keyboardType="number-pad"
+              keyboardType="decimal-pad"
               placeholder="₹"
               placeholderTextColor={colors.muted}
               testID="aeps-portal-input"

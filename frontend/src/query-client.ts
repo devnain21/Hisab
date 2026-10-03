@@ -2,10 +2,10 @@
 // this instance. Import it for cache calls outside components, for example
 // queryClient.invalidateQueries or setQueryData in websocket or push
 // handlers; inside components useQueryClient() returns this same instance.
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AppState, Platform } from "react-native";
 import { QueryClient, focusManager } from "@tanstack/react-query";
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
+import { fileStore } from "@/src/lib/file-store";
 
 export const CACHE_MAX_AGE = 1000 * 60 * 60 * 24 * 30;
 
@@ -30,4 +30,4 @@ if (Platform.OS !== "web") {
 }
 
 // Keeps the last synced khata on the device so it opens without internet.
-export const queryPersister = createAsyncStoragePersister({ storage: AsyncStorage, key: "hisab_query_cache_v1" });
+export const queryPersister = createAsyncStoragePersister({ storage: fileStore, key: "hisab_query_cache_v1", throttleTime: 2000 });

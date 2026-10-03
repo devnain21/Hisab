@@ -11,3 +11,11 @@ export function confirmAction(title: string, message: string, confirmLabel: stri
     { text: confirmLabel, style: "destructive", onPress: onConfirm },
   ]);
 }
+
+export function showNotice(title: string, message: string) {
+  if (Platform.OS === "web") {
+    window.alert(`${title}\n${message}`);
+    return;
+  }
+  Alert.alert(title, message);
+}

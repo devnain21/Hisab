@@ -13,38 +13,51 @@ export type ParsedEntry = {
   confidence: "high" | "medium" | "low";
 };
 
-const PAYMENT_KEYWORDS = ["मिले", "मिला", "जमा", "आए", "प्राप्त", "paid", "received", "jama", "credit", "payment"];
-const GIVEN_KEYWORDS = ["दिए", "दिया", "लोन", "उधार दिया", "gave", "given", "loan", "debit"];
-const PURCHASE_KEYWORDS = ["सामान", "खरीदा", "खरीदी", "ख़रीदा", "लिया", "ली", "kharida", "saman", "purchase", "bought"];
+const PAYMENT_KEYWORDS = ["मिले", "मिला", "मिली", "जमा", "आए", "आये", "प्राप्त", "paid", "received", "jama", "mile", "mila", "credit", "payment"];
+const GIVEN_KEYWORDS = ["दिए", "दिया", "दिये", "दी", "लोन", "उधार दिया", "gave", "given", "diye", "diya", "loan", "debit"];
+const PURCHASE_KEYWORDS = ["सामान", "खरीदा", "खरीदी", "ख़रीदा", "ख़रीदी", "लिया", "ली", "kharida", "saman", "purchase", "bought"];
 const DATE_WORDS: Record<string, number> = { "कल": -1, "परसों": -2, "kal": -1, "parso": -2, "yesterday": -1 };
 /** Words that are never a name or a description. */
 const NOISE = new Set([
   ...PAYMENT_KEYWORDS,
   ...GIVEN_KEYWORDS,
-  "लिया", "ली", "खरीदा", "खरीदी", "ख़रीदा",
-  "रुपये", "रुपया", "रुपए", "rs", "inr",
-  "को", "का", "की", "से", "ने",
+  "लिया", "ली", "खरीदा", "खरीदी", "ख़रीदा", "ख़रीदी",
+  "रुपये", "रुपया", "रुपए", "रु", "rs", "inr", "rupees", "rupaye",
+  "को", "का", "की", "के", "से", "ने", "ka", "ki", "ko", "se",
 ]);
-const WORK_KEYWORDS = ["काम", "फोटोकॉपी", "प्रिंट", "form", "फॉर्म", "कागज़", "पर्चा", "फाइल", "online", "बिल", "work", "udhaar", "उधार"];
 
-const HINDI_NUMBER_WORDS: Record<string, number> = {
-  "सौ": 100,
-  "एक सौ": 100,
-  "दो सौ": 200,
-  "तीन सौ": 300,
-  "चार सौ": 400,
-  "पांच सौ": 500,
-  "छह सौ": 600,
-  "सात सौ": 700,
-  "आठ सौ": 800,
-  "नौ सौ": 900,
-  "हज़ार": 1000,
-  "हजार": 1000,
-  "एक हज़ार": 1000,
-  "दो हज़ार": 2000,
-  "तीन हज़ार": 3000,
-  "पांच हज़ार": 5000,
+const UNITS: Record<string, number> = {
+  "एक": 1, "दो": 2, "तीन": 3, "चार": 4, "पांच": 5, "पाँच": 5, "छह": 6, "छः": 6, "सात": 7, "आठ": 8, "नौ": 9,
+  "दस": 10, "बीस": 20, "तीस": 30, "चालीस": 40, "पचास": 50, "साठ": 60, "सत्तर": 70, "अस्सी": 80, "नब्बे": 90,
+  "डेढ़": 1.5, "ढाई": 2.5,
 };
+const MULTIPLIERS: Record<string, number> = { "सौ": 100, "हज़ार": 1000, "हजार": 1000, "लाख": 100000, "sau": 100, "hazar": 1000, "hajar": 1000, "lakh": 100000, "k": 1000 };
+
+const clean = (w: string) => w.replace(/[₹,.!?।]+$/g, "").replace(/^₹/, "").replace(/,/g, "");
+const isNumber = (w: string) => /^\d+(\.\d+)?$/.test(w);
+
+/**
+ * First amount in the words: "500", "₹1,500", "2 हजार", "पांच सौ", "डेढ़ हजार", "हजार".
+ * Only whole words count, so a name like "सौरभ" never turns into ₹100.
+ */
+function findAmount(words: string[]): { amount: number; used: Set<number> } {
+  const at = (i: number) => (i < words.length ? clean(words[i]).toLowerCase() : "");
+  const withUnit = (i: number, base: number) => {
+    const mul = MULTIPLIERS[at(i + 1)];
+    return mul ? { amount: base * mul, used: new Set([i, i + 1]) } : { amount: base, used: new Set([i]) };
+  };
+  // Digits win over number words, so "एक फोटो 50" is ₹50, not ₹1.
+  for (let i = 0; i < words.length; i++) {
+    if (isNumber(at(i))) return withUnit(i, parseFloat(at(i)));
+  }
+  for (let i = 0; i < words.length; i++) {
+    const w = at(i);
+    // A bare "एक"/"दो" is usually a count ("एक फोटो"); only with सौ / हजार is it money.
+    if (UNITS[w] !== undefined && ((MULTIPLIERS[at(i + 1)] && at(i + 1) !== "k") || UNITS[w] >= 10)) return withUnit(i, UNITS[w]);
+    if (MULTIPLIERS[w] && w !== "k") return { amount: MULTIPLIERS[w], used: new Set([i]) };
+  }
+  return { amount: 0, used: new Set() };
+}
 
 export function parseQuickText(input: string, customers: Customer[]): ParsedEntry {
   const text = input.trim();
@@ -62,62 +75,38 @@ export function parseQuickText(input: string, customers: Customer[]): ParsedEntr
     };
   }
 
-  let amount = 0;
-  let remainingText = text;
+  const rawWords = text.split(/\s+/).filter(Boolean);
+  const { amount: found, used } = findAmount(rawWords);
+  const amount = Math.round(found * 100) / 100;
 
-  // 1. Check Hindi words
-  // Longest phrase first, so "पांच सौ" wins over "सौ".
-  for (const [phrase, val] of Object.entries(HINDI_NUMBER_WORDS).sort((a, b) => b[0].length - a[0].length)) {
-    if (remainingText.includes(phrase)) {
-      amount = val;
-      remainingText = remainingText.replace(phrase, " ");
-      break;
-    }
-  }
+  const words = rawWords.map((w) => clean(w).toLowerCase());
+  const padded = ` ${words.join(" ")} `;
+  // Whole words only: "Jamal" is a name, not "jama".
+  const has = (kw: string) => padded.includes(` ${kw} `);
 
-  // 2. Check digits if no word amount found or override
-  const numMatch = remainingText.match(/(?:₹|\b)(\d+(?:\.\d+)?)\b/);
-  if (numMatch) {
-    amount = parseFloat(numMatch[1]);
-    remainingText = remainingText.replace(numMatch[0], " ");
-  }
-
-  // 3. Determine Entry Type
   let type: EntryType = "work";
-  const lower = text.toLowerCase();
-
-  const words = lower.split(/\s+/);
-  const isPayment = PAYMENT_KEYWORDS.some((kw) => lower.includes(kw));
-  const isGiven = GIVEN_KEYWORDS.some((kw) => lower.includes(kw));
-  const isPurchase = PURCHASE_KEYWORDS.some((kw) => words.includes(kw));
-
-  if (isPayment) {
-    type = "payment";
-  } else if (isGiven) {
-    type = "given";
-  } else if (isPurchase) {
-    type = "purchase";
-  } else {
-    type = "work";
-  }
+  if (PAYMENT_KEYWORDS.some(has)) type = "payment";
+  else if (GIVEN_KEYWORDS.some(has)) type = "given";
+  else if (PURCHASE_KEYWORDS.some(has)) type = "purchase";
 
   const dateWord = words.find((w) => w in DATE_WORDS);
   const dateOffset = dateWord ? DATE_WORDS[dateWord] : 0;
 
-  // Remove keywords from remaining text to find name and description
-  const cleanTokens = remainingText
-    .split(/\s+/)
-    .map((w) => w.replace(/[₹,]/g, "").trim())
-    .filter((w) => w && !(w.toLowerCase() in DATE_WORDS));
-
-  let matchedCustomer: Customer | null = null;
+  const cleanTokens = rawWords
+    .filter((_, i) => !used.has(i))
+    .map((w) => clean(w).trim())
+    .filter((w) => w && !(w.toLowerCase() in DATE_WORDS) && !isNumber(w));
 
   // Whole-name or whole-word match first; a partial match only for longer words.
   const tokens = cleanTokens.map((t) => t.toLowerCase());
-  matchedCustomer =
-    customers.find((c) => tokens.includes(c.name.toLowerCase())) ??
+  const matchedCustomer =
+    customers.find((c) => {
+      const parts = c.name.toLowerCase().split(/\s+/).filter(Boolean);
+      return parts.length > 1 && parts.every((p) => tokens.includes(p));
+    }) ??
+    customers.find((c) => tokens.includes(c.name.trim().toLowerCase())) ??
     customers.find((c) => c.name.toLowerCase().split(/\s+/).some((w) => tokens.includes(w))) ??
-    customers.find((c) => tokens.some((t) => t.length >= 4 && c.name.toLowerCase().includes(t))) ??
+    customers.find((c) => tokens.some((t) => t.length >= 4 && !NOISE.has(t) && c.name.toLowerCase().includes(t))) ??
     null;
 
   let customerId = "";
@@ -136,11 +125,12 @@ export function parseQuickText(input: string, customers: Customer[]): ParsedEntr
     }
   }
 
-  const descTokens = cleanTokens.filter((t) => !NOISE.has(t.toLowerCase()) && t.toLowerCase() !== customerName.toLowerCase());
+  const nameParts = new Set(customerName.toLowerCase().split(/\s+/).filter(Boolean));
+  const descTokens = cleanTokens.filter((t) => !NOISE.has(t.toLowerCase()) && !nameParts.has(t.toLowerCase()));
   const description =
     descTokens.join(" ").trim() || (type === "payment" ? "भुगतान मिला" : type === "given" ? "पैसे दिए" : type === "purchase" ? "सामान / सेवा ली" : "काम");
 
-  const confidence = (amount > 0 && customerName.length > 0) ? (matchedCustomer ? "high" : "medium") : "low";
+  const confidence = amount > 0 && customerName.length > 0 ? (matchedCustomer ? "high" : "medium") : "low";
 
   return {
     raw: text,

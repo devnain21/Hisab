@@ -92,11 +92,42 @@ export function formatWeekdayDate(iso: string): string {
   return `${HINDI_WEEKDAYS[d.getDay()]}, ${d.getDate()} ${HINDI_MONTHS[d.getMonth()]}`;
 }
 
+/** Rupees kept to whole paise, so sums of decimal amounts don't leave 0.0000001 behind. */
+export function roundMoney(n: number): number {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+/** Amount typed by the user: "1,500", "₹ 1500", "1500.50" all read correctly; anything else is 0. */
+export function parseAmount(s: string | number | null | undefined): number {
+  if (typeof s === "number") return Number.isFinite(s) ? Math.max(roundMoney(s), 0) : 0;
+  const n = parseFloat(String(s ?? "").replace(/[,\s₹]/g, ""));
+  return Number.isFinite(n) ? Math.max(roundMoney(n), 0) : 0;
+}
+
+/** Keeps only digits and one decimal point while typing an amount (commas are dropped). */
+export function cleanAmountInput(s: string): string {
+  const t = s.replace(/[^0-9.]/g, "");
+  const dot = t.indexOf(".");
+  return dot < 0 ? t : t.slice(0, dot + 1) + t.slice(dot + 1).replace(/\./g, "").slice(0, 2);
+}
+
+/**
+ * Date for a row saved now. A sheet opened before midnight still shows the old "today";
+ * if the user never changed it, the row belongs to the day it is actually saved.
+ */
+export function dateOnSave(picked: string, openedOn: string): string {
+  return picked === openedOn ? todayISO() : picked;
+}
+
 export function formatINR(n: number): string {
-  const val = Math.round(Number(n) || 0);
+  const val = roundMoney(n);
   const abs = Math.abs(val);
+  // Paise only when there are any (₹7.50), whole rupees stay clean (₹1,500).
+  const whole = Math.floor(abs);
+  const paise = Math.round((abs - whole) * 100);
+  const tail = paise > 0 ? `.${String(paise).padStart(2, "0")}` : "";
   // Indian numbering system
-  const s = abs.toString();
+  const s = whole.toString();
   let out = "";
   if (s.length <= 3) out = s;
   else {
@@ -104,7 +135,7 @@ export function formatINR(n: number): string {
     const rest = s.slice(0, -3);
     out = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + last3;
   }
-  return `${val < 0 ? "−" : ""}₹${out}`;
+  return `${val < 0 ? "−" : ""}₹${out}${tail}`;
 }
 
 export function formatPhone(p: string): string {

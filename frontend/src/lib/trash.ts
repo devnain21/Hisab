@@ -93,6 +93,9 @@ function describe(coll: TrashColl, data: Record<string, any>, bundle?: CustomerB
     };
   }
   if (coll === "jobs") {
+    if (!data.customerId && data.persona === "personal") {
+      return { title: data.title || "काम", subtitle: data.dueDate ? `मेरा काम · ${data.dueDate}` : "मेरा काम" };
+    }
     return { title: data.title || "काम", subtitle: `तारीख: ${data.dueDate || ""} · ${formatINR(data.estimatedAmount || 0)}` };
   }
   if (coll === "aeps") {

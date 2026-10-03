@@ -43,7 +43,23 @@ export type Entry = {
 };
 // customerId "" = the shopkeeper's own task (no customer, no money).
 // entryId: the work entry booked when this job was completed.
-export type Job = { id: string; customerId: string; title: string; dueDate: string; status: "pending" | "doing" | "done"; estimatedAmount: number; notes: string; entryId?: string; createdAt: string };
+export type Job = {
+  id: string;
+  customerId: string;
+  title: string;
+  dueDate: string;
+  status: "pending" | "doing" | "done";
+  estimatedAmount: number;
+  notes: string;
+  entryId?: string;
+  createdAt: string;
+  persona?: "business" | "personal";
+  priority?: "" | "high";
+  time?: string;
+};
+
+/** A to-do of the personal book: no customer, never part of the shop's work list. */
+export const isPersonalTask = (j: Job) => !j.customerId && j.persona === "personal";
 
 export type AepsType = "withdrawal" | "cash" | "deposit" | "transfer" | "upi" | "balance" | "recharge" | "bill" | "other";
 export type AepsCash = "" | "in" | "out" | "none";

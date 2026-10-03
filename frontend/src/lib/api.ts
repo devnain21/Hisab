@@ -50,6 +50,7 @@ export const api = {
   updateMe: (b: { shop_name: string; shop_phone?: string; shop_address?: string; shop_gst?: string; shop_upi?: string; owner_name?: string; persona?: string }) =>
     req("/auth/me", { method: "PUT", body: JSON.stringify(b) }),
   logout: () => req("/auth/logout", { method: "POST" }),
+  closeShop: () => req("/shop/close", { method: "POST" }),
   listCustomers: () => req("/customers"),
   createCustomer: (b: unknown) => req("/customers", { method: "POST", body: JSON.stringify(b) }),
   updateCustomer: (id: string, b: unknown) => req(`/customers/${id}`, { method: "PUT", body: JSON.stringify(b) }),

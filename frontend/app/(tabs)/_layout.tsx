@@ -16,7 +16,7 @@ function LedgerMaintenance() {
 export default function TabsLayout() {
   const { status } = useAuth();
   const counter = useCounterMode();
-  const { labels } = usePersona();
+  const { labels, isPersonal } = usePersona();
   if (status === "loading") {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface }}>
@@ -67,6 +67,14 @@ export default function TabsLayout() {
         options={{
           title: labels.work,
           tabBarIcon: ({ color, size }) => <MaterialIcon name="briefcase-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="tasks"
+        options={{
+          title: "काम",
+          href: isPersonal ? undefined : null,
+          tabBarIcon: ({ color, size }) => <MaterialIcon name="clipboard-check-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen

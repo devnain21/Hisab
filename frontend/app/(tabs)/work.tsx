@@ -5,7 +5,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
+import { isPersonalTask, useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
 import { formatDate, formatINR, todayISO } from "@/src/lib/format";
 import { buildAllLedgers, workForJob, type WorkStatus } from "@/src/lib/records";
 import { store } from "@/src/lib/store";
@@ -40,7 +40,7 @@ function ShopWork() {
   const allJobs = jobsQ.data;
   const jobs = useMemo(() => {
     const mine = new Set(customers.map((c) => c.id));
-    return (allJobs ?? []).filter((j) => !j.customerId || mine.has(j.customerId));
+    return (allJobs ?? []).filter((j) => (!j.customerId && !isPersonalTask(j)) || mine.has(j.customerId));
   }, [allJobs, customers]);
   const entries = entriesQ.data ?? [];
   const [filter, setFilter] = useState<Filter>("open");

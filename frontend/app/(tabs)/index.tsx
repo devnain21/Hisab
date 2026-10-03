@@ -7,7 +7,7 @@ import { useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { cashIn, onlineIn, useAeps, useCustomers, useEntries, useJobs, computeBalance, type Entry, type Job } from "@/src/lib/data";
+import { cashIn, onlineIn, useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, type Entry, type Job } from "@/src/lib/data";
 import { buildAllLedgers, workForJob } from "@/src/lib/records";
 import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
@@ -16,12 +16,14 @@ import { aepsTotals } from "@/src/lib/aeps";
 import { formatDateShort, formatINR, formatPhone, formatWeekdayDate, todayISO } from "@/src/lib/format";
 import { AddEntrySheet, AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
 import { useAuth } from "@/src/context/AuthContext";
-import { clearRejected, flush, rejectedChanges, usePendingCount, useRejectedCount } from "@/src/lib/store";
+import { clearRejected, flush, rejectedChanges, store, usePendingCount, useRejectedCount } from "@/src/lib/store";
 import { computeFlows, pocketNet, useMoneyBook } from "@/src/lib/wallet";
 import { useCounterMode } from "@/src/lib/counter";
 import { accountName, usePersona } from "@/src/lib/persona";
 import { useRecentCustomerIds } from "@/src/lib/recent";
-import { VoiceEntryModal } from "@/src/components/voice-entry-sheet";
+import { TaskSheet } from "@/src/components/task-sheet";
+import { TaskRow } from "@/src/components/task-row";
+import { compareTasks, taskGroup, usePersonalTasks } from "@/src/lib/tasks";
 import { AddExpenseSheet } from "@/src/components/expense-sheet";
 import { useExpenses } from "@/src/lib/expenses";
 
@@ -36,7 +38,7 @@ export default function Home() {
   const [moneySheet, setMoneySheet] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [voiceModal, setVoiceModal] = useState(false);
+  const [taskSheet, setTaskSheet] = useState<{ initial?: Job } | null>(null);
   const [expenseSheet, setExpenseSheet] = useState(false);
   const [shareDoc, setShareDoc] = useState<ShareDoc | null>(null);
   const { user } = useAuth();
@@ -66,7 +68,7 @@ export default function Home() {
   const allJobs = jobsQ.data;
   // Own tasks (no customer) belong to the shop book only.
   const jobs = useMemo(
-    () => (allJobs ?? []).filter((j) => (j.customerId ? personaCustIds.has(j.customerId) : !isPersonal)),
+    () => (allJobs ?? []).filter((j) => (j.customerId ? personaCustIds.has(j.customerId) : !isPersonal && !isPersonalTask(j))),
     [allJobs, personaCustIds, isPersonal],
   );
   const recentTxns = useMemo(
@@ -148,6 +150,24 @@ export default function Home() {
     [jobs]
   );
 
+  const { tasks: personalTasks } = usePersonalTasks();
+  const openTasks = useMemo(() => personalTasks.filter((t) => t.status !== "done").sort(compareTasks), [personalTasks]);
+  const taskStats = useMemo(() => {
+    let late = 0;
+    let due = 0;
+    for (const t of openTasks) {
+      const g = taskGroup(t, today);
+      if (g === "late") late++;
+      else if (g === "today") due++;
+    }
+    return { open: openTasks.length, late, today: due };
+  }, [openTasks, today]);
+  // Late and today's first, then the rest in their usual order.
+  const homeTasks = useMemo(() => {
+    const rank = (t: Job) => ({ late: 0, today: 1, tomorrow: 2, later: 3, someday: 4, done: 5 })[taskGroup(t, today)];
+    return [...openTasks].sort((a, b) => rank(a) - rank(b) || compareTasks(a, b)).slice(0, 5);
+  }, [openTasks, today]);
+
   // A finished job's dueDate is its completion day, so the newest few are found without scanning every job's entry.
   const recentDone = useMemo(() => {
     if (isPersonal) return [];
@@ -205,11 +225,7 @@ export default function Home() {
             <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
               <MaterialIcon name="close-circle" size={18} color={colors.muted} />
             </Pressable>
-          ) : (
-            <Pressable onPress={() => setVoiceModal(true)} hitSlop={8} testID="home-voice-btn">
-              <MaterialIcon name="microphone" size={20} color={colors.brandPrimary} />
-            </Pressable>
-          )}
+          ) : null}
         </View>
 
         {/* Live Search Results Dropdown */}
@@ -335,13 +351,13 @@ export default function Home() {
                     testID="stat-total-we-owe"
                   />
                   <StatCard
-                    label="आज दिए"
-                    value={formatINR(stats.todayWork)}
-                    hint={`मिले ${formatINR(stats.todayPay)}`}
-                    icon="swap-horizontal"
-                    tone="neutral"
-                    onPress={() => router.push({ pathname: "/day", params: { type: "work" } })}
-                    testID="stat-today-work"
+                    label="काम बाकी"
+                    value={String(taskStats.open)}
+                    hint={taskStats.late > 0 ? `${taskStats.late} देर से` : taskStats.today > 0 ? `${taskStats.today} आज` : "सब समय पर"}
+                    icon="clipboard-check-outline"
+                    tone={taskStats.late > 0 ? "warn" : "neutral"}
+                    onPress={() => router.navigate("/(tabs)/tasks" as never)}
+                    testID="stat-pending-tasks"
                   />
                   <StatCard
                     label="आज का खर्च"
@@ -419,10 +435,12 @@ export default function Home() {
                 <MaterialIcon name="coffee-outline" size={17} color={colors.warning} />
                 <Text style={styles.expenseActionText}>खर्च</Text>
               </Pressable>
-              <Pressable style={styles.voiceAction} onPress={() => setVoiceModal(true)} testID="quick-voice">
-                <MaterialIcon name="microphone" size={17} color={colors.brandPrimary} />
-                <Text style={styles.voiceActionText}>बोलकर</Text>
-              </Pressable>
+              {isPersonal ? (
+                <Pressable style={styles.taskAction} onPress={() => setTaskSheet({})} testID="quick-task">
+                  <MaterialIcon name="clipboard-plus-outline" size={17} color={colors.brandPrimary} />
+                  <Text style={styles.taskActionText}>काम लिखें</Text>
+                </Pressable>
+              ) : null}
             </View>
 
             {counter.on ? (
@@ -440,6 +458,35 @@ export default function Home() {
 
             {isPersonal ? (
               <>
+                <View style={styles.sectionRow}>
+                  <Text style={styles.sectionHead}>मेरे काम</Text>
+                  {taskStats.open > 0 ? (
+                    <Pressable onPress={() => router.navigate("/(tabs)/tasks" as never)} hitSlop={8} testID="home-tasks-more">
+                      <Text style={styles.link}>सभी देखें</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+                {homeTasks.length === 0 ? (
+                  <Pressable style={styles.emptyRow} onPress={() => setTaskSheet({})} testID="home-tasks-empty">
+                    <MaterialIcon name="clipboard-check-outline" size={20} color={colors.muted} />
+                    <Text style={{ color: colors.muted, fontSize: 14, flex: 1 }}>कोई काम बाकी नहीं · नया लिखें</Text>
+                    <MaterialIcon name="plus" size={18} color={colors.brandPrimary} />
+                  </Pressable>
+                ) : (
+                  <View style={{ gap: spacing.sm }}>
+                    {homeTasks.map((t) => (
+                      <TaskRow
+                        key={t.id}
+                        task={t}
+                        today={today}
+                        compact
+                        onToggle={() => store.updateJob(t.id, { status: t.status === "done" ? "pending" : "done" })}
+                        onOpen={() => setTaskSheet({ initial: t })}
+                      />
+                    ))}
+                  </View>
+                )}
+
                 <View style={styles.sectionRow}>
                   <Text style={styles.sectionHead}>हाल के लेन-देन</Text>
                   {recentTxns.length > 0 ? (
@@ -550,7 +597,7 @@ export default function Home() {
       <AddEntrySheet visible={moneySheet} type={isPersonal ? "given" : "payment"} kinds={isPersonal ? ["given", "payment", "purchase"] : ["payment", "given"]} onClose={() => setMoneySheet(false)} />
       <AddExpenseSheet visible={expenseSheet} onClose={() => setExpenseSheet(false)} />
       <EditRecordSheet job={editingJob} onClose={() => setEditingJob(null)} />
-      <VoiceEntryModal visible={voiceModal} onClose={() => setVoiceModal(false)} />
+      <TaskSheet visible={taskSheet !== null} initial={taskSheet?.initial} onClose={() => setTaskSheet(null)} />
       <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
     </View>
   );
@@ -602,8 +649,8 @@ const styles = StyleSheet.create({
   secondaryActionText: { color: colors.brandPrimary, fontSize: 14, fontWeight: "700" },
   expenseAction: { flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 3, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.surfaceSecondary },
   expenseActionText: { color: colors.warning, fontSize: 14, fontWeight: "700" },
-  voiceAction: { flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary },
-  voiceActionText: { color: colors.brandPrimary, fontSize: 14, fontWeight: "700" },
+  taskAction: { flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary },
+  taskActionText: { color: colors.brandPrimary, fontSize: 14, fontWeight: "700" },
 
   // Search & Recent Styles
   searchBar: {

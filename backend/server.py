@@ -5,6 +5,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import json
 import os
+import re
 import logging
 import uuid
 from pathlib import Path
@@ -206,6 +207,10 @@ class Job(BaseModel):
     estimatedAmount: float = 0
     notes: str = ""
     entryId: str = ""
+    # "personal" marks a to-do of the personal book; shop jobs (and rows saved before this field) are "business".
+    persona: Optional[str] = "business"
+    priority: str = ""
+    time: str = ""
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -220,6 +225,9 @@ class JobCreate(BaseModel):
     estimatedAmount: float = 0
     notes: str = ""
     entryId: str = ""
+    persona: Optional[Literal["business", "personal"]] = "business"
+    priority: Literal["", "high"] = ""
+    time: str = Field("", max_length=5)
 
 
 class JobUpdate(BaseModel):
@@ -229,6 +237,8 @@ class JobUpdate(BaseModel):
     estimatedAmount: Optional[float] = None
     notes: Optional[str] = None
     entryId: Optional[str] = None
+    priority: Optional[Literal["", "high"]] = None
+    time: Optional[str] = Field(None, max_length=5)
 
 
 AepsType = Literal["withdrawal", "cash", "deposit", "transfer", "upi", "balance", "recharge", "bill", "other"]
@@ -458,6 +468,27 @@ async def me(user: dict = Depends(get_current_user)):
 async def update_me(payload: ProfileUpdate, user: dict = Depends(get_current_user)):
     patch = {k: v.strip() for k, v in payload.model_dump(exclude_none=True).items()}
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": patch})
+    user.update(patch)
+    return _user_out(user)
+
+
+@api_router.post("/shop/close", response_model=UserOut)
+async def close_shop(user: dict = Depends(get_current_user)):
+    """Removes the whole shop book; the personal book and money moved between the two books stay."""
+    uid = user["user_id"]
+    shop_customers = await db.customers.find({"user_id": uid, "persona": {"$ne": "personal"}}, {"_id": 0, "id": 1}).to_list(None)
+    ids = [c["id"] for c in shop_customers]
+    if ids:
+        await _archive_and_delete("entries", {"customerId": {"$in": ids}}, user)
+        await _archive_and_delete("jobs", {"customerId": {"$in": ids}}, user)
+    await _archive_and_delete("customers", {"persona": {"$ne": "personal"}}, user)
+    await _archive_and_delete("jobs", {"customerId": "", "persona": {"$ne": "personal"}}, user)
+    await _archive_and_delete("aeps", {}, user)
+    await _archive_and_delete("expenses", {"persona": {"$ne": "personal"}}, user)
+    personal = re.compile(r"^personal:")
+    await _archive_and_delete("moves", {"src": {"$not": personal}, "dst": {"$not": personal}}, user)
+    patch = {"shop_name": "", "shop_gst": "", "persona": "personal"}
+    await db.users.update_one({"user_id": uid}, {"$set": patch})
     user.update(patch)
     return _user_out(user)
 

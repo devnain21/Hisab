@@ -22,6 +22,7 @@ import { useAeps, useCustomers, useEntries, useJobs, computeBalance } from "@/sr
 import { formatINR, todayISO, formatPhone } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { ShopProfileSheet } from "@/src/components/sheets";
+import { CloseShopSheet } from "@/src/components/close-shop-sheet";
 import { PinSetupModal, PinVerifyModal, useAppLock } from "@/src/components/app-lock";
 import { biometricAvailable, disableLock, lockSupported, setBiometric, setPin } from "@/src/lib/app-lock";
 import { exportFullLedgerCsv } from "@/src/lib/export-data";
@@ -43,6 +44,7 @@ export default function Profile() {
   const { user, signOut } = useAuth();
   const { persona, isPersonal, setPersona, labels, hasShop } = usePersona();
   const [openShop, setOpenShop] = useState(false);
+  const [closeShop, setCloseShop] = useState(false);
 
   // Modals & Sheets
   const [shopSheet, setShopSheet] = useState(false);
@@ -303,6 +305,19 @@ export default function Profile() {
         </Pressable>
       </View>
 
+      {!hasShop ? (
+        <Pressable style={styles.openShopCard} onPress={() => setOpenShop(true)} testID="open-shop-btn">
+          <View style={styles.openShopIcon}>
+            <MaterialIcon name="storefront-outline" size={24} color={colors.onBrandPrimary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.openShopTitle}>दुकान / बिज़नेस खाता बनाएँ</Text>
+            <Text style={styles.openShopSub}>ग्राहक, उधारी, काम और गल्ला अलग से संभालें</Text>
+          </View>
+          <MaterialIcon name="chevron-right" size={22} color={colors.brandPrimary} />
+        </Pressable>
+      ) : null}
+
       {/* IMPROVEMENT 1: Executive Digital Visiting Card */}
       <LinearGradient
         colors={["#0F172A", "#1E293B", "#334155"]}
@@ -422,19 +437,18 @@ export default function Profile() {
         </View>
       </LinearGradient>
 
-      <View style={styles.personaContainer}>
-        <Text style={styles.sectionMiniLabel}>खाता</Text>
-        <View style={styles.personaSwitchRow}>
-          <Pressable
-            style={[styles.personaSegment, isPersonal && styles.personaSegmentActive]}
-            onPress={() => handleSwitchPersona("personal")}
-            testID="persona-personal-btn"
-          >
-            <MaterialIcon name="account" size={17} color={isPersonal ? colors.brandPrimary : colors.muted} />
-            <Text style={[styles.personaText, isPersonal && styles.personaTextActive]}>व्यक्तिगत</Text>
-          </Pressable>
-
-          {hasShop ? (
+      {hasShop ? (
+        <View style={styles.personaContainer}>
+          <Text style={styles.sectionMiniLabel}>खाता</Text>
+          <View style={styles.personaSwitchRow}>
+            <Pressable
+              style={[styles.personaSegment, isPersonal && styles.personaSegmentActive]}
+              onPress={() => handleSwitchPersona("personal")}
+              testID="persona-personal-btn"
+            >
+              <MaterialIcon name="account" size={17} color={isPersonal ? colors.brandPrimary : colors.muted} />
+              <Text style={[styles.personaText, isPersonal && styles.personaTextActive]}>व्यक्तिगत</Text>
+            </Pressable>
             <Pressable
               style={[styles.personaSegment, !isPersonal && styles.personaSegmentActive]}
               onPress={() => handleSwitchPersona("business")}
@@ -443,14 +457,9 @@ export default function Profile() {
               <MaterialIcon name="storefront" size={17} color={!isPersonal ? colors.brandPrimary : colors.muted} />
               <Text style={[styles.personaText, !isPersonal && styles.personaTextActive]}>दुकान</Text>
             </Pressable>
-          ) : (
-            <Pressable style={styles.personaSegment} onPress={() => setOpenShop(true)} testID="open-shop-btn">
-              <MaterialIcon name="plus-circle-outline" size={17} color={colors.brandPrimary} />
-              <Text style={[styles.personaText, { color: colors.brandPrimary }]}>दुकान खाता खोलें</Text>
-            </Pressable>
-          )}
+          </View>
         </View>
-      </View>
+      ) : null}
 
       <Pressable style={styles.balanceCard} onPress={() => router.push("/balance" as never)} testID="profile-total-balance">
         <View style={[styles.iconCircle, { backgroundColor: colors.successSoft }]}>
@@ -760,6 +769,13 @@ export default function Profile() {
       </View>
       {backupError ? <Text style={styles.errorText}>{backupError}</Text> : null}
 
+      {hasShop ? (
+        <Pressable style={styles.closeShopLink} onPress={() => setCloseShop(true)} testID="close-shop-btn">
+          <MaterialIcon name="store-remove-outline" size={18} color={colors.error} />
+          <Text style={styles.closeShopText}>दुकान खाता हटाएँ</Text>
+        </Pressable>
+      ) : null}
+
       {/* Sign Out Danger Zone */}
       <Pressable style={styles.logoutBtn} onPress={handleSignOut} testID="logout-btn">
         <MaterialIcon name="logout-variant" size={18} color={colors.error} />
@@ -779,6 +795,7 @@ export default function Profile() {
       {/* Modals */}
       <ShopProfileSheet visible={shopSheet} onClose={() => setShopSheet(false)} />
       <ShopProfileSheet visible={openShop} openShop onClose={() => setOpenShop(false)} />
+      <CloseShopSheet visible={closeShop} onClose={() => setCloseShop(false)} />
       <PinSetupModal visible={pinSetup} onClose={() => setPinSetup(false)} onDone={onPinSet} />
       <PinVerifyModal
         visible={verifyFor !== null}
@@ -1097,6 +1114,37 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   balanceVal: { fontSize: 22, fontWeight: "800", color: colors.onSurface, marginVertical: 2 },
+
+  openShopCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.brandPrimary,
+    backgroundColor: colors.brandTertiary,
+  },
+  openShopIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.brandPrimary,
+  },
+  openShopTitle: { fontSize: 16, fontWeight: "800", color: colors.brandPrimary },
+  openShopSub: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 2 },
+  closeShopLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  closeShopText: { fontSize: 13, fontWeight: "700", color: colors.error },
 
   // Persona Switcher
   personaContainer: {

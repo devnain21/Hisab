@@ -67,7 +67,9 @@ export default function DayScreen() {
 
   // In the personal book the first tab is money handed out; in the shop it is work done.
   const inKind = (e: Entry, k: "work" | "payment") =>
-    k === "work" ? e.type === (isPersonal ? "given" : "work") : e.type === "payment" || (e.type === "work" && (e.paid ?? 0) > 0);
+    k === "work"
+      ? isPersonal ? e.type === "given" || e.type === "purchase" : e.type === "work"
+      : e.type === "payment" || (e.type === "work" && (e.paid ?? 0) > 0);
   const amountFor = (e: Entry, k: "work" | "payment") => (k === "work" || e.type === "payment" ? e.amount : e.paid ?? 0);
   const rows = useMemo(
     () => (kind === "drawer" ? [] : dayEntries.filter((e) => inKind(e, kind)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))),
@@ -200,16 +202,16 @@ export default function DayScreen() {
         {kind === "work" && isPersonal ? (
           <View style={styles.totalCard}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", width: "100%" }}>
-              <Text style={styles.totalLabel}>कुल दिए ({rows.length})</Text>
+              <Text style={styles.totalLabel}>दिए व सामान ({rows.length})</Text>
               <Text style={[styles.totalValue, { color: colors.error, fontSize: 24, marginTop: 0 }]}>{formatINR(sum("work"))}</Text>
             </View>
             <View style={styles.workPillsRow}>
               <View style={[styles.miniPill, { backgroundColor: colors.successSoft }]}>
-                <Text style={[styles.miniPillText, { color: colors.success }]}>कैश: {formatINR(flows.cash.given)}</Text>
+                <Text style={[styles.miniPillText, { color: colors.success }]}>कैश: {formatINR(flows.cash.given + flows.cash.purchase)}</Text>
               </View>
-              {flows.bank.given > 0 ? (
+              {flows.bank.given + flows.bank.purchase > 0 ? (
                 <View style={[styles.miniPill, { backgroundColor: colors.infoSoft }]}>
-                  <Text style={[styles.miniPillText, { color: colors.info }]}>बैंक: {formatINR(flows.bank.given)}</Text>
+                  <Text style={[styles.miniPillText, { color: colors.info }]}>बैंक: {formatINR(flows.bank.given + flows.bank.purchase)}</Text>
                 </View>
               ) : null}
             </View>
@@ -412,7 +414,16 @@ export default function DayScreen() {
                     </View>
                   )}
                 </View>
-                <Text style={styles.desc} numberOfLines={2}>{e.description || (e.type === "work" ? "काम" : e.type === "given" ? "दिए" : "मिले")}</Text>
+                <Text style={styles.desc} numberOfLines={2}>{e.description || (e.type === "work" ? "काम" : e.type === "given" ? "दिए" : e.type === "purchase" ? "सामान / सेवा" : "मिले")}</Text>
+                {e.type === "purchase" ? (
+                  <Text style={[styles.notes, { color: (e.paid ?? 0) >= e.amount ? colors.success : colors.warning }]}>
+                    {(e.paid ?? 0) >= e.amount
+                      ? "पूरे चुकाए"
+                      : (e.paid ?? 0) > 0
+                      ? `${formatINR(e.paid ?? 0)} चुकाए · ${formatINR(e.amount - (e.paid ?? 0))} देने हैं`
+                      : "देने हैं"}
+                  </Text>
+                ) : null}
                 {e.type === "work" ? (
                   <View style={{ marginTop: 2 }}>
                     <Text style={[styles.notes, { color: (e.paid ?? 0) >= e.amount ? colors.success : colors.error }]}>

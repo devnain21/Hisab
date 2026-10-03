@@ -5,7 +5,7 @@ import * as Crypto from "expo-crypto";
 import { api } from "./api";
 import { store, withPending } from "./store";
 import { isBackdated, todayISO } from "./format";
-import { useAeps, useCustomers, useEntries, type AepsTxn, type Customer, type Entry } from "./data";
+import { isRepayment, useAeps, useCustomers, useEntries, type AepsTxn, type Customer, type Entry } from "./data";
 import { useExpenses, expensePersona, type Expense } from "./expenses";
 import { aepsTotals } from "./aeps";
 import type { Persona } from "./persona";
@@ -101,13 +101,15 @@ export type PocketFlow = {
   expense: number;
   fee: number;
   given: number;
+  /** Goods / services paid for: on the spot or paying back a purchase. */
+  purchase: number;
   moveOut: number;
 };
 export type Flows = Record<Pocket, PocketFlow>;
 
-const emptyPocket = (): PocketFlow => ({ work: 0, received: 0, counterIn: 0, commission: 0, moveIn: 0, counterOut: 0, expense: 0, fee: 0, given: 0, moveOut: 0 });
+const emptyPocket = (): PocketFlow => ({ work: 0, received: 0, counterIn: 0, commission: 0, moveIn: 0, counterOut: 0, expense: 0, fee: 0, given: 0, purchase: 0, moveOut: 0 });
 export const pocketIn = (f: PocketFlow) => f.work + f.received + f.counterIn + f.commission + f.moveIn;
-export const pocketOut = (f: PocketFlow) => f.counterOut + f.expense + f.fee + f.given + f.moveOut;
+export const pocketOut = (f: PocketFlow) => f.counterOut + f.expense + f.fee + f.given + f.purchase + f.moveOut;
 export const pocketNet = (f: PocketFlow) => pocketIn(f) - pocketOut(f);
 
 type Book = { entries: Entry[]; customers: Customer[]; aeps: AepsTxn[]; expenses: Expense[]; moves: Move[] };
@@ -129,6 +131,10 @@ export function computeFlows(book: Book, persona: Persona, keep: (date: string) 
       if ((e.fee ?? 0) > 0) f[e.feeMode === "cash" ? "cash" : "bank"].fee += e.fee ?? 0;
     } else if (e.type === "payment") {
       f[pocketOf(e.mode)].received += e.amount;
+    } else if (e.type === "purchase") {
+      f[pocketOf(e.mode)].purchase += e.paid ?? 0;
+    } else if (isRepayment(e)) {
+      f[pocketOf(e.mode)].purchase += e.amount;
     } else {
       f[pocketOf(e.mode)].given += e.amount;
     }

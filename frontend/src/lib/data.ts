@@ -11,14 +11,17 @@ export type Customer = {
   persona?: "business" | "personal";
   createdAt: string;
 };
-// work: service done · payment: money received from them · given: money handed to them (loan).
-// paid: money taken when the work was booked (work rows only, 0..amount).
+// work: service done · payment: money received from them · given: money handed to them (loan, or
+// paying back a purchase when linkId points at it) · purchase: goods / service taken from them on credit.
+// paid: money settled on the spot (work: taken from them, purchase: paid to them; 0..amount).
+// items: line items of a work / purchase; amount is their sum.
 // mode: payment mode ("cash" = cash drawer, "online" = UPI/Bank account).
 // fee: government/portal fee or direct cost incurred by shopkeeper.
 // feeMode: where government fee was paid from ("online" = Bank/UPI, "cash" = Drawer).
 // linkId: a payment that settles a specific work/given entry points at that entry.
-export type EntryType = "work" | "payment" | "given";
+export type EntryType = "work" | "payment" | "given" | "purchase";
 export type PaymentMode = "cash" | "online";
+export type EntryItem = { title: string; amount: number };
 
 export type Entry = {
   id: string;
@@ -33,6 +36,7 @@ export type Entry = {
   feeMode?: PaymentMode;
   notes: string;
   linkId?: string;
+  items?: EntryItem[];
   createdAt: string;
 };
 // customerId "" = the shopkeeper's own task (no customer, no money).
@@ -98,6 +102,7 @@ export function computeBalance(entries: Entry[], customerId?: string): number {
 /** How much this row moves the customer's balance: udhaar part of work and money given up, payments down. */
 export function entryDelta(e: Entry): number {
   if (e.type === "work") return e.amount - (e.paid ?? 0);
+  if (e.type === "purchase") return -(e.amount - (e.paid ?? 0));
   return e.type === "given" ? e.amount : -e.amount;
 }
 
@@ -129,9 +134,24 @@ export function entryProfit(e: Entry): number {
 }
 
 /** Rows the customer owes on (payments settle these, oldest first). */
-export const isDebt = (e: Entry) => e.type !== "payment";
+export const isDebt = (e: Entry) => e.type === "work" || (e.type === "given" && !e.linkId);
+
+/** Money paid back against a purchase (shown inside that purchase). */
+export const isRepayment = (e: Entry) => e.type === "given" && !!e.linkId;
+
+/** Line items of a row; older rows are one item made from the description. */
+export function itemsOf(e: Pick<Entry, "items" | "description" | "amount">, fallback = ""): EntryItem[] {
+  if (e.items && e.items.length) return e.items;
+  return [{ title: e.description || fallback, amount: e.amount }];
+}
 
 /** Unlinked money already with us from this customer (negative balance), or 0. */
 export function advanceOf(entries: Entry[], customerId: string): number {
   return Math.max(0, -computeBalance(entries, customerId));
+}
+
+/** One-line description with each item's amount, for exports. */
+export function itemsText(e: Pick<Entry, "items" | "description">): string {
+  if (!e.items || e.items.length < 2) return e.description;
+  return e.items.map((i) => `${i.title} ₹${i.amount}`).join(", ");
 }

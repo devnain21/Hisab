@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TextInput, Modal } from "react-native";
+import { View, Text, StyleSheet, TextInput } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { addExpense, EXPENSE_CATEGORIES, PERSONAL_EXPENSE_CATEGORIES, type ExpenseMode } from "@/src/lib/expenses";
 import { usePersona } from "@/src/lib/persona";
 import { formatDateShort, todayISO } from "@/src/lib/format";
+import { SheetShell } from "@/src/components/sheets";
 
 export function AddExpenseSheet({
   visible,
@@ -52,17 +53,13 @@ export function AddExpenseSheet({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={styles.sheet}>
-          <View style={styles.header}>
-            <Text style={styles.title}>
-              खर्च लिखें{initialDate && initialDate < todayISO() ? ` · ${formatDateShort(initialDate)}` : ""}
-            </Text>
-            <Pressable onPress={onClose} hitSlop={12} testID="expense-close">
-              <MaterialIcon name="close" size={24} color={colors.onSurface} />
-            </Pressable>
-          </View>
+    <SheetShell
+      visible={visible}
+      onClose={onClose}
+      title={`खर्च लिखें${initialDate && initialDate < todayISO() ? ` · ${formatDateShort(initialDate)}` : ""}`}
+      testID="sheet-expense"
+    >
+      <View>
 
           {initialDate && initialDate < todayISO() ? (
             <Text style={styles.oldNote}>पुरानी तारीख — गल्ला / बैंक नहीं बदलेगा</Text>
@@ -165,9 +162,8 @@ export function AddExpenseSheet({
               {saving ? "सेव हो रहा है..." : "खर्च जोड़ें"}
             </Text>
           </Pressable>
-        </View>
       </View>
-    </Modal>
+    </SheetShell>
   );
 }
 

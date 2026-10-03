@@ -119,16 +119,23 @@ def _check_paid(m):
     # can never exceed the work amount, so balance = sum(work.amount - work.paid) - sum(payments).
     if m.paid is None:
         return m
-    if m.type != "work" and m.paid:
-        raise ValueError("paid is only allowed on work entries")
+    if m.type not in PAID_TYPES and m.paid:
+        raise ValueError("paid is only allowed on work / purchase entries")
     if m.paid > m.amount:
         raise ValueError("paid cannot exceed amount")
     return m
 
 
 # work: service done (raises what they owe) · payment: money received from them ·
-# given: money handed to them, e.g. a personal loan (raises what they owe, no work involved).
-EntryType = Literal["work", "payment", "given"]
+# given: money handed to them, e.g. a personal loan (raises what they owe, no work involved) ·
+# purchase: goods / service we took from them (raises what we owe; `paid` = paid on the spot).
+EntryType = Literal["work", "payment", "given", "purchase"]
+PAID_TYPES = ("work", "purchase")
+
+
+class EntryItem(BaseModel):
+    title: str
+    amount: float = Field(..., ge=0)
 
 
 class Entry(BaseModel):
@@ -144,6 +151,7 @@ class Entry(BaseModel):
     feeMode: Optional[str] = "online"
     notes: str = ""
     linkId: str = ""
+    items: Optional[List[EntryItem]] = None
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -162,6 +170,7 @@ class EntryCreate(BaseModel):
     feeMode: Optional[str] = "online"
     notes: str = ""
     linkId: str = ""
+    items: Optional[List[EntryItem]] = None
 
     @model_validator(mode="after")
     def validate_paid(self):
@@ -179,6 +188,7 @@ class EntryUpdate(BaseModel):
     feeMode: Optional[str] = None
     notes: str = ""
     linkId: Optional[str] = None
+    items: Optional[List[EntryItem]] = None
 
     @model_validator(mode="after")
     def validate_paid(self):
@@ -482,7 +492,7 @@ async def update_entry(entry_id: str, payload: EntryUpdate, user: dict = Depends
     if payload.amount <= 0:
         raise HTTPException(422, "Amount must be greater than 0")
     patch = payload.dict(exclude_none=True)
-    paid = patch.get("paid", existing.get("paid", 0)) if payload.type == "work" else 0
+    paid = patch.get("paid", existing.get("paid", 0)) if payload.type in PAID_TYPES else 0
     if paid > payload.amount:
         raise HTTPException(422, "paid cannot exceed amount")
     patch["paid"] = paid

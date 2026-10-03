@@ -18,6 +18,7 @@ const IN_ROWS: Row[] = [
 const OUT_ROWS: Row[] = [
   { key: "counterOut", label: () => "AEPS गए" },
   { key: "given", label: (p) => (p === "business" ? "उधार दिए" : "दिए") },
+  { key: "purchase", label: () => "सामान / सेवा" },
   { key: "expense", label: () => "खर्च" },
   { key: "fee", label: () => "फीस" },
   { key: "moveOut", label: () => "निकाले / ट्रांसफर गए" },

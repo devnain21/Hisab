@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { View, Text, StyleSheet, TextInput, Modal, Alert } from "react-native";
+import { View, Text, StyleSheet, TextInput, Alert } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
@@ -8,6 +8,7 @@ import { useCustomers, type Customer, type EntryType } from "@/src/lib/data";
 import { parseQuickText } from "@/src/lib/quick-parser";
 import { store } from "@/src/lib/store";
 import { usePersona } from "@/src/lib/persona";
+import { SheetShell } from "@/src/components/sheets";
 
 export function VoiceEntryModal({
   visible,
@@ -77,15 +78,8 @@ export function VoiceEntryModal({
   const chips = isPersonal ? ["राजू 500 मिले", "सुनील 1000 दिए"] : ["राजू 500 मिले", "अमित 250 फोटोकॉपी", "सुनील 1000 दिए"];
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={styles.sheet}>
-          <View style={styles.header}>
-            <Text style={styles.title}>बोलकर हिसाब</Text>
-            <Pressable onPress={onClose} hitSlop={12} testID="voice-close">
-              <MaterialIcon name="close" size={24} color={colors.onSurface} />
-            </Pressable>
-          </View>
+    <SheetShell visible={visible} onClose={onClose} title="बोलकर हिसाब" testID="sheet-voice">
+      <View>
 
           <View style={styles.inputBox}>
             <MaterialIcon name="microphone" size={24} color={colors.brandPrimary} />
@@ -207,9 +201,8 @@ export function VoiceEntryModal({
               </Text>
             </View>
           )}
-        </View>
       </View>
-    </Modal>
+    </SheetShell>
   );
 }
 

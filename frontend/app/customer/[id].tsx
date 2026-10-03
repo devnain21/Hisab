@@ -5,7 +5,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { computeBalance, useCustomers, useEntries, useJobs, type Entry, type EntryType, type Job } from "@/src/lib/data";
+import { computeBalance, isRepayment, itemsOf, useCustomers, useEntries, useJobs, type Entry, type EntryType, type Job } from "@/src/lib/data";
 import { formatDate, formatINR, formatPhone, initials } from "@/src/lib/format";
 import { store } from "@/src/lib/store";
 import { buildLedger, type WorkState, type WorkStatus } from "@/src/lib/records";
@@ -76,13 +76,15 @@ export default function CustomerDetail() {
 
   const due = computeBalance(entries);
   const totals = useMemo(() => {
-    let work = 0, given = 0, got = 0;
+    let work = 0, given = 0, got = 0, bought = 0, paidOut = 0;
     for (const e of entries) {
       if (e.type === "work") { work += e.amount; got += e.paid ?? 0; }
+      else if (e.type === "purchase") { bought += e.amount; paidOut += e.paid ?? 0; }
+      else if (isRepayment(e)) paidOut += e.amount;
       else if (e.type === "given") given += e.amount;
       else got += e.amount;
     }
-    return { work, given, got, debt: work + given };
+    return { work, given, got, bought, paidOut, any: work + given + got + bought + paidOut > 0 };
   }, [entries]);
   // Money left with us by a customer is an advance; with a personal contact it's money we owe back.
   const isCustomer = entries.some((e) => e.type === "work") || jobs.length > 0;
@@ -146,12 +148,14 @@ export default function CustomerDetail() {
           <Text style={[styles.balanceValue, { color: due > 0 ? colors.error : due < 0 ? (isCustomer ? colors.success : colors.warning) : colors.onSurface }]}>
             {due === 0 ? "क्लियर" : formatINR(Math.abs(due))}
           </Text>
-          {totals.debt > 0 || totals.got > 0 ? (
+          {totals.any ? (
             <Text style={styles.breakdown}>
               {[
                 totals.work > 0 ? `काम ${formatINR(totals.work)}` : "",
                 totals.given > 0 ? `दिए ${formatINR(totals.given)}` : "",
-                `मिले ${formatINR(totals.got)}`,
+                totals.got > 0 || totals.work + totals.given > 0 ? `मिले ${formatINR(totals.got)}` : "",
+                totals.bought > 0 ? `सामान ${formatINR(totals.bought)}` : "",
+                totals.bought > 0 ? `चुकाए ${formatINR(totals.paidOut)}` : "",
               ].filter(Boolean).join(" · ")}
             </Text>
           ) : null}
@@ -171,6 +175,12 @@ export default function CustomerDetail() {
               <MaterialIcon name="arrow-top-right" size={16} color={colors.error} />
               <Text style={[styles.actionText, { color: colors.error }]}>दिए</Text>
             </Pressable>
+            {customer.persona === "personal" ? (
+              <Pressable style={[styles.actionBtn, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.warning }]} onPress={() => setEntrySheet("purchase")} testID="add-purchase-btn">
+                <MaterialIcon name="cart-outline" size={16} color={colors.warning} />
+                <Text style={[styles.actionText, { color: colors.warning }]}>सामान</Text>
+              </Pressable>
+            ) : null}
           </View>
           {entries.length > 0 ? (
             <Pressable style={styles.statementBtn} onPress={openStatement} testID="share-statement-btn">
@@ -298,7 +308,7 @@ export default function CustomerDetail() {
 
 type LedgerFilter = "all" | "due" | "settled" | "cash" | "jama";
 const LEDGER_FILTERS: LedgerFilter[] = ["all", "due", "settled", "cash", "jama"];
-const LEDGER_FILTER_LABEL: Record<LedgerFilter, string> = { all: "सभी", due: "लेने हैं", settled: "चुकता", cash: "नकद", jama: "मिले" };
+const LEDGER_FILTER_LABEL: Record<LedgerFilter, string> = { all: "सभी", due: "बाकी", settled: "चुकता", cash: "नकद", jama: "मिले" };
 
 // Money handed over (personal loan): same settle flow as udhaar work, different wording.
 const GIVEN_UI: Record<WorkState, { label: string; icon: string; fg: string; bg: string }> = {
@@ -306,6 +316,14 @@ const GIVEN_UI: Record<WorkState, { label: string; icon: string; fg: string; bg:
   pending: { label: "वापस लेने हैं", icon: "arrow-top-right", fg: colors.error, bg: colors.errorSoft },
   partial: { label: "कुछ लेने हैं", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
   settled: { label: "वापस मिले", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
+};
+
+// Goods / service taken on credit: the open part is money we owe them.
+const PURCHASE_UI: Record<WorkState, { label: string; icon: string; fg: string; bg: string }> = {
+  cash: { label: "पूरे चुकाए", icon: "cart-check", fg: colors.success, bg: colors.successSoft },
+  pending: { label: "देने हैं", icon: "cart-outline", fg: colors.warning, bg: "#FEF3E2" },
+  partial: { label: "कुछ देने हैं", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
+  settled: { label: "चुकता", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
 };
 
 const STATE_UI: Record<WorkState, { label: string; icon: string; fg: string; bg: string }> = {
@@ -325,9 +343,14 @@ function ReceiptButton({ entryId, onPress }: { entryId: string; onPress: () => v
 
 function WorkCard({ entry, status, onPress, onSettle, onReceipt }: { entry: Entry; status: WorkStatus; onPress: () => void; onSettle: () => void; onReceipt: () => void }) {
   const given = entry.type === "given";
-  const ui = (given ? GIVEN_UI : STATE_UI)[status.state];
+  const purchase = entry.type === "purchase";
+  const ui = (purchase ? PURCHASE_UI : given ? GIVEN_UI : STATE_UI)[status.state];
   const open = status.state === "pending" || status.state === "partial";
   const laterPaid = status.received - status.paidAtBooking;
+  const lines = entry.items && entry.items.length > 1 ? itemsOf(entry) : [];
+  const word = purchase
+    ? { got: "चुकाए", left: "देने हैं", settle: "पैसे चुकाए", fromPool: " (हिसाब में कटे)" }
+    : { got: "मिले", left: "लेने हैं", settle: given ? "पैसे वापस मिले" : "पैसे मिले", fromPool: given ? " (हिसाब में कटे)" : " (पहले के एडवांस से)" };
   return (
     <Pressable
       style={[styles.card, open && { borderLeftWidth: 4, borderLeftColor: ui.fg, backgroundColor: status.state === "pending" ? "#FFF7F6" : colors.surfaceSecondary }]}
@@ -339,7 +362,7 @@ function WorkCard({ entry, status, onPress, onSettle, onReceipt }: { entry: Entr
           <MaterialIcon name={ui.icon as any} size={18} color={ui.fg} />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.jobTitle} numberOfLines={2}>{entry.description || (given ? "पैसे दिए" : "काम")}</Text>
+          <Text style={styles.jobTitle} numberOfLines={2}>{entry.description || (purchase ? "सामान / सेवा" : given ? "पैसे दिए" : "काम")}</Text>
           <Text style={styles.sub}>{formatDate(entry.date)}{entry.notes ? ` · ${entry.notes}` : ""}</Text>
           {entry.fee && entry.fee > 0 ? (
             <Text style={{ fontSize: 11, color: colors.muted, marginTop: 2 }}>
@@ -364,26 +387,37 @@ function WorkCard({ entry, status, onPress, onSettle, onReceipt }: { entry: Entr
         <ReceiptButton entryId={entry.id} onPress={onReceipt} />
       </View>
 
+      {lines.length ? (
+        <View style={styles.itemList}>
+          {lines.map((it, i) => (
+            <View key={i} style={styles.itemLine}>
+              <Text style={styles.itemName} numberOfLines={1}>{it.title}</Text>
+              <Text style={styles.itemAmt}>{formatINR(it.amount)}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
       {status.state !== "cash" ? (
         <View style={styles.moneyLine}>
           <Text style={styles.moneyText}>कुल {formatINR(entry.amount)}</Text>
           <Text style={styles.moneyText}>
-            मिले {formatINR(status.received)}
+            {word.got} {formatINR(status.received)}
             {status.paidAtBooking > 0 && laterPaid > 0 ? ` (उसी दिन ${formatINR(status.paidAtBooking)} + बाद में ${formatINR(laterPaid)})` : ""}
-            {status.fromJama > 0 && status.settlements.length === 0 ? " (पहले के एडवांस से)" : ""}
+            {status.fromJama > 0 && status.settlements.length === 0 ? word.fromPool : ""}
           </Text>
           {status.state === "settled" ? (
             <Text style={[styles.moneyText, { color: colors.success, fontWeight: "700" }]}>✔ {status.settledOn ? `${formatDate(status.settledOn)} को ` : ""}चुकता</Text>
           ) : (
-            <Text style={[styles.moneyText, { color: colors.error, fontWeight: "800" }]}>लेने हैं {formatINR(status.remaining)}</Text>
+            <Text style={[styles.moneyText, { color: ui.fg, fontWeight: "800" }]}>{word.left} {formatINR(status.remaining)}</Text>
           )}
         </View>
       ) : null}
 
       {open ? (
-        <Pressable style={styles.settleBtn} onPress={onSettle} testID={`settle-${entry.id}`}>
+        <Pressable style={[styles.settleBtn, purchase && { backgroundColor: colors.warning }]} onPress={onSettle} testID={`settle-${entry.id}`}>
           <MaterialIcon name="cash-check" size={16} color="#fff" />
-          <Text style={styles.settleText}>{given ? "पैसे वापस मिले" : "पैसे मिले"}{status.state === "partial" ? ` · ${formatINR(status.remaining)}` : ""}</Text>
+          <Text style={styles.settleText}>{word.settle}{status.state === "partial" ? ` · ${formatINR(status.remaining)}` : ""}</Text>
         </Pressable>
       ) : null}
     </Pressable>
@@ -458,5 +492,9 @@ const styles = StyleSheet.create({
   moneyText: { fontSize: 12, color: colors.onSurfaceSecondary },
   settleBtn: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, borderRadius: radius.md, backgroundColor: colors.success },
   settleText: { color: "#fff", fontWeight: "700", fontSize: 12 },
+  itemList: { marginTop: spacing.sm, marginLeft: 48, paddingTop: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border, gap: 2 },
+  itemLine: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md },
+  itemName: { flex: 1, fontSize: 13, color: colors.onSurface },
+  itemAmt: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
   empty: { alignItems: "center", padding: spacing.xl, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
 });

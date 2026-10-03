@@ -14,14 +14,14 @@ import {
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
-import { advanceOf, computeBalance, useCustomers, useEntries, useJobs, type Entry, type EntryType, type Job } from "@/src/lib/data";
+import { advanceOf, computeBalance, itemsOf, useCustomers, useEntries, useJobs, type Entry, type EntryItem, type EntryType, type Job } from "@/src/lib/data";
 import { ADVANCE, advancesForJob, buildLedger, jobForWork, linkedPayment, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
 import { formatDate, formatINR, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
-import { ContactPickerModal } from "@/src/components/contact-picker-modal";
+import { useContactPicker } from "@/src/components/contact-picker-modal";
 import { usePersona } from "@/src/lib/persona";
 
 // Android modals don't resize for the keyboard under edge-to-edge, so pad by the measured overlap instead.
@@ -48,23 +48,38 @@ export function SheetShell({ visible, onClose, title, children, testID }: { visi
   const insets = useSafeAreaInsets();
   const containerRef = useRef<View>(null);
   const scrollRef = useRef<ScrollView>(null);
+  const scrollY = useRef(0);
+  const viewH = useRef(0);
   const overlap = useKeyboardOverlap(containerRef);
 
+  // Keeps the focused field above the keyboard, also when moving to the next field with it open.
   useEffect(() => {
     if (!overlap) return;
-    const t = setTimeout(() => {
+    let last: unknown = null;
+    const reveal = () => {
       const input = TextInput.State.currentlyFocusedInput() as any;
       const inner = (scrollRef.current as any)?.getInnerViewRef?.();
+      last = input;
       if (!input || !inner) return;
       try {
         input.measureLayout(
           inner,
-          (_x: number, y: number) => scrollRef.current?.scrollTo({ y: Math.max(0, y - 80), animated: true }),
+          (_x: number, y: number, _w: number, h: number) => {
+            const top = scrollY.current;
+            if (y < top + 8 || y + h > top + viewH.current - 24) scrollRef.current?.scrollTo({ y: Math.max(0, y - 96), animated: true });
+          },
           () => {},
         );
       } catch {}
-    }, 60);
-    return () => clearTimeout(t);
+    };
+    const first = setTimeout(reveal, 80);
+    const poll = setInterval(() => {
+      if (TextInput.State.currentlyFocusedInput() !== last) reveal();
+    }, 250);
+    return () => {
+      clearTimeout(first);
+      clearInterval(poll);
+    };
   }, [overlap]);
 
   return (
@@ -79,7 +94,14 @@ export function SheetShell({ visible, onClose, title, children, testID }: { visi
               <MaterialIcon name="close" size={22} color={colors.muted} />
             </Pressable>
           </View>
-          <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <ScrollView
+            ref={scrollRef}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            scrollEventThrottle={32}
+            onScroll={(e) => { scrollY.current = e.nativeEvent.contentOffset.y; }}
+            onLayout={(e) => { viewH.current = e.nativeEvent.layout.height; }}
+          >
             {children}
           </ScrollView>
         </View>
@@ -198,6 +220,20 @@ function useCustomerChoice(visible: boolean, fixedCustomerId?: string) {
 function CustomerPicker({ choice, label = "नाम", allowSelf, testPrefix }: { choice: ReturnType<typeof useCustomerChoice>; label?: string; allowSelf?: boolean; testPrefix: string }) {
   const { recent, matches, exact, customerId, setCustomerId, isNew, isSelf, query, setQuery } = choice;
   const picked = recent.find((c) => c.id === customerId);
+  const contacts = useContactPicker((name, phone) => {
+    const digits = phone.replace(/\D/g, "").slice(-10);
+    const known =
+      (digits.length === 10 && recent.find((c) => c.phone.replace(/\D/g, "").slice(-10) === digits)) ||
+      recent.find((c) => !!name.trim() && c.name.trim().toLowerCase() === name.trim().toLowerCase());
+    if (known) {
+      setCustomerId(known.id);
+      setQuery("");
+      return;
+    }
+    setQuery(name.trim() || phone);
+    choice.setNewPhone(phone);
+    setCustomerId(NEW_CUSTOMER);
+  });
 
   if (picked || isSelf) {
     return (
@@ -216,17 +252,22 @@ function CustomerPicker({ choice, label = "नाम", allowSelf, testPrefix }: 
   const typed = query.trim();
   return (
     <Field label={label}>
-      <TextInput
-        style={inputStyle}
-        value={query}
-        onChangeText={(t) => {
-          setQuery(t);
-          if (isNew && !t.trim()) setCustomerId("");
-        }}
-        placeholder="नाम या फ़ोन"
-        placeholderTextColor={colors.muted}
-        testID={`${testPrefix}-search`}
-      />
+      <View style={styles.searchRow}>
+        <TextInput
+          style={[inputStyle, { flex: 1 }]}
+          value={query}
+          onChangeText={(t) => {
+            setQuery(t);
+            if (isNew && !t.trim()) setCustomerId("");
+          }}
+          placeholder="नाम या फ़ोन"
+          placeholderTextColor={colors.muted}
+          testID={`${testPrefix}-search`}
+        />
+        <Pressable style={styles.contactBtn} onPress={contacts.open} hitSlop={4} testID={`${testPrefix}-contacts`}>
+          <MaterialIcon name="contacts-outline" size={22} color={colors.brandPrimary} />
+        </Pressable>
+      </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.sm, paddingRight: spacing.md }}>
         {allowSelf && !typed ? <Chip label="खुद का काम" icon="account-circle-outline" active={false} onPress={() => setCustomerId(SELF)} testID={`${testPrefix}-self`} /> : null}
         {typed && !exact ? (
@@ -239,6 +280,7 @@ function CustomerPicker({ choice, label = "नाम", allowSelf, testPrefix }: 
       {isNew ? (
         <TextInput style={[inputStyle, { marginTop: spacing.sm }]} value={choice.newPhone} onChangeText={choice.setNewPhone} placeholder="फ़ोन (वैकल्पिक)" placeholderTextColor={colors.muted} keyboardType="phone-pad" testID="input-new-cust-phone" />
       ) : null}
+      {contacts.modal}
     </Field>
   );
 }
@@ -274,15 +316,53 @@ function useMoneyInput() {
 
 type MoneyInput = ReturnType<typeof useMoneyInput>;
 
-function MoneyFields({ money, advance = 0, totalLabel = "कुल रकम (₹)", receivedLabel = "अभी कितने मिले (₹)", freeAllowed }: { money: MoneyInput; advance?: number; totalLabel?: string; receivedLabel?: string; freeAllowed?: boolean }) {
+function MoneyFields({
+  money,
+  advance = 0,
+  totalLabel = "कुल रकम (₹)",
+  receivedLabel = "अभी कितने मिले (₹)",
+  freeAllowed,
+  hideTotal,
+  purchase,
+}: {
+  money: MoneyInput;
+  advance?: number;
+  totalLabel?: string;
+  receivedLabel?: string;
+  freeAllowed?: boolean;
+  /** The total comes from the item rows above. */
+  hideTotal?: boolean;
+  /** Money we pay out (goods / service taken) instead of money we receive. */
+  purchase?: boolean;
+}) {
   const t = money.totalNum;
   const r = money.receivedNum;
   return (
     <>
-      <Field label={totalLabel}>
-        <TextInput style={inputStyle} value={money.total} onChangeText={money.setTotal} placeholder={freeAllowed ? "0 = मुफ़्त" : "0"} placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-money-total" />
-      </Field>
-      {t > 0 ? (
+      {hideTotal ? null : (
+        <Field label={totalLabel}>
+          <TextInput style={inputStyle} value={money.total} onChangeText={money.setTotal} placeholder={freeAllowed ? "0 = मुफ़्त" : "0"} placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-money-total" />
+        </Field>
+      )}
+      {purchase ? (
+        t > 0 ? (
+          <>
+            <Field label={receivedLabel}>
+              <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
+                <Chip label="कुछ नहीं" active={r === 0} onPress={() => money.setReceived("0")} tone={colors.warning} testID="money-none" />
+                <Chip label={`पूरे ${formatINR(t)}`} active={r === t} onPress={() => money.setReceived(String(t))} tone={colors.success} testID="money-full" />
+              </View>
+              <TextInput style={inputStyle} value={money.received} onChangeText={money.setReceived} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-money-received" />
+            </Field>
+            <View style={[styles.resultBox, { borderColor: r > t ? colors.error : r >= t ? colors.success : colors.warning }]} testID="money-result">
+              <Text style={[styles.resultText, { color: r > t ? colors.error : r >= t ? colors.success : colors.warning }]}>
+                {r > t ? `कुल ${formatINR(t)} से ज़्यादा नहीं` : r >= t ? "✔ पूरे चुकाए" : `${formatINR(t - r)} देने हैं`}
+              </Text>
+            </View>
+          </>
+        ) : null
+      ) : null}
+      {!purchase && t > 0 ? (
         <Field label={receivedLabel}>
           <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
             <Chip label={`पूरे ${formatINR(t)}`} active={r === t} onPress={() => money.setReceived(String(t))} tone={colors.success} testID="money-full" />
@@ -294,8 +374,89 @@ function MoneyFields({ money, advance = 0, totalLabel = "कुल रकम (�
           <TextInput style={inputStyle} value={money.received} onChangeText={money.setReceived} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-money-received" />
         </Field>
       ) : null}
-      <MoneyResult total={t} received={r} advance={advance} freeAllowed={freeAllowed} />
+      {purchase ? null : <MoneyResult total={t} received={r} advance={advance} freeAllowed={freeAllowed} />}
     </>
+  );
+}
+
+type ItemRow = { key: number; title: string; amount: string };
+let itemSeq = 0;
+const itemRow = (title = "", amount = ""): ItemRow => ({ key: ++itemSeq, title, amount });
+const rowAmount = (r: ItemRow) => Math.max(parseFloat(r.amount) || 0, 0);
+const isFilled = (r: ItemRow) => !!r.title.trim() || rowAmount(r) > 0;
+
+/** Line items of one work / purchase. `onTotal` hears every edit so the money fields follow the sum. */
+function useItems(onTotal?: (total: number) => void) {
+  const [rows, setRows] = useState<ItemRow[]>(() => [itemRow()]);
+  const filled = rows.filter(isFilled);
+  const items: EntryItem[] = filled.map((r) => ({ title: r.title.trim(), amount: rowAmount(r) }));
+  const total = items.reduce((s, i) => s + i.amount, 0);
+  const commit = (next: ItemRow[]) => {
+    setRows(next);
+    onTotal?.(next.filter(isFilled).reduce((s, r) => s + rowAmount(r), 0));
+  };
+  return {
+    rows,
+    total,
+    /** At least one item and every item has a name. */
+    titled: filled.length > 0 && filled.every((r) => !!r.title.trim()),
+    description: items.map((i) => i.title).join(" + "),
+    /** What the entry stores: the list only when there is more than one item. */
+    saved: (): EntryItem[] => (items.length > 1 ? items : []),
+    update: (key: number, patch: Partial<ItemRow>) => commit(rows.map((r) => (r.key === key ? { ...r, ...patch } : r))),
+    add: () => setRows([...rows, itemRow()]),
+    remove: (key: number) => commit(rows.length > 1 ? rows.filter((r) => r.key !== key) : rows),
+    reset: (list?: EntryItem[]) => setRows(list && list.length ? list.map((i) => itemRow(i.title, i.amount ? String(i.amount) : "")) : [itemRow()]),
+  };
+}
+
+type Items = ReturnType<typeof useItems>;
+
+function ItemsField({ items, label, placeholder, addLabel }: { items: Items; label: string; placeholder: string; addLabel: string }) {
+  const many = items.rows.length > 1;
+  return (
+    <Field label={label}>
+      <View style={{ gap: spacing.sm }}>
+        {items.rows.map((r, i) => (
+          <View key={r.key} style={styles.itemRow}>
+            {many ? <Text style={styles.itemNo}>{i + 1}</Text> : null}
+            <TextInput
+              style={[inputStyle, { flex: 1 }]}
+              value={r.title}
+              onChangeText={(title) => items.update(r.key, { title })}
+              placeholder={i === 0 ? placeholder : "और क्या"}
+              placeholderTextColor={colors.muted}
+              autoFocus={i > 0 && i === items.rows.length - 1 && !r.title && !r.amount}
+              testID={`input-item-title-${i}`}
+            />
+            <View style={styles.itemAmtWrap}>
+              <Text style={styles.itemRupee}>₹</Text>
+              <TextInput
+                style={styles.itemAmt}
+                value={r.amount}
+                onChangeText={(amount) => items.update(r.key, { amount })}
+                placeholder="0"
+                placeholderTextColor={colors.muted}
+                keyboardType="numeric"
+                testID={`input-item-amount-${i}`}
+              />
+            </View>
+            {many ? (
+              <Pressable onPress={() => items.remove(r.key)} hitSlop={8} testID={`remove-item-${i}`}>
+                <MaterialIcon name="close-circle" size={20} color={colors.muted} />
+              </Pressable>
+            ) : null}
+          </View>
+        ))}
+      </View>
+      <View style={styles.itemsFoot}>
+        <Pressable onPress={items.add} style={styles.addItemBtn} hitSlop={6} testID="add-item-btn">
+          <MaterialIcon name="plus" size={16} color={colors.brandPrimary} />
+          <Text style={styles.addItemText}>{addLabel}</Text>
+        </Pressable>
+        {many ? <Text style={styles.itemsTotal}>कुल {formatINR(items.total)}</Text> : null}
+      </View>
+    </Field>
   );
 }
 
@@ -382,6 +543,7 @@ function recordWork({
   mode = "cash",
   fee = 0,
   feeMode = "online",
+  items = [],
 }: {
   customerId: string;
   title: string;
@@ -392,6 +554,7 @@ function recordWork({
   mode?: "cash" | "online";
   fee?: number;
   feeMode?: "cash" | "online";
+  items?: EntryItem[];
 }): string {
   if (amount <= 0) return "";
   const work = store.createEntry({
@@ -405,6 +568,7 @@ function recordWork({
     fee: Math.max(0, fee),
     feeMode,
     notes,
+    items,
   });
   bookAdvance(customerId, received - amount, date, title, work.id, mode);
   return work.id;
@@ -431,7 +595,10 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
   const [notes, setNotes] = useState("");
   const [targetPersona, setTargetPersona] = useState<"business" | "personal">("business");
   const [saving, setSaving] = useState(false);
-  const [contactModal, setContactModal] = useState(false);
+  const contacts = useContactPicker((n, p) => {
+    if (n) setName(n);
+    if (p) setPhone(p);
+  });
 
   useEffect(() => {
     if (visible) {
@@ -476,7 +643,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
               borderWidth: 1,
               borderColor: colors.brandPrimary,
             }}
-            onPress={() => setContactModal(true)}
+            onPress={contacts.open}
             testID="pick-contact-btn"
           >
             <MaterialIcon name="contacts" size={18} color={colors.brandPrimary} />
@@ -506,30 +673,28 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
           onPress={() => confirmAction(`${name || "यह खाता"} हटाएँ?`, "इनका पूरा खाता मिट जाएगा।", "हटा दें", () => { onDelete(); onClose(); })}
         />
       ) : null}
-      <ContactPickerModal
-        visible={contactModal}
-        onClose={() => setContactModal(false)}
-        onSelect={(n, p) => {
-          if (n) setName(n);
-          if (p) setPhone(p);
-        }}
-      />
+      {contacts.modal}
     </SheetShell>
   );
 }
 
-const ENTRY_UI: Record<EntryType, { title: string; icon: string; color: string; placeholder: string }> = {
-  work: { title: "काम", icon: "briefcase-outline", color: colors.error, placeholder: "जैसे पासपोर्ट फोटो 8 प्रति" },
-  payment: { title: "पैसे मिले", icon: "arrow-bottom-left", color: colors.success, placeholder: "जैसे पुराना हिसाब, UPI" },
-  given: { title: "पैसे दिए", icon: "arrow-top-right", color: colors.error, placeholder: "जैसे घर के लिए दिए" },
+const ENTRY_UI: Record<EntryType, { title: string; short: string; icon: string; color: string; placeholder: string }> = {
+  work: { title: "काम", short: "काम", icon: "briefcase-outline", color: colors.error, placeholder: "जैसे पासपोर्ट फोटो 8 प्रति" },
+  payment: { title: "पैसे मिले", short: "मिले", icon: "arrow-bottom-left", color: colors.success, placeholder: "जैसे पुराना हिसाब, UPI" },
+  given: { title: "पैसे दिए", short: "दिए", icon: "arrow-top-right", color: colors.error, placeholder: "जैसे घर के लिए दिए" },
+  purchase: { title: "सामान / सेवा ली", short: "सामान / सेवा", icon: "cart-outline", color: colors.warning, placeholder: "जैसे राशन, दवाई, मरम्मत" },
 };
 
-/** Plain khata row. With `kinds`, the sheet lets you switch between them (e.g. मिले / दिए). */
+const PICKER_LABEL: Record<EntryType, string> = { work: "ग्राहक", payment: "किससे मिले", given: "किसको दिए", purchase: "किससे ली (दुकान / व्यक्ति)" };
+
+/** Plain khata row. With `kinds`, the sheet lets you switch between them (e.g. मिले / दिए / सामान). */
 export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixedCustomerId, initial }: { visible: boolean; type: EntryType; kinds?: EntryType[]; onClose: () => void; customerId?: string; initial?: Entry }) {
   const choice = useCustomerChoice(visible, fixedCustomerId ?? initial?.customerId);
   const [kind, setKind] = useState<EntryType>(type);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
+  const money = useMoneyInput();
+  const items = useItems((sum) => money.setTotal(sum > 0 ? String(sum) : ""));
   const [payMode, setPayMode] = useState<"cash" | "online">("cash");
   const [date, setDate] = useState(todayISO());
   const [notes, setNotes] = useState("");
@@ -540,24 +705,39 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
     setKind(initial?.type ?? type);
     setDescription(initial?.description ?? "");
     setAmount(initial ? String(initial.amount) : "");
+    if (initial?.type === "purchase") {
+      items.reset(itemsOf(initial));
+      money.reset(String(initial.amount), String(initial.paid ?? 0));
+    } else {
+      items.reset();
+      money.reset("", "0");
+    }
     setPayMode(initial?.mode ?? "cash");
     setDate(initial?.date ?? todayISO());
     setNotes(initial?.notes ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initial, type]);
 
   const entries = useEntries().data ?? [];
+  const later = initial && (initial.type === "purchase" || (initial.type === "given" && !initial.linkId)) ? settlementsFor(initial, entries) : [];
   const personId = initial ? "" : choice.existingId;
   const due = personId ? computeBalance(entries, personId) : 0;
   const ui = ENTRY_UI[kind];
-  const amt = parseFloat(amount);
+  const isPurchase = kind === "purchase";
+  const amt = isPurchase ? money.totalNum : parseFloat(amount);
+  const paidNow = isPurchase ? money.receivedNum : 0;
   const needsDescription = kind === "work";
-  const valid = (initial ? true : choice.ready) && (!needsDescription || !!description.trim()) && isFinite(amt) && amt > 0;
+  const fullChip = kind === "payment" && due > 0 ? due : kind === "given" && due < 0 ? -due : 0;
+  const filled = isPurchase ? items.titled && paidNow <= amt : !needsDescription || !!description.trim();
+  const valid = (initial ? true : choice.ready) && filled && isFinite(amt) && amt > 0;
 
   const save = async () => {
     if (!valid) return;
     setSaving(true);
     try {
-      const body = { type: kind, date, description: description.trim(), amount: amt, mode: payMode, notes: notes.trim() };
+      const body = isPurchase
+        ? { type: kind, date, description: items.description, amount: amt, paid: paidNow, mode: payMode, notes: notes.trim(), items: items.saved() }
+        : { type: kind, date, description: description.trim(), amount: amt, mode: payMode, notes: notes.trim() };
       if (initial) await store.updateEntry(initial.id, body);
       else {
         const customerId = await choice.resolve();
@@ -568,37 +748,74 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title={initial ? "एंट्री बदलें" : kinds ? "मिले या दिए" : ui.title} testID={`sheet-entry-${kind}`}>
+    <SheetShell visible={visible} onClose={onClose} title={initial ? "एंट्री बदलें" : kinds ? "लेन-देन" : ui.title} testID={`sheet-entry-${kind}`}>
       {kinds && !initial ? (
         <View style={styles.segment}>
           {kinds.map((k) => (
             <Pressable key={k} onPress={() => setKind(k)} style={[styles.segmentBtn, kind === k && { backgroundColor: ENTRY_UI[k].color }]} testID={`entry-kind-${k}`}>
               <MaterialIcon name={ENTRY_UI[k].icon as any} size={16} color={kind === k ? "#fff" : colors.onSurface} />
-              <Text style={[styles.segmentText, kind === k && { color: "#fff" }]}>{ENTRY_UI[k].title}</Text>
+              <Text style={[styles.segmentText, kind === k && { color: "#fff" }]} numberOfLines={1}>{ENTRY_UI[k].short}</Text>
             </Pressable>
           ))}
         </View>
       ) : null}
-      {!initial && !fixedCustomerId && <CustomerPicker choice={choice} label={kind === "work" ? "ग्राहक" : kind === "payment" ? "किससे मिले" : "किसको दिए"} testPrefix="chip-cust" />}
-      <Field label="रकम (₹)">
-        {kind === "payment" && due > 0 ? (
-          <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
-            <Chip label={`पूरे लेने हैं ${formatINR(due)}`} active={amt === due} onPress={() => setAmount(String(due))} tone={colors.success} testID="entry-full-due" />
-          </View>
-        ) : null}
-        <TextInput style={inputStyle} value={amount} onChangeText={setAmount} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-entry-amount" />
-        {kind === "payment" && due > 0 && amt > 0 ? (
-          <Text style={[styles.hint, { color: amt >= due ? colors.success : colors.error }]}>
-            {amt > due ? `✔ हिसाब बराबर · ${formatINR(amt - due)} एडवांस` : amt === due ? "✔ हिसाब बराबर" : `${formatINR(due - amt)} अभी भी लेने हैं`}
-          </Text>
-        ) : null}
-      </Field>
-      {kind !== "work" ? (
-        <PayModeField label={kind === "payment" ? "कैसे मिले" : "कैसे दिए"} value={payMode} onChange={setPayMode} />
+      {!initial && !fixedCustomerId && <CustomerPicker choice={choice} label={PICKER_LABEL[kind]} testPrefix="chip-cust" />}
+      {isPurchase ? (
+        <>
+          <ItemsField items={items} label="क्या लिया" placeholder={ui.placeholder} addLabel="और जोड़ें" />
+          <MoneyFields money={money} receivedLabel="अभी कितने दिए (₹)" hideTotal purchase />
+          {paidNow > 0 ? <PayModeField label="कैसे दिए" value={payMode} onChange={setPayMode} /> : null}
+        </>
+      ) : (
+        <>
+          <Field label="रकम (₹)">
+            {fullChip > 0 ? (
+              <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
+                <Chip
+                  label={`पूरे ${kind === "payment" ? "लेने" : "देने"} हैं ${formatINR(fullChip)}`}
+                  active={amt === fullChip}
+                  onPress={() => setAmount(String(fullChip))}
+                  tone={kind === "payment" ? colors.success : colors.warning}
+                  testID="entry-full-due"
+                />
+              </View>
+            ) : null}
+            <TextInput style={inputStyle} value={amount} onChangeText={setAmount} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-entry-amount" />
+            {fullChip > 0 && amt > 0 ? (
+              <Text style={[styles.hint, { color: amt >= fullChip ? colors.success : colors.error }]}>
+                {amt > fullChip
+                  ? `✔ हिसाब बराबर · ${formatINR(amt - fullChip)} ${kind === "payment" ? "एडवांस" : "ज़्यादा दिए"}`
+                  : amt === fullChip
+                  ? "✔ हिसाब बराबर"
+                  : `${formatINR(fullChip - amt)} अभी भी ${kind === "payment" ? "लेने" : "देने"} हैं`}
+              </Text>
+            ) : null}
+          </Field>
+          {kind !== "work" ? (
+            <PayModeField label={kind === "payment" ? "कैसे मिले" : "कैसे दिए"} value={payMode} onChange={setPayMode} />
+          ) : null}
+          <Field label={needsDescription ? "विवरण" : "किस लिए (वैकल्पिक)"}>
+            <TextInput style={inputStyle} value={description} onChangeText={setDescription} placeholder={ui.placeholder} placeholderTextColor={colors.muted} testID="input-entry-desc" />
+          </Field>
+        </>
+      )}
+      {later.length > 0 ? (
+        <Field label={isPurchase ? "बाद में चुकाए" : "वापस मिले"}>
+          {later.map((p) => (
+            <View key={p.id} style={styles.settleRow}>
+              <MaterialIcon name="check-circle" size={16} color={colors.success} />
+              <Text style={styles.settleText}>{formatINR(p.amount)} · {formatDate(p.date)}{p.mode === "online" ? " · ऑनलाइन" : ""}{p.notes ? ` · ${p.notes}` : ""}</Text>
+              <Pressable
+                hitSlop={8}
+                onPress={() => confirmAction("यह भुगतान हटाएँ?", `${formatINR(p.amount)} · ${formatDate(p.date)}`, "हटा दें", () => store.deleteEntry(p.id))}
+                testID={`del-settle-${p.id}`}
+              >
+                <MaterialIcon name="close" size={18} color={colors.muted} />
+              </Pressable>
+            </View>
+          ))}
+        </Field>
       ) : null}
-      <Field label={needsDescription ? "विवरण" : "किस लिए (वैकल्पिक)"}>
-        <TextInput style={inputStyle} value={description} onChangeText={setDescription} placeholder={ui.placeholder} placeholderTextColor={colors.muted} testID="input-entry-desc" />
-      </Field>
       <DateField label="तारीख" value={date} onChange={setDate} money testID="input-entry-date" />
       <Field label="नोट (वैकल्पिक)">
         <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-entry-notes" />
@@ -615,12 +832,11 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
     </SheetShell>
   );
 }
-
 function DeleteEntryLink({ entry, onDone }: { entry: Entry; onDone: () => void }) {
   const entries = useEntries().data ?? [];
   const jobs = useJobs().data ?? [];
   const remove = () => {
-    const extra = entry.type === "work" ? "\nइसके साथ लिखे मिले और काम कार्ड भी हटेंगे।" : entry.type === "given" ? "\nइसके वापस मिले पैसे भी हटेंगे।" : "";
+    const extra = entry.type === "work" ? "\nइसके साथ लिखे मिले और काम कार्ड भी हटेंगे।" : entry.type === "given" && !entry.linkId ? "\nइसके वापस मिले पैसे भी हटेंगे।" : entry.type === "purchase" ? "\nइसके चुकाए पैसे भी हटेंगे।" : "";
     confirmAction("एंट्री हटाएँ?", `${entry.description || ENTRY_UI[entry.type].title} · ${formatINR(entry.amount)}${extra}`, "हटा दें", () => {
       removeEntryWithLinks(entry, entries, jobs);
       onDone();
@@ -643,8 +859,8 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   const entries = useEntries().data ?? [];
   const jobs = useJobs().data ?? [];
   const later = entry ? settlementsFor(entry, entries).filter((p) => p.date !== entry.date) : [];
-  const [title, setTitle] = useState("");
   const money = useMoneyInput();
+  const items = useItems((sum) => money.setTotal(sum > 0 ? String(sum) : ""));
   const [payMode, setPayMode] = useState<"cash" | "online">("cash");
   const [govtFee, setGovtFee] = useState("");
   const [feeMode, setFeeMode] = useState<"online" | "cash">("online");
@@ -663,7 +879,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
 
   useEffect(() => {
     if (!entry) return;
-    setTitle(entry.description);
+    items.reset(itemsOf(entry));
     money.reset(String(entry.amount), String(((entry.paid ?? 0) || (legacyLink?.amount ?? 0)) + extraSum));
     setPayMode(entry.mode ?? "cash");
     setGovtFee(entry.fee ? String(entry.fee) : "");
@@ -677,13 +893,13 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   }, [entry?.id]);
 
   const amt = money.totalNum;
-  const valid = !!title.trim() && amt > 0;
+  const valid = items.titled && amt > 0;
 
   const save = () => {
     if (!entry || !valid) return;
     setSaving(true);
     try {
-      const t = title.trim();
+      const t = items.description;
       const taken = money.receivedNum;
       const feeNum = Math.max(parseFloat(govtFee) || 0, 0);
       store.updateEntry(entry.id, {
@@ -696,6 +912,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
         fee: feeNum,
         feeMode,
         notes: notes.trim(),
+        items: items.saved(),
       });
       extras.forEach((e) => store.deleteEntry(e.id));
       bookAdvance(entry.customerId, taken - amt, date, t, entry.id, payMode);
@@ -713,10 +930,8 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
 
   return (
     <SheetShell visible={!!entry} onClose={onClose} title="काम बदलें" testID="sheet-edit-work">
-      <Field label="क्या काम">
-        <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholderTextColor={colors.muted} testID="input-edit-work-title" />
-      </Field>
-      <MoneyFields money={money} receivedLabel="उस दिन मिले (₹)" />
+      <ItemsField items={items} label="क्या काम" placeholder="काम" addLabel="और काम" />
+      <MoneyFields money={money} receivedLabel="उस दिन मिले (₹)" hideTotal />
       {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
       <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
       {later.length > 0 ? (
@@ -828,7 +1043,7 @@ export function EditRecordSheet({ entry, job, onClose }: { entry?: Entry | null;
     if (!work) plainJob = job;
   } else if (entry) {
     if (entry.type === "work") work = entry;
-    else if (entry.type === "given") plainEntry = entry;
+    else if (entry.type === "given" || entry.type === "purchase") plainEntry = entry;
     else {
       // Same-day jama from old two-row cash records belongs to the work; later settlements are their own event.
       const w = workForPayment(entry, entries);
@@ -845,7 +1060,7 @@ export function EditRecordSheet({ entry, job, onClose }: { entry?: Entry | null;
   );
 }
 
-/** "पैसे मिले": records money received later against one udhaar work entry. */
+/** Settles one open row later: money received against work / given, or paid back against a purchase. */
 export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: () => void }) {
   const entries = useEntries().data ?? [];
   const [amount, setAmount] = useState("");
@@ -856,6 +1071,8 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
 
   const status = work ? buildLedger(entries.filter((e) => e.customerId === work.customerId)).work.get(work.id) : undefined;
   const remaining = status?.remaining ?? 0;
+  const payBack = work?.type === "purchase";
+  const word = payBack ? { done: "चुकाए", left: "देने हैं", how: "कैसे दिए", when: "कब दिए", much: "कितने दिए (₹)" } : { done: "मिल चुके", left: "लेने हैं", how: "कैसे मिले", when: "कब मिले", much: "कितने मिले (₹)" };
 
   useEffect(() => {
     if (!work) return;
@@ -868,29 +1085,38 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
   }, [work?.id]);
 
   const amt = parseFloat(amount) || 0;
-  const valid = !!work && amt > 0;
+  const valid = !!work && amt > 0 && (!payBack || amt <= remaining);
 
   const save = () => {
     if (!work || !valid) return;
     setSaving(true);
     try {
-      store.createEntry({ customerId: work.customerId, type: "payment", date, description: settleDescription(work.description || ENTRY_UI[work.type].title), amount: amt, mode: payMode, notes: notes.trim(), linkId: work.id });
+      store.createEntry({
+        customerId: work.customerId,
+        type: payBack ? "given" : "payment",
+        date,
+        description: settleDescription(work.description || ENTRY_UI[work.type].title),
+        amount: amt,
+        mode: payMode,
+        notes: notes.trim(),
+        linkId: work.id,
+      });
       onClose();
     } finally { setSaving(false); }
   };
 
   return (
-    <SheetShell visible={!!work} onClose={onClose} title={work?.type === "given" ? "पैसे वापस मिले" : "पैसे मिले"} testID="sheet-settle">
+    <SheetShell visible={!!work} onClose={onClose} title={payBack ? "पैसे चुकाए" : work?.type === "given" ? "पैसे वापस मिले" : "पैसे मिले"} testID="sheet-settle">
       {work ? (
         <View style={styles.settleSummary}>
           <Text style={styles.jobName}>{work.description || ENTRY_UI[work.type].title}</Text>
           <Text style={styles.hint}>
-            कुल {formatINR(work.amount)} · मिल चुके {formatINR(status?.received ?? 0)} ·{" "}
-            <Text style={{ color: colors.error, fontWeight: "700" }}>लेने हैं {formatINR(remaining)}</Text>
+            कुल {formatINR(work.amount)} · {word.done} {formatINR(status?.received ?? 0)} ·{" "}
+            <Text style={{ color: payBack ? colors.warning : colors.error, fontWeight: "700" }}>{word.left} {formatINR(remaining)}</Text>
           </Text>
         </View>
       ) : null}
-      <Field label="कितने मिले (₹)">
+      <Field label={word.much}>
         {remaining > 0 ? (
           <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
             <Chip label={`पूरा ${formatINR(remaining)}`} active={amt === remaining} onPress={() => setAmount(String(remaining))} tone={colors.success} testID="settle-full" />
@@ -898,19 +1124,27 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
           </View>
         ) : null}
         <TextInput style={inputStyle} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.muted} testID="input-settle-amount" />
-        {amt > 0 && amt < remaining ? <Text style={styles.hint}>{formatINR(remaining - amt)} अभी भी लेने हैं</Text> : null}
-        {amt > remaining && remaining > 0 ? <Text style={styles.hint}>{formatINR(amt - remaining)} ज़्यादा, एडवांस में जुड़ेगा</Text> : null}
+        {amt > 0 && amt < remaining ? <Text style={styles.hint}>{formatINR(remaining - amt)} अभी भी {word.left}</Text> : null}
+        {amt > remaining && remaining > 0 ? (
+          <Text style={[styles.hint, payBack && { color: colors.error }]}>{payBack ? `${formatINR(remaining)} से ज़्यादा नहीं` : `${formatINR(amt - remaining)} ज़्यादा, एडवांस में जुड़ेगा`}</Text>
+        ) : null}
       </Field>
-      <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} />
-      <DateField label="कब मिले" value={date} onChange={setDate} money testID="input-settle-date" />
+      <PayModeField label={word.how} value={payMode} onChange={setPayMode} />
+      <DateField label={word.when} value={date} onChange={setDate} money testID="input-settle-date" />
       <Field label="नोट (वैकल्पिक)">
         <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-settle-notes" />
       </Field>
-      <PrimaryButton label={amt >= remaining && remaining > 0 ? "चुकता करें ✔" : "मिले सेव करें"} color={colors.success} onPress={save} disabled={!valid} saving={saving} testID="save-settle-btn" />
+      <PrimaryButton
+        label={amt >= remaining && remaining > 0 ? "चुकता करें ✔" : payBack ? "चुकाए सेव करें" : "मिले सेव करें"}
+        color={colors.success}
+        onPress={save}
+        disabled={!valid}
+        saving={saving}
+        testID="save-settle-btn"
+      />
     </SheetShell>
   );
 }
-
 type JobMode = "now" | "later";
 
 export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, initialMode = "now" }: { visible: boolean; onClose: () => void; customerId?: string; initialMode?: JobMode }) {
@@ -918,6 +1152,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   const [mode, setMode] = useState<JobMode>(initialMode);
   const [title, setTitle] = useState("");
   const money = useMoneyInput();
+  const items = useItems((sum) => money.setTotal(sum > 0 ? String(sum) : ""));
   const [payMode, setPayMode] = useState<"cash" | "online">("cash");
   const [govtFee, setGovtFee] = useState("");
   const [feeMode, setFeeMode] = useState<"online" | "cash">("online");
@@ -932,6 +1167,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
     if (visible) {
       setMode(initialMode);
       setTitle("");
+      items.reset();
       money.reset("");
       setPayMode("cash");
       setGovtFee("");
@@ -945,16 +1181,22 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initialMode]);
 
+  const entries = useEntries().data ?? [];
+  const self = choice.isSelf;
+  const itemized = mode === "now" && !self;
+
   const switchMode = (m: JobMode) => {
     setMode(m);
     setDate(m === "now" ? todayISO() : todayISO(1));
+    if (m === "now") {
+      money.setTotal(items.total > 0 ? String(items.total) : "");
+      if (!items.titled && title.trim()) items.reset([{ title: title.trim(), amount: items.total }]);
+    } else if (!title.trim() && items.description) setTitle(items.description);
   };
 
-  const entries = useEntries().data ?? [];
-  const self = choice.isSelf;
   const amt = self ? 0 : money.totalNum;
   const advance = choice.existingId ? advanceOf(entries, choice.existingId) : 0;
-  const valid = choice.ready && !!title.trim();
+  const valid = choice.ready && (itemized ? items.titled : !!title.trim());
   const saveLabel = mode === "later" ? "आगे का काम जोड़ें" : self ? "सेव करें" : amt > 0 ? "काम सेव करें" : "मुफ़्त काम सेव करें";
 
   const save = async () => {
@@ -962,7 +1204,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
     setSaving(true);
     try {
       const customerId = await choice.resolve();
-      const t = title.trim();
+      const t = itemized ? items.description : title.trim();
       const feeNum = Math.max(parseFloat(govtFee) || 0, 0);
       if (mode === "now") {
         const entryId = recordWork({
@@ -975,6 +1217,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
           mode: payMode,
           fee: feeNum,
           feeMode,
+          items: itemized ? items.saved() : [],
         });
         store.createJob({ customerId, title: t, dueDate: date, status: "done", estimatedAmount: amt, notes: remark.trim(), entryId });
         if (remark.trim()) {
@@ -1013,12 +1256,16 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       </View>
 
       {!fixedCustomerId && <CustomerPicker choice={choice} allowSelf testPrefix="chip-job-cust" />}
-      <Field label="क्या काम">
-        <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholder={self ? "जैसे पेपर मँगवाना, बिजली बिल भरना" : mode === "now" ? "जैसे पासपोर्ट फोटो, फोटोकॉपी 20 पेज" : "जैसे शादी एलबम"} placeholderTextColor={colors.muted} testID="input-job-title" />
-      </Field>
+      {itemized ? (
+        <ItemsField items={items} label="क्या काम" placeholder="जैसे फॉर्म भरना" addLabel="और काम" />
+      ) : (
+        <Field label="क्या काम">
+          <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholder={self ? "जैसे पेपर मँगवाना, बिजली बिल भरना" : "जैसे शादी एलबम"} placeholderTextColor={colors.muted} testID="input-job-title" />
+        </Field>
+      )}
       {self ? null : mode === "now" ? (
         <>
-          <MoneyFields money={money} advance={advance} freeAllowed />
+          <MoneyFields money={money} advance={advance} freeAllowed hideTotal />
           {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
           <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
         </>
@@ -1244,5 +1491,16 @@ const styles = StyleSheet.create({
   dangerText: { color: colors.error, fontWeight: "600", fontSize: 14 },
   settleRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
   settleText: { flex: 1, fontSize: 14, color: colors.onSurface },
+  searchRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  contactBtn: { width: 48, height: 48, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
+  itemRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  itemNo: { width: 16, fontSize: 13, fontWeight: "700", color: colors.muted, textAlign: "center" },
+  itemAmtWrap: { width: 104, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, borderRadius: radius.md, paddingHorizontal: spacing.sm, minHeight: 48 },
+  itemRupee: { fontSize: 15, fontWeight: "700", color: colors.muted, marginRight: 2 },
+  itemAmt: { flex: 1, fontSize: 15, fontWeight: "700", color: colors.onSurface, paddingVertical: spacing.sm },
+  itemsFoot: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.sm },
+  addItemBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 6, paddingHorizontal: spacing.md, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandPrimary, borderStyle: "dashed" },
+  addItemText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
+  itemsTotal: { fontSize: 15, fontWeight: "800", color: colors.onSurface },
   settleSummary: { padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md },
 });

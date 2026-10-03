@@ -2,7 +2,7 @@ import { Platform } from "react-native";
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import type { Customer, Entry, Job, AepsTxn } from "@/src/lib/data";
-import { computeBalance } from "@/src/lib/data";
+import { computeBalance, entryDelta, itemsText } from "@/src/lib/data";
 import type { ShopProfile } from "@/src/context/AuthContext";
 import { formatDate, todayISO } from "@/src/lib/format";
 
@@ -65,9 +65,9 @@ export async function exportFullLedgerCsv(params: {
 
   sortedEntries.forEach((e, i) => {
     const custName = custMap.get(e.customerId) || "अन्य / नकद";
-    const typeLabel = e.type === "work" ? "काम" : e.type === "payment" ? "पैसे मिले" : "पैसे दिए";
+    const typeLabel = e.type === "work" ? "काम" : e.type === "payment" ? "पैसे मिले" : e.type === "purchase" ? "सामान / सेवा ली" : "पैसे दिए";
     const cashReceived = e.type === "work" ? (e.paid || 0) : e.type === "payment" ? e.amount : 0;
-    const due = e.type === "work" ? e.amount - (e.paid || 0) : e.type === "given" ? e.amount : 0;
+    const due = entryDelta(e);
 
     lines.push(
       [
@@ -75,7 +75,7 @@ export async function exportFullLedgerCsv(params: {
         e.date,
         custName,
         typeLabel,
-        e.description || "-",
+        itemsText(e) || "-",
         e.amount,
         cashReceived,
         due,

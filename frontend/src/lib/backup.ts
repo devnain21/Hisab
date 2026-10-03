@@ -1,7 +1,7 @@
 import { Platform } from "react-native";
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
-import { computeBalance, type AepsTxn, type Customer, type Entry, type Job } from "@/src/lib/data";
+import { computeBalance, itemsText, type AepsTxn, type Customer, type Entry, type Job } from "@/src/lib/data";
 import { AEPS_META, STATUS_META } from "@/src/lib/aeps";
 import { todayISO } from "@/src/lib/format";
 
@@ -22,8 +22,9 @@ export function buildBackupCsv(customers: Customer[], entries: Entry[], jobs: Jo
     .forEach((e) => {
       const c = byId.get(e.customerId);
       const paid = e.type === "work" ? e.paid ?? 0 : 0;
-      const kind = e.type === "payment" ? "मिले" : e.type === "given" ? "दिए" : paid >= e.amount ? "पूरे मिले" : paid > 0 ? "कुछ मिले" : "लेने हैं";
-      lines.push(row([e.date, c?.name ?? "", c?.phone ?? "", kind, e.description, e.amount, e.type === "work" ? paid : "", e.type === "work" ? e.amount - paid : "", e.notes]));
+      const kind = e.type === "payment" ? "मिले" : e.type === "given" ? "दिए" : e.type === "purchase" ? "सामान / सेवा ली" : paid >= e.amount ? "पूरे मिले" : paid > 0 ? "कुछ मिले" : "लेने हैं";
+      const due = e.type === "work" ? e.amount - paid : e.type === "purchase" ? -(e.amount - (e.paid ?? 0)) : "";
+      lines.push(row([e.date, c?.name ?? "", c?.phone ?? "", kind, itemsText(e), e.amount, e.type === "work" ? paid : "", due, e.notes]));
     });
 
   lines.push("");

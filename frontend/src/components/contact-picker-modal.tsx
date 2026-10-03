@@ -16,14 +16,53 @@ import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { formatPhone } from "@/src/lib/format";
 
+const cleanPhoneNumber = (raw: string): string => {
+  const digits = (raw || "").replace(/[^0-9]/g, "");
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+};
+
+/** System contact picker. null = cancelled / no permission, undefined = this phone has no picker. */
+async function pickNativeContact(): Promise<{ name: string; phone: string } | null | undefined> {
+  if (Platform.OS === "web") return undefined;
+  try {
+    const { status } = await Contacts.requestPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Contacts की अनुमति दें", "सेटिंग्स में जाकर Contacts चालू करें।");
+      return null;
+    }
+    const picked = await Contacts.presentContactPickerAsync();
+    if (!picked) return null;
+    const name = [picked.firstName, picked.lastName].filter(Boolean).join(" ") || picked.name || "";
+    const phone = cleanPhoneNumber(picked.phoneNumbers?.[0]?.number || "");
+    return name || phone ? { name, phone } : null;
+  } catch {
+    return undefined;
+  }
+}
+
+/** One tap: opens the phone's contact picker straight away, the in-app list only as a fallback. */
+export function useContactPicker(onSelect: (name: string, phone: string) => void) {
+  const [listOpen, setListOpen] = useState(false);
+  const open = async () => {
+    const res = await pickNativeContact();
+    if (res === undefined) setListOpen(true);
+    else if (res) onSelect(res.name, res.phone);
+  };
+  const modal = <ContactPickerModal visible={listOpen} onClose={() => setListOpen(false)} onSelect={onSelect} autoList />;
+  return { open, modal };
+}
+
 export function ContactPickerModal({
   visible,
   onClose,
   onSelect,
+  autoList,
 }: {
   visible: boolean;
   onClose: () => void;
   onSelect: (name: string, phone: string) => void;
+  /** Load the phone's contact list as soon as it opens (the system picker was not available). */
+  autoList?: boolean;
 }) {
   const [inputText, setInputText] = useState("");
   const [clipboardSnippet, setClipboardSnippet] = useState<{ name: string; phone: string } | null>(null);
@@ -48,11 +87,6 @@ export function ContactPickerModal({
     };
   };
 
-  const cleanPhoneNumber = (raw: string): string => {
-    const digits = (raw || "").replace(/[^0-9]/g, "");
-    return digits.length >= 10 ? digits.slice(-10) : digits;
-  };
-
   // Clipboard check
   useEffect(() => {
     if (visible && Platform.OS === "web" && typeof navigator !== "undefined" && navigator.clipboard?.readText) {
@@ -68,8 +102,7 @@ export function ContactPickerModal({
     }
   }, [visible]);
 
-  // Load contacts or present picker
-  const handleOpenPhoneContacts = async () => {
+  const loadContactList = async () => {
     try {
       setLoadingContacts(true);
       const { status } = await Contacts.requestPermissionsAsync();
@@ -77,25 +110,6 @@ export function ContactPickerModal({
         Alert.alert("Contacts की अनुमति दें", "सेटिंग्स में जाकर Contacts चालू करें।");
         return;
       }
-
-      if (Platform.OS !== "web") {
-        try {
-          const picked = await Contacts.presentContactPickerAsync();
-          // null means the user backed out of the system picker.
-          if (!picked) return;
-          const rawName = [picked.firstName, picked.lastName].filter(Boolean).join(" ") || picked.name || "";
-          const clean = cleanPhoneNumber(picked.phoneNumbers?.[0]?.number || "");
-          if (rawName || clean) {
-            onSelect(rawName, clean);
-            onClose();
-            return;
-          }
-        } catch {
-          // Some phones have no system contact picker; use the in-app list below.
-        }
-      }
-
-      // Fetch contacts to show in searchable list
       const { data } = await Contacts.getContactsAsync({
         fields: [Contacts.Fields.PhoneNumbers],
         sort: Contacts.SortTypes.FirstName,
@@ -119,6 +133,20 @@ export function ContactPickerModal({
       Alert.alert("संपर्क नहीं खुले", "नीचे नंबर पेस्ट करें।");
     } finally {
       setLoadingContacts(false);
+    }
+  };
+
+  useEffect(() => {
+    if (visible && autoList && Platform.OS !== "web" && !hasLoadedDeviceContacts) void loadContactList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, autoList]);
+
+  const handleOpenPhoneContacts = async () => {
+    const res = await pickNativeContact();
+    if (res === undefined) return loadContactList();
+    if (res) {
+      onSelect(res.name, res.phone);
+      onClose();
     }
   };
 
@@ -152,7 +180,7 @@ export function ContactPickerModal({
             </Pressable>
           </View>
 
-          {/* PRIMARY BUTTON: Direct Phone Contacts Picker */}
+          {hasLoadedDeviceContacts ? null : (
           <Pressable
             style={styles.primaryNativeBtn}
             onPress={handleOpenPhoneContacts}
@@ -168,6 +196,7 @@ export function ContactPickerModal({
               {loadingContacts ? "खुल रहा है..." : "फ़ोन के Contacts खोलें"}
             </Text>
           </Pressable>
+          )}
 
           {/* If device contacts loaded, show instant search bar and list */}
           {hasLoadedDeviceContacts ? (

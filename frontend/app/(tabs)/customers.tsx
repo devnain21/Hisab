@@ -8,12 +8,10 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
 import { entryDelta, useCustomers, useEntries } from "@/src/lib/data";
 import { formatDateShort, formatINR, formatPhone, initials, todayISO } from "@/src/lib/format";
-import { AddCustomerSheet } from "@/src/components/sheets";
 import { usePersona } from "@/src/lib/persona";
 
-type Filter = "due" | "all" | "clear";
-const FILTERS: Filter[] = ["due", "all", "clear"];
-const FILTER_LABEL: Record<Filter, string> = { due: "लेने हैं", all: "सभी", clear: "लेने नहीं" };
+type Filter = "due" | "owe" | "all";
+const FILTERS: Filter[] = ["due", "owe", "all"];
 
 export default function CustomersScreen() {
   const insets = useSafeAreaInsets();
@@ -26,7 +24,6 @@ export default function CustomersScreen() {
   const entries = entriesQ.data ?? [];
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("due");
-  const [open, setOpen] = useState(false);
   const today = todayISO();
 
   const customers = useMemo(
@@ -54,17 +51,19 @@ export default function CustomersScreen() {
   }, [customers, entries]);
 
   const counts = useMemo(
-    () => ({ due: all.filter((r) => r.due > 0).length, all: all.length, clear: all.filter((r) => r.due <= 0).length }),
+    () => ({ due: all.filter((r) => r.due > 0).length, owe: all.filter((r) => r.due < 0).length, all: all.length }),
     [all],
   );
   const totalDue = useMemo(() => all.reduce((s, r) => s + (r.due > 0 ? r.due : 0), 0), [all]);
+  const totalOwe = useMemo(() => all.reduce((s, r) => s + (r.due < 0 ? -r.due : 0), 0), [all]);
+  const filterLabel: Record<Filter, string> = { due: "उधारी", owe: isPersonal ? "देने हैं" : "एडवांस", all: "सभी" };
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return all
       .filter(({ c }) => !needle || c.name.toLowerCase().includes(needle) || c.phone.includes(needle) || c.address.toLowerCase().includes(needle))
-      .filter(({ due }) => (filter === "due" ? due > 0 : filter === "clear" ? due <= 0 : true))
-      .sort((a, b) => (filter === "due" ? b.due - a.due : a.c.name.localeCompare(b.c.name, "hi")));
+      .filter(({ due }) => (filter === "due" ? due > 0 : filter === "owe" ? due < 0 : true))
+      .sort((a, b) => (filter === "due" ? b.due - a.due : filter === "owe" ? a.due - b.due : a.c.name.localeCompare(b.c.name, "hi")));
   }, [all, q, filter]);
 
   const loading = customersQ.isLoading || entriesQ.isLoading;
@@ -94,14 +93,18 @@ export default function CustomersScreen() {
           {FILTERS.map((f) => (
             <Pressable key={f} onPress={() => setFilter(f)} style={[styles.chip, filter === f && styles.chipActive]} testID={`filter-${f}`}>
               <Text style={[styles.chipText, filter === f && { color: colors.onBrandPrimary }]}>
-                {FILTER_LABEL[f]} ({counts[f]})
+                {filterLabel[f]} ({counts[f]})
               </Text>
             </Pressable>
           ))}
         </ScrollView>
-        {!loading && filter === "due" && totalDue > 0 ? (
+        {!loading && filter !== "all" && (filter === "due" ? totalDue : totalOwe) > 0 ? (
           <Text style={styles.summary} testID="customers-summary">
-            कुल लेने हैं <Text style={{ color: colors.error, fontWeight: "800" }}>{formatINR(totalDue)}</Text> · {counts.due} {labels.customers}
+            {filter === "due" ? "कुल उधारी" : isPersonal ? "कुल देने हैं" : "कुल एडवांस"}{" "}
+            <Text style={{ color: filter === "due" ? colors.error : isPersonal ? colors.warning : colors.success, fontWeight: "800" }}>
+              {formatINR(filter === "due" ? totalDue : totalOwe)}
+            </Text>{" "}
+            · {counts[filter]} {labels.customers}
           </Text>
         ) : null}
       </View>
@@ -118,9 +121,9 @@ export default function CustomersScreen() {
             <View style={styles.empty} testID="customers-empty">
               <MaterialIcon name="account-group-outline" size={32} color={colors.muted} />
               <Text style={styles.emptyTitle}>
-                {q ? "कोई नहीं मिला" : customers.length === 0 ? (isPersonal ? "अभी कोई नहीं" : "अभी कोई ग्राहक नहीं") : filter === "due" ? "किसी से लेने नहीं हैं" : "इस सूची में कोई नहीं"}
+                {q ? "कोई नहीं मिला" : customers.length === 0 ? (isPersonal ? "अभी कोई नहीं" : "अभी कोई ग्राहक नहीं") : filter === "due" ? "किसी पर उधारी नहीं" : filter === "owe" ? (isPersonal ? "किसी को देने नहीं हैं" : "किसी का एडवांस नहीं") : "इस सूची में कोई नहीं"}
               </Text>
-              {!q && customers.length === 0 && <Text style={styles.emptySub}>{labels.newCustomer}</Text>}
+              {!q && customers.length === 0 && <Text style={styles.emptySub}>होम से एंट्री लिखते ही यहाँ दिखेंगे</Text>}
             </View>
           }
           renderItem={({ item, index }) => (
@@ -140,11 +143,11 @@ export default function CustomersScreen() {
                 ) : null}
               </View>
               <View style={{ alignItems: "flex-end" }}>
-                <Text style={[styles.dueAmt, { color: item.due > 0 ? colors.error : item.due < 0 ? (item.work ? colors.success : colors.warning) : colors.muted }]}>
+                <Text style={[styles.dueAmt, { color: item.due > 0 ? colors.error : item.due < 0 ? (isPersonal ? colors.warning : colors.success) : colors.muted }]}>
                   {item.due === 0 ? "क्लियर" : formatINR(Math.abs(item.due))}
                 </Text>
                 {item.due !== 0 ? (
-                  <Text style={styles.dueTag}>{item.due > 0 ? "लेने हैं" : item.work ? "एडवांस" : "देने हैं"}</Text>
+                  <Text style={styles.dueTag}>{item.due > 0 ? "उधारी" : isPersonal ? "देने हैं" : "एडवांस"}</Text>
                 ) : null}
               </View>
             </Pressable>
@@ -153,11 +156,6 @@ export default function CustomersScreen() {
         />
       )}
 
-      <Pressable style={[styles.fab, { bottom: insets.bottom + 16 }]} onPress={() => setOpen(true)} testID="add-customer-fab">
-        <MaterialIcon name="plus" size={26} color={colors.onBrandPrimary} />
-      </Pressable>
-
-      <AddCustomerSheet visible={open} onClose={() => setOpen(false)} />
     </View>
   );
 }

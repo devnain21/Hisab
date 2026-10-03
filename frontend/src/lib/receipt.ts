@@ -2,7 +2,7 @@ import { Platform } from "react-native";
 import { requireOptionalNativeModule } from "expo";
 import * as Sharing from "expo-sharing";
 import { File, Paths } from "expo-file-system";
-import type { Customer, Entry, AepsTxn } from "@/src/lib/data";
+import { itemsOf, type Customer, type Entry, type AepsTxn } from "@/src/lib/data";
 import type { Ledger, WorkStatus } from "@/src/lib/records";
 import { formatDate, formatDateShort, formatINR, formatPhone, todayISO } from "@/src/lib/format";
 import type { ShopProfile } from "@/src/context/AuthContext";
@@ -71,6 +71,10 @@ export function receiptDoc(
 ): ShareDoc {
   const shop = fullShop(shopIn);
   const lines: Line[] = [];
+  const purchase = entry.type === "purchase";
+  const given = entry.type === "given";
+  const fallback = entry.type === "payment" ? "भुगतान" : given ? "पैसे दिए" : purchase ? "सामान / सेवा" : "काम";
+  const items = itemsOf(entry, fallback);
   let itemDue = 0;
   let stamp: { text: string; tone: Tone };
 
@@ -78,42 +82,41 @@ export function receiptDoc(
     lines.push({ label: "पैसे मिले", value: formatINR(entry.amount), tone: "ok" });
     stamp = { text: "पैसे मिले", tone: "ok" };
   } else {
-    const received = status?.received ?? (entry.type === "work" ? entry.paid ?? 0 : 0);
-    itemDue = status?.remaining ?? entry.amount - received;
-    const given = entry.type === "given";
-    lines.push({ label: given ? "पैसे दिए" : "कुल रकम", value: formatINR(entry.amount) });
-    if (received > 0) lines.push({ label: given ? "वापस मिले" : "मिले", value: formatINR(received), tone: "ok" });
-    if (itemDue > 0) {
-      lines.push({ label: "लेने हैं", value: formatINR(itemDue), tone: "due" });
-      stamp = { text: "लेने हैं", tone: "due" };
-    } else {
-      stamp = { text: given ? "वापस मिले" : "पूरा भुगतान", tone: "ok" };
-    }
+    const received = status?.received ?? (entry.type === "work" || purchase ? entry.paid ?? 0 : 0);
+    itemDue = status?.remaining ?? Math.max(0, entry.amount - received);
+    lines.push({ label: given ? "पैसे दिए" : "कुल", value: formatINR(entry.amount) });
+    lines.push({ label: given ? "वापस मिले" : purchase ? "चुकाए" : "जमा", value: formatINR(received), tone: received > 0 ? "ok" : undefined });
+    lines.push({ label: purchase ? "देने बाकी" : "बाकी", value: formatINR(itemDue), tone: itemDue > 0 ? "due" : "ok" });
+    stamp = itemDue > 0 ? { text: purchase ? "देने बाकी" : "बाकी", tone: "due" } : { text: given ? "वापस मिले" : purchase ? "चुकता" : "पूरा भुगतान", tone: "ok" };
   }
-  const account = entry.type === "payment" || balance !== itemDue ? accountLine(balance, isCustomer) : undefined;
+  // The whole-account box only adds something when other rows change the picture.
+  const itemBalance = purchase ? -itemDue : itemDue;
+  const account = entry.type === "payment" || balance !== itemBalance ? accountLine(balance, isCustomer) : undefined;
 
   const no = entry.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase();
   const heading = entry.type === "work" ? "बिल" : "रसीद";
-  const item = entry.description || (entry.type === "payment" ? "भुगतान" : entry.type === "given" ? "पैसे दिए" : "काम");
+  const title = entry.description || fallback;
+  const many = items.length > 1;
 
   const message = [
     ...messageHead(shop),
     `${heading} नं. ${no} · ${formatDate(entry.date)}`,
     `${customer.persona === "personal" ? "नाम" : "ग्राहक"}: ${customer.name}`,
     "",
-    item,
+    ...items.map((it, i) => `${many ? `${i + 1}. ` : ""}${it.title} — ${formatINR(it.amount)}`),
+    "──────────",
     ...lines.map(lineText),
     ...(account ? ["", `*${account.label}: ${account.value}*`] : []),
     "",
     "धन्यवाद 🙏",
   ].join("\n");
 
-  const upiDue = itemDue > 0 ? itemDue : balance > 0 ? balance : 0;
+  const upiDue = purchase ? 0 : itemDue > 0 ? itemDue : balance > 0 ? balance : 0;
 
   const body = `
-  <table>
-    <tr><th>विवरण</th><th class="amt">रकम</th></tr>
-    <tr class="item"><td>${esc(item)}</td><td class="amt">${esc(formatINR(entry.amount))}</td></tr>
+  <table class="items">
+    <tr><th class="no">क्र.</th><th>विवरण</th><th class="amt">रकम</th></tr>
+    ${items.map((it, i) => `<tr class="item"><td class="no">${i + 1}</td><td>${esc(it.title)}</td><td class="amt">${esc(formatINR(it.amount))}</td></tr>`).join("")}
   </table>
   <table class="sum">${lines.map(sumRow).join("")}</table>
   ${account ? accountBox(account) : ""}
@@ -122,7 +125,7 @@ export function receiptDoc(
 
   return {
     heading,
-    title: item,
+    title,
     sub: `${customer.name} · ${formatDate(entry.date)} · नं. ${no}`,
     phone: customer.phone,
     lines,
@@ -132,7 +135,6 @@ export function receiptDoc(
     fileName: `${entry.type === "work" ? "Bill" : "Rasid"}-${no}-${fileSafe(customer.name)}.pdf`,
   };
 }
-
 /** Full account statement: every entry with a running balance, plus the items still unpaid. */
 export function statementDoc(
   entries: Entry[],
@@ -146,25 +148,28 @@ export function statementDoc(
   let running = 0;
   let debit = 0;
   let credit = 0;
+  // d raises what they owe, c lowers it. A purchase is goods they gave (c) less what we paid on the spot (d).
   const rows = sorted.map((e) => {
-    const d = e.type === "payment" ? 0 : e.amount;
-    const c = e.type === "work" ? e.paid ?? 0 : e.type === "payment" ? e.amount : 0;
+    const d = e.type === "payment" ? 0 : e.type === "purchase" ? e.paid ?? 0 : e.amount;
+    const c = e.type === "work" ? e.paid ?? 0 : e.type === "payment" || e.type === "purchase" ? e.amount : 0;
     running += d - c;
     debit += d;
     credit += c;
-    const text = e.description || (e.type === "payment" ? "पैसे मिले" : e.type === "given" ? "पैसे दिए" : "काम");
-    return { date: e.date, text, d, c, bal: running };
+    const text = e.description || (e.type === "payment" ? "पैसे मिले" : e.type === "given" ? "पैसे दिए" : e.type === "purchase" ? "सामान / सेवा ली" : "काम");
+    const sub = e.items && e.items.length > 1 ? e.items.map((i) => `${i.title} ${formatINR(i.amount)}`).join(" · ") : "";
+    return { date: e.date, text, sub, d, c, bal: running };
   });
   const balance = running;
   const account = accountLine(balance, isCustomer);
-  const open = sorted.filter((e) => e.type !== "payment" && (ledger.work.get(e.id)?.remaining ?? 0) > 0);
+  const open = sorted.filter((e) => e.type !== "payment" && e.type !== "purchase" && (ledger.work.get(e.id)?.remaining ?? 0) > 0);
+  const owed = sorted.filter((e) => e.type === "purchase" && (ledger.work.get(e.id)?.remaining ?? 0) > 0);
   const today = todayISO();
   const period = sorted.length ? `${formatDate(sorted[0].date)} – ${formatDate(sorted[sorted.length - 1].date)}` : "";
   const debitLabel = isCustomer ? "कुल काम" : "कुल दिए";
 
   const lines: Line[] = [
     { label: `${debitLabel} (${rows.length} एंट्री)`, value: formatINR(debit) },
-    { label: "कुल मिले", value: formatINR(credit), tone: "ok" },
+    { label: "कुल जमा", value: formatINR(credit), tone: "ok" },
   ];
 
   const message = [
@@ -177,6 +182,9 @@ export function statementDoc(
     ...(open.length
       ? ["", "जिन पर लेने हैं:", ...open.map((e) => `• ${formatDateShort(e.date)} ${e.description || "पैसे दिए"} — ${formatINR(ledger.work.get(e.id)!.remaining)}`)]
       : []),
+    ...(owed.length
+      ? ["", "जिनके देने हैं:", ...owed.map((e) => `• ${formatDateShort(e.date)} ${e.description || "सामान / सेवा"} — ${formatINR(ledger.work.get(e.id)!.remaining)}`)]
+      : []),
     "",
     "धन्यवाद 🙏",
   ].join("\n");
@@ -186,11 +194,11 @@ export function statementDoc(
   const body = `
   ${period ? `<div class="meta" style="margin-bottom:8px">अवधि: ${esc(period)}</div>` : ""}
   <table class="ledger">
-    <tr><th>तारीख</th><th>विवरण</th><th class="amt">रकम</th><th class="amt">मिले</th><th class="amt">हिसाब</th></tr>
+    <tr><th>तारीख</th><th>विवरण</th><th class="amt">रकम</th><th class="amt">जमा</th><th class="amt">हिसाब</th></tr>
     ${rows
       .map(
         (r) =>
-          `<tr><td class="nowrap">${esc(formatDateShort(r.date))}</td><td>${esc(r.text)}</td><td class="amt">${r.d ? esc(formatINR(r.d)) : ""}</td><td class="amt" style="color:${OK}">${r.c ? esc(formatINR(r.c)) : ""}</td><td class="amt">${balCell(r.bal)}</td></tr>`,
+          `<tr><td class="nowrap">${esc(formatDateShort(r.date))}</td><td>${esc(r.text)}${r.sub ? `<div class="sub">${esc(r.sub)}</div>` : ""}</td><td class="amt">${r.d ? esc(formatINR(r.d)) : ""}</td><td class="amt" style="color:${OK}">${r.c ? esc(formatINR(r.c)) : ""}</td><td class="amt">${balCell(r.bal)}</td></tr>`,
       )
       .join("")}
     <tr class="total"><td colspan="2">कुल</td><td class="amt">${esc(formatINR(debit))}</td><td class="amt" style="color:${OK}">${esc(formatINR(credit))}</td><td class="amt">${balCell(balance)}</td></tr>
@@ -302,6 +310,9 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
   td { padding: 8px; border-bottom: 1px solid #EEE; }
   td.nowrap { white-space: nowrap; }
   .item td { font-weight: 600; font-size: 14px; }
+  th.no, td.no { width: 32px; text-align: center; color: #777; }
+  .sub { color: #666; font-size: 11px; font-weight: 400; margin-top: 2px; }
+  .sum tr:first-child td { border-top: 1.5px solid #CCC; }
   .ledger td { padding: 6px 8px; font-size: 12px; }
   .ledger tr.total td { font-weight: 800; font-size: 13px; border-top: 2px solid #CCC; border-bottom: none; background: #FAFAFA; }
   .sum { margin-top: 6px; margin-left: auto; width: 65%; }

@@ -258,7 +258,7 @@ export default function Home() {
                     hint={`${stats.weOweCount} लोग`}
                     icon="account-arrow-right-outline"
                     tone="warn"
-                    onPress={() => go("/(tabs)/customers", { filter: "clear" })}
+                    onPress={() => go("/(tabs)/customers", { filter: "owe" })}
                     testID="stat-total-we-owe"
                   />
                   <StatCard
@@ -327,12 +327,6 @@ export default function Home() {
                 <MaterialIcon name={isPersonal ? "swap-vertical" : "briefcase-plus-outline"} size={17} color={colors.onBrandPrimary} />
                 <Text style={styles.primaryActionText}>{labels.newWork}</Text>
               </Pressable>
-              {isPersonal ? null : (
-                <Pressable style={styles.secondaryAction} onPress={() => setMoneySheet(true)} testID="quick-money">
-                  <MaterialIcon name="swap-vertical" size={17} color={colors.brandPrimary} />
-                  <Text style={styles.secondaryActionText}>मिले/दिए</Text>
-                </Pressable>
-              )}
               <Pressable style={styles.expenseAction} onPress={() => setExpenseSheet(true)} testID="quick-expense">
                 <MaterialIcon name="coffee-outline" size={17} color={colors.warning} />
                 <Text style={styles.expenseActionText}>खर्च</Text>
@@ -395,7 +389,7 @@ export default function Home() {
       </ScrollView>
 
       <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />
-      <AddEntrySheet visible={moneySheet} type={isPersonal ? "given" : "payment"} kinds={isPersonal ? ["given", "payment"] : ["payment", "given"]} onClose={() => setMoneySheet(false)} />
+      <AddEntrySheet visible={moneySheet} type={isPersonal ? "given" : "payment"} kinds={isPersonal ? ["given", "payment", "purchase"] : ["payment", "given"]} onClose={() => setMoneySheet(false)} />
       <AddExpenseSheet visible={expenseSheet} onClose={() => setExpenseSheet(false)} />
       <EditRecordSheet job={editingJob} onClose={() => setEditingJob(null)} />
       <VoiceEntryModal visible={voiceModal} onClose={() => setVoiceModal(false)} />

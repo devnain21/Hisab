@@ -47,16 +47,20 @@ export function saveAeps(id: string, t: AepsBody) {
 
 const bodyOf = ({ id: _id, createdAt: _c, ...body }: AepsTxn): AepsBody => body;
 
-/** The bank side went through today. Customer money not yet taken is taken in full now. */
+/**
+ * The bank side went through today. Money still owed by a linked customer goes on their khata;
+ * a walk-in without a customer is taken as paid in full.
+ */
 export function completeAeps(t: AepsTxn) {
   const d = todayISO();
-  const legDone = !!cashLegDate(t);
+  const leg = cashLegDate(t);
+  const owes = !leg && cashOf(t) === "in" && !!t.customerId;
   saveAeps(t.id, {
     ...bodyOf(t),
     status: "success",
     doneDate: d,
-    cashDate: cashLegDate(t) || d,
-    collected: !legDone && cashOf(t) === "in" ? t.amount : t.collected,
+    cashDate: leg || (owes ? "" : d),
+    collected: !leg && cashOf(t) === "in" ? (owes ? 0 : t.amount) : t.collected,
     dueDate: "",
   });
 }

@@ -119,7 +119,10 @@ export function foldLegacyCashRows(entries: Entry[]): number {
     const sameDay = settlementsFor(w, entries).filter((p) => p.date === w.date);
     const total = sameDay.reduce((s, p) => s + p.amount, 0);
     if (!sameDay.length || total > w.amount) continue;
-    store.updateEntry(w.id, { type: "work", date: w.date, description: w.description, amount: w.amount, notes: w.notes, paid: total });
+    // A row has one mode; mixed cash + online same-day payments stay as separate rows.
+    const mode = sameDay[0].mode ?? "cash";
+    if (sameDay.some((p) => (p.mode ?? "cash") !== mode)) continue;
+    store.updateEntry(w.id, { type: "work", date: w.date, description: w.description, amount: w.amount, notes: w.notes, paid: total, mode });
     sameDay.forEach((p) => store.deleteEntry(p.id));
     folded += 1;
   }

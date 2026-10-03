@@ -85,7 +85,7 @@ export default function CustomerDetail() {
   const totals = useMemo(() => {
     let work = 0, given = 0, got = 0, bought = 0, paidOut = 0;
     for (const e of entries) {
-      if (e.type === "work") { work += e.amount; got += e.paid ?? 0; }
+      if (e.type === "work" || e.type === "aeps") { work += e.amount; got += e.paid ?? 0; }
       else if (e.type === "purchase") { bought += e.amount; paidOut += e.paid ?? 0; }
       else if (isRepayment(e)) paidOut += e.amount;
       else if (e.type === "given") given += e.amount;

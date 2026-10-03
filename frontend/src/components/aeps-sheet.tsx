@@ -189,7 +189,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
 
   const picked = choice.recent.find((c) => c.id === choice.customerId);
   const name = picked ? picked.name : choice.query.trim();
-  const finalMobile = digits(picked ? picked.phone || mobile : choice.isNew ? choice.newPhone : "", 10);
+  const finalMobile = (picked ? picked.phone || mobile : choice.isNew ? choice.newPhone : "").replace(/\D/g, "").slice(-10);
 
   const patch = (key: string, partial: Partial<Line>) => setLines((rows) => rows.map((r) => (r.key === key ? { ...r, ...partial } : r)));
   const pickType = (key: string, type: AepsType) =>

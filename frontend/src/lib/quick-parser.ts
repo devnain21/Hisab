@@ -53,7 +53,8 @@ export function parseQuickText(input: string, customers: Customer[]): ParsedEntr
   let remainingText = text;
 
   // 1. Check Hindi words
-  for (const [phrase, val] of Object.entries(HINDI_NUMBER_WORDS)) {
+  // Longest phrase first, so "पांच सौ" wins over "सौ".
+  for (const [phrase, val] of Object.entries(HINDI_NUMBER_WORDS).sort((a, b) => b[0].length - a[0].length)) {
     if (remainingText.includes(phrase)) {
       amount = val;
       remainingText = remainingText.replace(phrase, " ");
@@ -91,17 +92,13 @@ export function parseQuickText(input: string, customers: Customer[]): ParsedEntr
 
   let matchedCustomer: Customer | null = null;
 
-  // Check against existing customers
-  for (const c of customers) {
-    const cLower = c.name.toLowerCase();
-    for (const token of cleanTokens) {
-      if (token.length >= 2 && (cLower === token.toLowerCase() || cLower.includes(token.toLowerCase()))) {
-        matchedCustomer = c;
-        break;
-      }
-    }
-    if (matchedCustomer) break;
-  }
+  // Whole-name or whole-word match first; a partial match only for longer words.
+  const tokens = cleanTokens.map((t) => t.toLowerCase());
+  matchedCustomer =
+    customers.find((c) => tokens.includes(c.name.toLowerCase())) ??
+    customers.find((c) => c.name.toLowerCase().split(/\s+/).some((w) => tokens.includes(w))) ??
+    customers.find((c) => tokens.some((t) => t.length >= 4 && c.name.toLowerCase().includes(t))) ??
+    null;
 
   let customerId = "";
   let customerName = "";

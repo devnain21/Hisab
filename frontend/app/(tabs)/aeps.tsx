@@ -11,6 +11,7 @@ import { Pressable } from "@/src/components/tap";
 import { SlowServerHint } from "@/src/components/slow-server-hint";
 import { AepsSheet } from "@/src/components/aeps-sheet";
 import { completeAeps } from "@/src/lib/aeps-due";
+import { confirmAction } from "@/src/lib/confirm";
 
 type Range = "today" | "yesterday" | "month" | "all";
 const RANGES: { key: Range; label: string }[] = [
@@ -49,7 +50,8 @@ export default function AepsScreen() {
     () => txns.filter((t) => t.status === "pending").sort((a, b) => (a.dueDate || a.date).localeCompare(b.dueDate || b.date)),
     [txns],
   );
-  const completeNow = (t: AepsTxn) => completeAeps(t);
+  const completeNow = (t: AepsTxn) =>
+    confirmAction("ट्रांज़ैक्शन हो गया?", `${t.customerName || AEPS_META[t.type].short} · ${formatINR(t.amount)}`, "हाँ, हो गया", () => completeAeps(t));
 
   const countByType = useMemo(() => {
     const m: Partial<Record<AepsType, number>> = {};

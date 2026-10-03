@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TextInput } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
@@ -21,14 +21,21 @@ export function AddExpenseSheet({
   const categories = isPersonal ? PERSONAL_EXPENSE_CATEGORIES : EXPENSE_CATEGORIES;
   const [amount, setAmount] = useState("");
   const [title, setTitle] = useState(categories[0]);
-
-  useEffect(() => {
-    if (visible) setTitle(categories[0]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, isPersonal]);
   const [mode, setMode] = useState<ExpenseMode>("cash");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const amountRef = useRef<TextInput>(null);
+  useEffect(() => {
+    if (!visible) return;
+    setTitle(categories[0]);
+    setAmount("");
+    setNotes("");
+    setMode("cash");
+    const t = setTimeout(() => amountRef.current?.focus(), 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, isPersonal]);
 
   const amtNum = parseFloat(amount) || 0;
 
@@ -77,7 +84,7 @@ export function AddExpenseSheet({
                 placeholderTextColor={colors.muted}
                 value={amount}
                 onChangeText={setAmount}
-                autoFocus
+                ref={amountRef}
                 testID="expense-amount-input"
               />
             </View>

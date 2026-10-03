@@ -57,9 +57,12 @@ export default function Home() {
       .filter((c): c is (typeof customers)[0] => Boolean(c));
   }, [recentIds, customers]);
 
+  const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? labels.customer : "खुद का काम");
+
   const searchResults = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
     if (!needle) return { customers: [], jobs: [] };
+    const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? "" : "");
     const matchedCusts = customers
       .filter((c) => c.name.toLowerCase().includes(needle) || c.phone.includes(needle))
       .slice(0, 5)
@@ -108,7 +111,6 @@ export default function Home() {
 
   const loading = customersQ.isLoading || entriesQ.isLoading || jobsQ.isLoading;
   const loadFailed = !loading && (customersQ.isError || entriesQ.isError) && customersQ.data == null;
-  const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? labels.customer : "खुद का काम");
   // The nonce makes the target tab re-apply the filter even if it was already open with it.
   const go = (pathname: string, params: Record<string, string>) =>
     router.navigate({ pathname: pathname as any, params: { ...params, t: String(Date.now()) } });
@@ -276,7 +278,7 @@ export default function Home() {
                     hint={`${todayExpenses.expenses.length} एंट्री`}
                     icon="coffee-outline"
                     tone="ok"
-                    onPress={() => setExpenseSheet(true)}
+                    onPress={() => router.push({ pathname: "/day", params: { type: "expense" } })}
                     testID="stat-today-expense"
                   />
                 </>

@@ -32,12 +32,29 @@ function useKeyboardOverlap(ref: React.RefObject<View | null>) {
     if (Platform.OS === "web") return;
     const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    let keyboardTop: number | null = null;
+    let timers: ReturnType<typeof setTimeout>[] = [];
+    const measure = () => {
+      const top = keyboardTop;
+      if (top === null) return;
+      ref.current?.measureInWindow((_x, y, _w, h) => {
+        if (h > 0 && keyboardTop !== null) setOverlap(Math.max(0, y + h - top));
+      });
+    };
+    // A sheet that focuses a field while it is still sliding in measures mid-animation; measure again once it settles.
     const show = Keyboard.addListener(showEvt, (e) => {
-      const keyboardTop = e.endCoordinates.screenY;
-      ref.current?.measureInWindow((_x, y, _w, h) => setOverlap(Math.max(0, y + h - keyboardTop)));
+      keyboardTop = e.endCoordinates.screenY;
+      timers.forEach(clearTimeout);
+      measure();
+      timers = [setTimeout(measure, 200), setTimeout(measure, 500)];
     });
-    const hide = Keyboard.addListener(hideEvt, () => setOverlap(0));
+    const hide = Keyboard.addListener(hideEvt, () => {
+      keyboardTop = null;
+      timers.forEach(clearTimeout);
+      setOverlap(0);
+    });
     return () => {
+      timers.forEach(clearTimeout);
       show.remove();
       hide.remove();
     };
@@ -671,7 +688,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
         <DangerLink
           label="यह खाता हटाएँ"
           testID="delete-customer-link"
-          onPress={() => confirmAction(`${name || "यह खाता"} हटाएँ?`, "इनका पूरा खाता मिट जाएगा।", "हटा दें", () => { onDelete(); onClose(); })}
+          onPress={() => confirmAction(`${name || "यह खाता"} हटाएँ?`, "इनकी सारी एंट्री भी मिट जाएँगी, और पुराने दिनों का गल्ला / बैंक हिसाब बदल जाएगा।", "हटा दें", () => { onDelete(); onClose(); })}
         />
       ) : null}
       {contacts.modal}

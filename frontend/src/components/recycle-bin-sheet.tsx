@@ -5,6 +5,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { clearAllTrash, getTrashList, restoreTrashItem, subscribeTrash, type TrashItem } from "@/src/lib/trash";
 import { formatDateShort } from "@/src/lib/format";
+import { confirmAction } from "@/src/lib/confirm";
 
 export function RecycleBinModal({
   visible,
@@ -31,10 +32,11 @@ export function RecycleBinModal({
     load();
   };
 
-  const handleClear = async () => {
-    await clearAllTrash();
-    load();
-  };
+  const handleClear = () =>
+    confirmAction("कचरा पेटी खाली करें?", `${items.length} रिकॉर्ड हमेशा के लिए मिट जाएँगे।`, "खाली करें", async () => {
+      await clearAllTrash();
+      load();
+    });
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
@@ -43,7 +45,7 @@ export function RecycleBinModal({
           <View style={styles.header}>
             <View>
               <Text style={styles.title}>🗑️ कचरा पेटी (Recycle Bin)</Text>
-              <Text style={styles.subtitle}>गलती से हटाए गए रिकॉर्ड 30 दिन तक यहाँ रहते हैं</Text>
+              <Text style={styles.subtitle}>हाल में हटाए गए आख़िरी 50 रिकॉर्ड (इसी फ़ोन पर)</Text>
             </View>
             <Pressable onPress={onClose} hitSlop={12} testID="trash-close">
               <MaterialIcon name="close" size={24} color={colors.onSurface} />

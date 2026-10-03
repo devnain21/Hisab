@@ -12,6 +12,7 @@ import { EditRecordSheet } from "@/src/components/sheets";
 import { AEPS_META, bankLegDate, cashLegDate, moneyLines } from "@/src/lib/aeps";
 import { deleteExpense, expensePersona } from "@/src/lib/expenses";
 import { AddExpenseSheet } from "@/src/components/expense-sheet";
+import { confirmAction } from "@/src/lib/confirm";
 import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet";
 import { PocketCard } from "@/src/components/pocket-card";
 import { DayCloseModal } from "@/src/components/day-close-modal";
@@ -20,7 +21,7 @@ import { usePersona } from "@/src/lib/persona";
 import { accountKey, computeFlows, pocketNet, useMoneyBook } from "@/src/lib/wallet";
 import type { DaySummaryData } from "@/src/lib/day-close";
 
-type Kind = "work" | "payment" | "drawer";
+type Kind = "work" | "payment" | "expense" | "drawer";
 
 function shiftDay(iso: string, days: number): string {
   const d = new Date(`${iso}T12:00:00`);
@@ -30,7 +31,7 @@ function shiftDay(iso: string, days: number): string {
 }
 
 export default function DayScreen() {
-  const params = useLocalSearchParams<{ type?: "work" | "payment" | "drawer"; date?: string }>();
+  const params = useLocalSearchParams<{ type?: Kind; date?: string }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
@@ -72,7 +73,7 @@ export default function DayScreen() {
       : e.type === "payment" || (e.type === "work" && (e.paid ?? 0) > 0);
   const amountFor = (e: Entry, k: "work" | "payment") => (k === "work" || e.type === "payment" ? e.amount : e.paid ?? 0);
   const rows = useMemo(
-    () => (kind === "drawer" ? [] : dayEntries.filter((e) => inKind(e, kind)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))),
+    () => (kind === "drawer" || kind === "expense" ? [] : dayEntries.filter((e) => inKind(e, kind)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dayEntries, kind, isPersonal]
   );
@@ -97,7 +98,19 @@ export default function DayScreen() {
   const paymentCash = dayPayments.filter((e) => e.mode !== "online").reduce((s, e) => s + e.amount, 0);
   const paymentOnline = dayPayments.filter((e) => e.mode === "online").reduce((s, e) => s + e.amount, 0);
 
-  const dayExpenses = useMemo(() => book.expenses.filter((x) => x.date === date && expensePersona(x) === persona), [book.expenses, date, persona]);
+  const dayExpenses = useMemo(
+    () => book.expenses.filter((x) => x.date === date && expensePersona(x) === persona).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [book.expenses, date, persona],
+  );
+  const expenseTotal = dayExpenses.reduce((s, x) => s + x.amount, 0);
+  const expenseCashTotal = dayExpenses.filter((x) => x.mode === "cash").reduce((s, x) => s + x.amount, 0);
+  const expenseByTitle = useMemo(() => {
+    const m = new Map<string, number>();
+    dayExpenses.forEach((x) => m.set(x.title, (m.get(x.title) ?? 0) + x.amount));
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [dayExpenses]);
+  const removeExpense = (id: string, title: string, amount: number) =>
+    confirmAction("खर्च हटाएँ?", `${title} · ${formatINR(amount)}`, "हटा दें", () => deleteExpense(id));
   const dayAeps = useMemo(
     () =>
       isPersonal
@@ -175,7 +188,7 @@ export default function DayScreen() {
             style={[styles.segmentBtn, kind === "work" && styles.segmentActive]}
             testID="day-kind-work"
           >
-            <Text style={[styles.segmentText, kind === "work" && { color: colors.onBrandPrimary }]}>
+            <Text style={[styles.segmentText, kind === "work" && { color: colors.onBrandPrimary }]} numberOfLines={1} adjustsFontSizeToFit>
               {isPersonal ? "दिए" : "काम"} · {formatINR(sum("work"))}
             </Text>
           </Pressable>
@@ -184,8 +197,17 @@ export default function DayScreen() {
             style={[styles.segmentBtn, kind === "payment" && styles.segmentActive]}
             testID="day-kind-payment"
           >
-            <Text style={[styles.segmentText, kind === "payment" && { color: colors.onBrandPrimary }]}>
+            <Text style={[styles.segmentText, kind === "payment" && { color: colors.onBrandPrimary }]} numberOfLines={1} adjustsFontSizeToFit>
               मिले · {formatINR(sum("payment"))}
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setKind("expense")}
+            style={[styles.segmentBtn, kind === "expense" && styles.segmentActive]}
+            testID="day-kind-expense"
+          >
+            <Text style={[styles.segmentText, kind === "expense" && { color: colors.onBrandPrimary }]} numberOfLines={1} adjustsFontSizeToFit>
+              खर्च · {formatINR(expenseTotal)}
             </Text>
           </Pressable>
           <Pressable
@@ -193,7 +215,7 @@ export default function DayScreen() {
             style={[styles.segmentBtn, kind === "drawer" && styles.segmentActive]}
             testID="day-kind-drawer"
           >
-            <Text style={[styles.segmentText, kind === "drawer" && { color: colors.onBrandPrimary }]}>
+            <Text style={[styles.segmentText, kind === "drawer" && { color: colors.onBrandPrimary }]} numberOfLines={1} adjustsFontSizeToFit>
               {labels.cash} व बैंक
             </Text>
           </Pressable>
@@ -275,10 +297,75 @@ export default function DayScreen() {
               ) : null}
             </View>
           </View>
+        ) : kind === "expense" ? (
+          <View style={styles.totalCard}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", width: "100%" }}>
+              <Text style={styles.totalLabel}>कुल खर्च ({dayExpenses.length})</Text>
+              <Text style={[styles.totalValue, { color: colors.error, fontSize: 24, marginTop: 0 }]}>{formatINR(expenseTotal)}</Text>
+            </View>
+            {expenseTotal > 0 ? (
+              <View style={[styles.workPillsRow, { alignSelf: "flex-start" }]}>
+                {expenseCashTotal > 0 ? (
+                  <View style={[styles.miniPill, { backgroundColor: colors.successSoft }]}>
+                    <Text style={[styles.miniPillText, { color: colors.success }]}>{labels.cash}: {formatINR(expenseCashTotal)}</Text>
+                  </View>
+                ) : null}
+                {expenseTotal - expenseCashTotal > 0 ? (
+                  <View style={[styles.miniPill, { backgroundColor: colors.infoSoft }]}>
+                    <Text style={[styles.miniPillText, { color: colors.info }]}>बैंक: {formatINR(expenseTotal - expenseCashTotal)}</Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+          </View>
         ) : null}
       </View>
 
-      {kind === "drawer" ? (
+      {kind === "expense" ? (
+        <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}>
+          <Pressable style={[styles.gallaActionBtn, { marginBottom: spacing.lg }]} onPress={() => setExpenseSheet(true)} testID="day-add-expense">
+            <MaterialIcon name="plus" size={18} color={colors.warning} />
+            <Text style={styles.gallaActionText}>खर्च जोड़ें</Text>
+          </Pressable>
+
+          {expenseByTitle.length > 1 ? (
+            <View style={styles.breakdown}>
+              {expenseByTitle.map(([title, amt]) => (
+                <View key={title} style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel} numberOfLines={1}>{title}</Text>
+                  <View style={styles.breakdownBarWrap}>
+                    <View style={[styles.breakdownBar, { width: `${Math.max(4, (amt / expenseTotal) * 100)}%` }]} />
+                  </View>
+                  <Text style={styles.breakdownAmt}>{formatINR(amt)}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          {dayExpenses.length === 0 ? (
+            <View style={styles.empty}>
+              <MaterialIcon name="coffee-outline" size={32} color={colors.muted} />
+              <Text style={styles.emptyTitle}>इस दिन कोई खर्च नहीं</Text>
+            </View>
+          ) : (
+            dayExpenses.map((exp) => (
+              <View key={exp.id} style={styles.expenseRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.expenseTitle}>{exp.title}</Text>
+                  <Text style={styles.expenseSub}>
+                    {exp.mode === "cash" ? labels.cash : "बैंक"}
+                    {exp.notes ? ` · ${exp.notes}` : ""}
+                  </Text>
+                </View>
+                <Text style={[styles.expenseAmt, { color: colors.error }]}>-{formatINR(exp.amount)}</Text>
+                <Pressable onPress={() => removeExpense(exp.id, exp.title, exp.amount)} hitSlop={8} testID={`day-expense-del-${exp.id}`}>
+                  <MaterialIcon name="delete-outline" size={18} color={colors.muted} />
+                </Pressable>
+              </View>
+            ))
+          )}
+        </ScrollView>
+      ) : kind === "drawer" ? (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}>
           <View style={styles.quickGallaRow}>
             <Pressable style={styles.gallaActionBtn} onPress={() => setExpenseSheet(true)} testID="open-expense-btn">
@@ -358,7 +445,7 @@ export default function DayScreen() {
                     </Text>
                   </View>
                   <Text style={[styles.expenseAmt, { color: colors.error }]}>-{formatINR(exp.amount)}</Text>
-                  <Pressable onPress={() => deleteExpense(exp.id)} hitSlop={8}>
+                  <Pressable onPress={() => removeExpense(exp.id, exp.title, exp.amount)} hitSlop={8}>
                     <MaterialIcon name="delete-outline" size={18} color={colors.muted} />
                   </Pressable>
                 </View>
@@ -469,7 +556,13 @@ const styles = StyleSheet.create({
   segment: { flexDirection: "row", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: 4, marginTop: spacing.lg, borderWidth: 1, borderColor: colors.border },
   segmentBtn: { flex: 1, alignItems: "center", paddingVertical: 10, borderRadius: radius.sm },
   segmentActive: { backgroundColor: colors.brandPrimary },
-  segmentText: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
+  segmentText: { fontSize: 12, fontWeight: "700", color: colors.onSurface, paddingHorizontal: 2 },
+  breakdown: { marginBottom: spacing.lg, padding: spacing.md, gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  breakdownRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  breakdownLabel: { width: 92, fontSize: 12, fontWeight: "600", color: colors.onSurface },
+  breakdownBarWrap: { flex: 1, height: 8, borderRadius: 4, backgroundColor: colors.border, overflow: "hidden" },
+  breakdownBar: { height: 8, borderRadius: 4, backgroundColor: colors.warning },
+  breakdownAmt: { minWidth: 64, textAlign: "right", fontSize: 12, fontWeight: "800", color: colors.onSurface },
   totalCard: { marginTop: spacing.md, padding: spacing.lg, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center" },
   totalLabel: { fontSize: 12, color: colors.muted, fontWeight: "600" },
   totalValue: { fontSize: 28, fontWeight: "800", marginTop: 2 },

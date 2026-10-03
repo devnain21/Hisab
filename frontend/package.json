@@ -10,7 +10,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "ota": "npx eas-cli@latest update --channel production --environment production --platform android"
+    "ota": "npx eas-cli@latest update --channel production --environment production --platform android --clear-cache --message \"Hisab update\""
   },
   "dependencies": {
     "@expo/metro-runtime": "57.0.16",

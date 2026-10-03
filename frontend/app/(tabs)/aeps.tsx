@@ -8,7 +8,7 @@ import { useAeps, type AepsTxn, type AepsType } from "@/src/lib/data";
 import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, bankLegDate, cashLegDate, cashOf, commissionDate, isLater } from "@/src/lib/aeps";
 import { cleanAmountInput, formatDateShort, formatINR, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
-import { SlowServerHint } from "@/src/components/slow-server-hint";
+import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
 import { AepsSheet } from "@/src/components/aeps-sheet";
 import { completeAeps } from "@/src/lib/aeps-due";
 import { confirmAction } from "@/src/lib/confirm";
@@ -25,6 +25,14 @@ const RANGES: { key: Range; label: string }[] = [
   { key: "custom", label: "तारीख" },
 ];
 const BANK_KEY = accountKey("business", "bank") as "business:bank";
+
+/** "HH:MM" for ordering within a day; rows saved without a time fall back to when they were written. */
+function clockOf(t: AepsTxn): string {
+  if (t.time) return t.time;
+  const d = new Date(t.createdAt);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
 
 export default function AepsScreen() {
   const insets = useSafeAreaInsets();
@@ -135,7 +143,7 @@ export default function AepsScreen() {
           (t.upiId ?? "").toLowerCase().includes(needle) ||
           t.beneficiaryName.toLowerCase().includes(needle),
       )
-      .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : (b.time || b.createdAt).localeCompare(a.time || a.createdAt)));
+      .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : clockOf(b).localeCompare(clockOf(a)) || b.createdAt.localeCompare(a.createdAt)));
   }, [inRange, type, search, typesInRange.length]);
 
   const totals = useMemo(() => aepsTotals(txns, inRangeDate), [txns, inRangeDate]);
@@ -260,10 +268,12 @@ export default function AepsScreen() {
           keyExtractor={(t) => t.id}
           keyboardShouldPersistTaps="handled"
           ListHeaderComponent={header}
-          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl * 2, gap: spacing.sm }}
+          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: Math.max(spacing.xxxl * 2, insets.bottom + 104), gap: spacing.sm }}
           ListEmptyComponent={
             q.isLoading ? (
               <View style={{ marginTop: spacing.xl, alignItems: "center" }}><ActivityIndicator color={colors.brandPrimary} /><SlowServerHint /></View>
+            ) : q.isError && q.data == null ? (
+              <DataLoadError onRetry={() => q.refetch()} />
             ) :
             <View style={styles.empty} testID="aeps-empty">
               <MaterialIcon name="fingerprint" size={36} color={colors.muted} />
@@ -288,7 +298,9 @@ export default function AepsScreen() {
                   {detail ? <Text style={styles.meta} numberOfLines={1}>{detail}</Text> : null}
                 </View>
                 <View style={{ alignItems: "flex-end", gap: 4 }}>
-                  {t.amount > 0 ? <Text style={[styles.amount, { color: cashOf(t) === "out" ? colors.error : cashOf(t) === "in" ? colors.success : colors.onSurface }]}>{formatINR(t.amount)}</Text> : null}
+                  {t.type === "balance" ? (
+                    t.amount > 0 ? <Text style={styles.meta} numberOfLines={1}>खाते में {formatINR(t.amount)}</Text> : null
+                  ) : t.amount > 0 ? <Text style={[styles.amount, { color: cashOf(t) === "out" ? colors.error : cashOf(t) === "in" ? colors.success : colors.onSurface }]}>{formatINR(t.amount)}</Text> : null}
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                     <MaterialIcon name="file-pdf-box" size={16} color={colors.brandPrimary} />
                     {t.status !== "success" ? (

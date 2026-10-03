@@ -3,7 +3,8 @@ import { View, Text, StyleSheet, FlatList, Modal } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
-import { clearAllTrash, getTrashList, restoreTrashItem, subscribeTrash, type TrashItem } from "@/src/lib/trash";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { clearAllTrash, describeTrash, getTrashList, restoreTrashItem, subscribeTrash, type TrashItem } from "@/src/lib/trash";
 import { formatDateShort } from "@/src/lib/format";
 import { confirmAction, showNotice } from "@/src/lib/confirm";
 
@@ -15,6 +16,7 @@ export function RecycleBinModal({
   onClose: () => void;
 }) {
   const [items, setItems] = useState<TrashItem[]>([]);
+  const insets = useSafeAreaInsets();
 
   const load = () => {
     getTrashList().then(setItems);
@@ -44,8 +46,8 @@ export function RecycleBinModal({
       <View style={styles.overlay}>
         <View style={styles.sheet}>
           <View style={styles.header}>
-            <View>
-              <Text style={styles.title}>🗑️ कचरा पेटी (Recycle Bin)</Text>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.title}>🗑️ कचरा पेटी</Text>
               <Text style={styles.subtitle}>हाल में हटाए गए आख़िरी 50 रिकॉर्ड (इसी फ़ोन पर)</Text>
             </View>
             <Pressable onPress={onClose} hitSlop={12} testID="trash-close">
@@ -72,8 +74,9 @@ export function RecycleBinModal({
             <FlatList
               data={items}
               keyExtractor={(item) => item.id}
-              contentContainerStyle={{ paddingBottom: spacing.xl }}
+              contentContainerStyle={{ paddingBottom: spacing.xl + insets.bottom }}
               renderItem={({ item }) => {
+                const label = describeTrash(item);
                 const collBadge =
                   item.coll === "customers"
                     ? { label: "खाता", color: "#1D4ED8" }
@@ -89,15 +92,15 @@ export function RecycleBinModal({
 
                 return (
                   <View style={styles.card}>
-                    <View style={{ flex: 1 }}>
+                    <View style={{ flex: 1, minWidth: 0, marginRight: spacing.sm }}>
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }}>
                         <View style={[styles.badge, { backgroundColor: collBadge.color + "18" }]}>
                           <Text style={[styles.badgeText, { color: collBadge.color }]}>{collBadge.label}</Text>
                         </View>
                         <Text style={styles.dateText}>{formatDateShort(item.deletedAt.slice(0, 10))}</Text>
                       </View>
-                      <Text style={styles.itemTitle} numberOfLines={1}>{item.title}</Text>
-                      {item.subtitle ? <Text style={styles.itemSub}>{item.subtitle}</Text> : null}
+                      <Text style={styles.itemTitle} numberOfLines={1}>{label.title}</Text>
+                      {label.subtitle ? <Text style={styles.itemSub}>{label.subtitle}</Text> : null}
                     </View>
 
                     <Pressable
@@ -136,6 +139,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
+    gap: spacing.md,
     marginBottom: spacing.md,
   },
   title: {

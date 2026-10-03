@@ -61,6 +61,23 @@ export function bundleFor(customerId: string): CustomerBundle {
   };
 }
 
+const ENTRY_KIND: Record<string, { title: string; amount: string }> = {
+  work: { title: "काम", amount: "रकम" },
+  payment: { title: "भुगतान", amount: "मिले" },
+  given: { title: "दिए", amount: "दिए" },
+  purchase: { title: "सामान / सेवा", amount: "सामान" },
+  aeps: { title: "काउंटर सेवा", amount: "रकम" },
+};
+
+/** Labels are rebuilt from the saved record so items binned by older versions read right too. */
+export function describeTrash(item: TrashItem): { title: string; subtitle: string } {
+  try {
+    return describe(item.coll, item.data ?? {}, item.bundle);
+  } catch {
+    return { title: item.title, subtitle: item.subtitle };
+  }
+}
+
 function describe(coll: TrashColl, data: Record<string, any>, bundle?: CustomerBundle) {
   if (coll === "customers") {
     const parts = [data.phone ? `फ़ोन: ${data.phone}` : "खाता"];
@@ -69,9 +86,10 @@ function describe(coll: TrashColl, data: Record<string, any>, bundle?: CustomerB
     return { title: data.name || "खाता", subtitle: parts.join(" · ") };
   }
   if (coll === "entries") {
+    const kind = ENTRY_KIND[data.type as string] ?? { title: "काम", amount: "रकम" };
     return {
-      title: data.description || (data.type === "payment" ? "भुगतान" : "काम"),
-      subtitle: `${data.type === "payment" ? "मिले" : "रकम"}: ${formatINR(data.amount || 0)} (${data.date || ""})`,
+      title: data.description || kind.title,
+      subtitle: `${kind.amount}: ${formatINR(data.amount || 0)} (${data.date || ""})`,
     };
   }
   if (coll === "jobs") {

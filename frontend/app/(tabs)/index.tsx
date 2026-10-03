@@ -118,7 +118,8 @@ export default function Home() {
       dueCustomers: dues.length,
       totalWeOwe,
       weOweCount: weOwe.length,
-      todayWork: todayWork.reduce((n, e) => n + e.amount, 0),
+      // An unpaid purchase is a debt, not money handed over today.
+      todayWork: todayWork.reduce((n, e) => n + (e.type === "purchase" ? e.paid ?? 0 : e.amount), 0),
       todayWorkCount: todayWork.length,
       todayPay: todayPay.reduce((n, e) => n + got(e), 0),
       todayPayCount: todayPay.length,
@@ -142,7 +143,9 @@ export default function Home() {
   );
 
   const loading = customersQ.isLoading || entriesQ.isLoading || jobsQ.isLoading;
-  const loadFailed = !loading && (customersQ.isError || entriesQ.isError) && customersQ.data == null;
+  const loadFailed =
+    !loading &&
+    ((customersQ.isError && customersQ.data == null) || (entriesQ.isError && entriesQ.data == null) || (jobsQ.isError && jobsQ.data == null));
   // The nonce makes the target tab re-apply the filter even if it was already open with it.
   const go = (pathname: string, params: Record<string, string>) =>
     router.navigate({ pathname: pathname as any, params: { ...params, t: String(Date.now()) } });
@@ -366,13 +369,13 @@ export default function Home() {
               <View style={styles.walletCell}>
                 <MaterialIcon name="cash" size={16} color={colors.success} />
                 <Text style={styles.walletLabel}>{labels.cash}</Text>
-                <Text style={[styles.walletValue, cashBal < 0 && { color: colors.error }]}>{formatINR(cashBal)}</Text>
+                <Text style={[styles.walletValue, cashBal < 0 && { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{formatINR(cashBal)}</Text>
               </View>
               <View style={styles.walletDivider} />
               <View style={styles.walletCell}>
                 <MaterialIcon name="bank-outline" size={16} color={colors.info} />
                 <Text style={styles.walletLabel}>बैंक</Text>
-                <Text style={[styles.walletValue, bankBal < 0 && { color: colors.error }]}>{formatINR(bankBal)}</Text>
+                <Text style={[styles.walletValue, bankBal < 0 && { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{formatINR(bankBal)}</Text>
               </View>
               <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
             </Pressable>
@@ -530,7 +533,7 @@ const styles = StyleSheet.create({
   statHint: { fontSize: 12, color: colors.muted, flexShrink: 1 },
   actionRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },
   walletLine: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm, paddingVertical: spacing.md, paddingHorizontal: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
-  walletCell: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6 },
+  walletCell: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 6 },
   walletLabel: { fontSize: 13, color: colors.muted, fontWeight: "600" },
   walletValue: { fontSize: 16, fontWeight: "800", color: colors.onSurface, flexShrink: 1 },
   walletDivider: { width: 1, alignSelf: "stretch", backgroundColor: colors.border },

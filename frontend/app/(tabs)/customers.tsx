@@ -76,7 +76,8 @@ export default function CustomersScreen() {
     const needle = q.trim().toLowerCase();
     return all
       .filter(({ c }) => !needle || c.name.toLowerCase().includes(needle) || c.phone.includes(needle) || c.address.toLowerCase().includes(needle))
-      .filter(({ due }) => (filter === "due" ? due > 0 : filter === "owe" ? due < 0 : true))
+      // A search looks through everyone; the chips only narrow the browsing list.
+      .filter(({ due }) => !!needle || (filter === "due" ? due > 0 : filter === "owe" ? due < 0 : true))
       .sort((a, b) => {
         if (filter === "all") return a.c.name.localeCompare(b.c.name, "hi");
         if (sort === "amount") return Math.abs(b.due) - Math.abs(a.due);

@@ -15,6 +15,12 @@ function escapeCsv(val: any): string {
   return `"${str}"`;
 }
 
+/** Long digit strings (phones, RRNs) must stay text, or Excel shows them as 9.88E+09 and drops leading zeros. */
+function textNum(val: string | undefined | null): string {
+  const s = (val ?? "").trim();
+  return /^\+?\d[\d ]{5,}$/.test(s) ? `="${s}"` : s || "-";
+}
+
 export async function exportFullLedgerCsv(params: {
   customers: Customer[];
   entries: Entry[];
@@ -37,7 +43,7 @@ export async function exportFullLedgerCsv(params: {
   // Shop & Metadata Header
   lines.push(`${escapeCsv(shopName)} - सम्पूर्ण बही खाता बैकअप`);
   lines.push(`डाउनलोड तिथि: ${dateStr}`);
-  if (shop?.shop_phone) lines.push(`फ़ोन: ${escapeCsv(shop.shop_phone)}`);
+  if (shop?.shop_phone) lines.push(["फ़ोन", textNum(shop.shop_phone)].map(escapeCsv).join(","));
   lines.push("");
 
   // SECTION 1: CUSTOMER BALANCES
@@ -53,7 +59,7 @@ export async function exportFullLedgerCsv(params: {
         i + 1,
         bookOf(c),
         c.name,
-        c.phone || "-",
+        textNum(c.phone),
         c.address || "-",
         bal,
         status,
@@ -110,11 +116,11 @@ export async function exportFullLedgerCsv(params: {
           `${t.date} ${t.time || ""}`,
           AEPS_META[t.type]?.label ?? t.type,
           t.customerName || "-",
-          t.mobile || "-",
+          textNum(t.mobile),
           t.amount,
           t.commission || 0,
           STATUS_META[t.status]?.label ?? t.status,
-          t.reference || "-",
+          textNum(t.reference),
         ].map(escapeCsv).join(",")
       );
     });

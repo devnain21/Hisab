@@ -9,9 +9,11 @@ import { AppLockGate } from "@/src/components/app-lock";
 import { CACHE_MAX_AGE, queryClient, queryPersister } from "@/src/query-client";
 import { AuthProvider } from "@/src/context/AuthContext";
 import { wakeBackend } from "@/src/lib/api";
+import { pruneDailyKeys } from "@/src/lib/daily-keys";
 
 LogBox.ignoreAllLogs(true);
 wakeBackend();
+setTimeout(() => void pruneDailyKeys(), 8000);
 
 export default function RootLayout() {
   return (

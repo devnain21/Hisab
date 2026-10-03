@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -15,6 +15,8 @@ import * as Contacts from "expo-contacts/legacy";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { formatPhone } from "@/src/lib/format";
+import { useKeyboardOverlap } from "@/src/lib/keyboard-overlap";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const cleanPhoneNumber = (raw: string): string => {
   const digits = (raw || "").replace(/[^0-9]/g, "");
@@ -168,11 +170,14 @@ export function ContactPickerModal({
   };
 
   const currentParsed = parseRawContact(inputText);
+  const overlayRef = useRef<View>(null);
+  const overlap = useKeyboardOverlap(overlayRef);
+  const insets = useSafeAreaInsets();
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={styles.sheet}>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
+      <View ref={overlayRef} style={[styles.overlay, { paddingBottom: overlap }]}>
+        <View style={[styles.sheet, { paddingBottom: overlap ? spacing.md : insets.bottom + spacing.lg }]}>
           <View style={styles.header}>
             <Text style={styles.title}>संपर्क चुनें</Text>
             <Pressable onPress={onClose} hitSlop={12} testID="contact-picker-close">

@@ -552,8 +552,8 @@ export default function DayScreen() {
           renderItem={({ item: e }) => (
             <Pressable style={styles.row} onPress={() => setEditing(e)} testID={`day-row-${e.id}`}>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                  <Pressable onPress={() => router.push(`/customer/${e.customerId}`)} hitSlop={4}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Pressable onPress={() => router.push(`/customer/${e.customerId}`)} hitSlop={4} style={{ flexShrink: 1, minWidth: 0 }}>
                     <Text style={styles.name} numberOfLines={1}>{nameOf(e.customerId)}</Text>
                   </Pressable>
                   {e.mode === "online" ? (

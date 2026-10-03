@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { View, Text, StyleSheet, Modal, ScrollView, Alert } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { formatINR, formatDate } from "@/src/lib/format";
@@ -16,6 +17,7 @@ export function DayCloseModal({
   data: DaySummaryData;
 }) {
   const [sharing, setSharing] = useState(false);
+  const insets = useSafeAreaInsets();
 
   const handleShare = async () => {
     setSharing(true);
@@ -33,8 +35,8 @@ export function DayCloseModal({
       <View style={styles.overlay}>
         <View style={styles.sheet}>
           <View style={styles.header}>
-            <View>
-              <Text style={styles.title}>🌙 दुकान बंद रिपोर्ट (Day Close)</Text>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.title}>🌙 दुकान बंद रिपोर्ट</Text>
               <Text style={styles.subtitle}>{formatDate(data.date)} · आज का अंतिम हिसाब</Text>
             </View>
             <Pressable onPress={onClose} hitSlop={12} testID="day-close-close">
@@ -42,18 +44,18 @@ export function DayCloseModal({
             </Pressable>
           </View>
 
-          <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }}>
+          <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl + insets.bottom }}>
             {/* Top Stat Cards */}
             <View style={styles.topStatsRow}>
               <View style={[styles.topStatCard, { backgroundColor: colors.brandTertiary }]}>
                 <Text style={styles.statLabel}>कुल काम / बिक्री</Text>
-                <Text style={[styles.statValue, { color: colors.brandPrimary }]}>
+                <Text style={[styles.statValue, { color: colors.brandPrimary }]} numberOfLines={1} adjustsFontSizeToFit>
                   {formatINR(data.workTotal)}
                 </Text>
               </View>
               <View style={[styles.topStatCard, { backgroundColor: colors.successSoft }]}>
                 <Text style={styles.statLabel}>कुल वसूली (मिले)</Text>
-                <Text style={[styles.statValue, { color: colors.success }]}>
+                <Text style={[styles.statValue, { color: colors.success }]} numberOfLines={1} adjustsFontSizeToFit>
                   {formatINR(data.workCash + data.workOnline + data.paymentCash + data.paymentOnline)}
                 </Text>
               </View>
@@ -205,6 +207,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
+    gap: spacing.md,
     marginBottom: spacing.md,
   },
   title: {
@@ -259,10 +262,12 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   rowLabel: {
+    flexShrink: 1,
     fontSize: 13,
     color: colors.muted,
   },
   rowVal: {
+    marginLeft: spacing.sm,
     fontSize: 13,
     fontWeight: "600",
     color: colors.onSurface,

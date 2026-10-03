@@ -11,7 +11,7 @@ import { buildAllLedgers, workForJob, type WorkStatus } from "@/src/lib/records"
 import { store } from "@/src/lib/store";
 import { AddEntrySheet, AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
-import { SlowServerHint } from "@/src/components/slow-server-hint";
+import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
 import { usePersona } from "@/src/lib/persona";
 type Filter = "open" | "late" | "today" | "unpaid" | "done" | "all";
 const FILTERS: Filter[] = ["open", "late", "today", "unpaid", "done", "all"];
@@ -105,6 +105,7 @@ function ShopWork() {
   const openValue = useMemo(() => jobs.filter((j) => j.status !== "done").reduce((s, j) => s + (j.estimatedAmount || 0), 0), [jobs]);
 
   const loading = jobsQ.isLoading;
+  const loadFailed = !loading && ((jobsQ.isError && jobsQ.data == null) || (customersQ.isError && customersQ.data == null) || (entriesQ.isError && entriesQ.data == null));
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -147,11 +148,13 @@ function ShopWork() {
 
       {loading ? (
         <View style={{ marginTop: spacing.xxl, alignItems: "center" }}><ActivityIndicator color={colors.brandPrimary} /><SlowServerHint /></View>
+      ) : loadFailed ? (
+        <DataLoadError onRetry={() => { jobsQ.refetch(); customersQ.refetch(); entriesQ.refetch(); }} />
       ) : (
         <FlatList
           data={rows}
           keyExtractor={(j) => j.id}
-          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl * 2, gap: spacing.sm }}
+          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: Math.max(spacing.xxxl * 2, insets.bottom + 104), gap: spacing.sm }}
           ListEmptyComponent={
             <View style={styles.empty}>
               <MaterialIcon name="briefcase-outline" size={32} color={colors.muted} />
@@ -168,7 +171,7 @@ function ShopWork() {
               <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 40).duration(250)}>
                 <Pressable style={[styles.jobCard, overdue && { borderLeftWidth: 4, borderLeftColor: colors.error }]} onPress={() => setEditing(j)} testID={`job-card-${j.id}`}>
                   <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
-                    <Text style={[styles.jobTitle, { flex: 1 }]} numberOfLines={2}>{j.title}</Text>
+                    <Text style={[styles.jobTitle, { flex: 1, minWidth: 0 }]} numberOfLines={2}>{j.title}</Text>
                     {pay ? <PayPill pay={pay} /> : <StatusPill status={j.status} free={j.status === "done" && !!j.customerId && !work} />}
                   </View>
                   <Text style={[styles.jobSub, overdue && { color: colors.error }]}>
@@ -261,6 +264,7 @@ function PersonalTxns() {
     .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : b.createdAt.localeCompare(a.createdAt)));
 
   const loading = customersQ.isLoading || entriesQ.isLoading;
+  const loadFailed = !loading && ((customersQ.isError && customersQ.data == null) || (entriesQ.isError && entriesQ.data == null));
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.md }}>
@@ -295,11 +299,13 @@ function PersonalTxns() {
 
       {loading ? (
         <View style={{ marginTop: spacing.xxl, alignItems: "center" }}><ActivityIndicator color={colors.brandPrimary} /><SlowServerHint /></View>
+      ) : loadFailed ? (
+        <DataLoadError onRetry={() => { customersQ.refetch(); entriesQ.refetch(); }} />
       ) : (
         <FlatList
           data={rows}
           keyExtractor={(e) => e.id}
-          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl * 2, gap: spacing.sm }}
+          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: Math.max(spacing.xxxl * 2, insets.bottom + 104), gap: spacing.sm }}
           ListEmptyComponent={
             <View style={styles.empty}>
               <MaterialIcon name="swap-vertical" size={32} color={colors.muted} />
@@ -324,8 +330,17 @@ function PersonalTxns() {
                     </Text>
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
-                    <Text style={[styles.txnAmt, { color: ui.fg }]}>{e.type === "payment" ? "+" : "−"}{formatINR(e.type === "purchase" ? e.paid ?? 0 : e.amount)}</Text>
-                    {e.type === "purchase" ? <Text style={styles.jobSub}>कुल {formatINR(e.amount)}</Text> : null}
+                    {e.type === "purchase" && !(e.paid ?? 0) ? (
+                      <>
+                        <Text style={[styles.txnAmt, { color: ui.fg }]}>{formatINR(e.amount)}</Text>
+                        <Text style={styles.jobSub}>देने हैं</Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={[styles.txnAmt, { color: ui.fg }]}>{e.type === "payment" ? "+" : "−"}{formatINR(e.type === "purchase" ? e.paid ?? 0 : e.amount)}</Text>
+                        {e.type === "purchase" ? <Text style={styles.jobSub}>कुल {formatINR(e.amount)}</Text> : null}
+                      </>
+                    )}
                   </View>
                 </View>
                 {rest > 0 ? (
@@ -373,7 +388,7 @@ function PayPill({ pay }: { pay: WorkStatus }) {
   const map = {
     cash: { bg: colors.successSoft, fg: colors.success, label: "नकद" },
     settled: { bg: colors.successSoft, fg: colors.success, label: "✔ चुकता" },
-    partial: { bg: "#FEF3E2", fg: colors.warning, label: `${formatINR(pay.remaining)} लेने हैं` },
+    partial: { bg: "#FEF3E2", fg: colors.warning, label: "कुछ बाकी" },
     pending: { bg: colors.errorSoft, fg: colors.error, label: "लेने हैं" },
   } as const;
   const s = map[pay.state];

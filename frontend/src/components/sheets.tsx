@@ -7,8 +7,6 @@ import {
   Pressable as RNPressable,
   TextInput,
   ScrollView,
-  Platform,
-  Keyboard,
   ActivityIndicator,
 } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
@@ -24,44 +22,8 @@ import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
 import { useContactPicker } from "@/src/components/contact-picker-modal";
 import { usePersona } from "@/src/lib/persona";
+import { useKeyboardOverlap } from "@/src/lib/keyboard-overlap";
 import { useRouter } from "expo-router";
-
-// Android modals don't resize for the keyboard under edge-to-edge, so pad by the measured overlap instead.
-function useKeyboardOverlap(ref: React.RefObject<View | null>) {
-  const [overlap, setOverlap] = useState(0);
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    let keyboardTop: number | null = null;
-    let timers: ReturnType<typeof setTimeout>[] = [];
-    const measure = () => {
-      const top = keyboardTop;
-      if (top === null) return;
-      ref.current?.measureInWindow((_x, y, _w, h) => {
-        if (h > 0 && keyboardTop !== null) setOverlap(Math.max(0, y + h - top));
-      });
-    };
-    // A sheet that focuses a field while it is still sliding in measures mid-animation; measure again once it settles.
-    const show = Keyboard.addListener(showEvt, (e) => {
-      keyboardTop = e.endCoordinates.screenY;
-      timers.forEach(clearTimeout);
-      measure();
-      timers = [setTimeout(measure, 200), setTimeout(measure, 500)];
-    });
-    const hide = Keyboard.addListener(hideEvt, () => {
-      keyboardTop = null;
-      timers.forEach(clearTimeout);
-      setOverlap(0);
-    });
-    return () => {
-      timers.forEach(clearTimeout);
-      show.remove();
-      hide.remove();
-    };
-  }, [ref]);
-  return overlap;
-}
 
 export function SheetShell({ visible, onClose, title, children, testID }: { visible: boolean; onClose: () => void; title: string; children: React.ReactNode; testID?: string }) {
   const insets = useSafeAreaInsets();
@@ -778,7 +740,7 @@ const ENTRY_UI: Record<EntryType, { title: string; short: string; icon: string; 
   work: { title: "काम", short: "काम", icon: "briefcase-outline", color: colors.error, placeholder: "जैसे पासपोर्ट फोटो 8 प्रति" },
   payment: { title: "पैसे मिले", short: "मिले", icon: "arrow-bottom-left", color: colors.success, placeholder: "जैसे पुराना हिसाब, UPI" },
   given: { title: "पैसे दिए", short: "दिए", icon: "arrow-top-right", color: colors.error, placeholder: "जैसे घर के लिए दिए" },
-  purchase: { title: "सामान / सेवा ली", short: "सामान / सेवा", icon: "cart-outline", color: colors.warning, placeholder: "जैसे राशन, दवाई, मरम्मत" },
+  purchase: { title: "सामान / सेवा ली", short: "सामान", icon: "cart-outline", color: colors.warning, placeholder: "जैसे राशन, दवाई, मरम्मत" },
   aeps: { title: "काउंटर सेवा बाकी", short: "AEPS", icon: "fingerprint", color: colors.error, placeholder: "" },
 };
 
@@ -854,7 +816,7 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
           {kinds.map((k) => (
             <Pressable key={k} onPress={() => setKind(k)} style={[styles.segmentBtn, kind === k && { backgroundColor: ENTRY_UI[k].color }]} testID={`entry-kind-${k}`}>
               <MaterialIcon name={ENTRY_UI[k].icon as any} size={16} color={kind === k ? "#fff" : colors.onSurface} />
-              <Text style={[styles.segmentText, kind === k && { color: "#fff" }]} numberOfLines={1}>{ENTRY_UI[k].short}</Text>
+              <Text style={[styles.segmentText, kind === k && { color: "#fff" }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{ENTRY_UI[k].short}</Text>
             </Pressable>
           ))}
         </View>

@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { computeBalance, isRepayment, itemsOf, useAeps, useCustomers, useEntries, useJobs, type AepsTxn, type Entry, type EntryType, type Job } from "@/src/lib/data";
 import { AEPS_META, STATUS_META, aepsBill, aepsDue, defaultVia, statusLabel, viaBill } from "@/src/lib/aeps";
-import { formatDate, formatINR, formatPhone, initials, monthRange, todayISO } from "@/src/lib/format";
+import { formatDate, formatINR, formatPhone, monthRange, todayISO } from "@/src/lib/format";
 import { store } from "@/src/lib/store";
 import { buildLedger, type WorkState, type WorkStatus } from "@/src/lib/records";
 import { AddEntrySheet, AddJobSheet, AddCustomerSheet, Chip, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
@@ -142,9 +142,8 @@ export default function CustomerDetail() {
         <Pressable onPress={() => router.back()} hitSlop={12} testID="back-btn">
           <MaterialIcon name="arrow-left" size={26} color={colors.onSurface} />
         </Pressable>
-        <View style={styles.avatar}><Text style={styles.avatarText}>{initials(customer.name)}</Text></View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.name} numberOfLines={1}>{customer.name}</Text>
+          <Text style={styles.name} numberOfLines={2}>{customer.name}</Text>
           <Text style={styles.sub} numberOfLines={1}>
             {customer.phone ? formatPhone(customer.phone) : "फ़ोन नहीं"}{customer.address ? ` · ${customer.address}` : ""}
           </Text>
@@ -567,8 +566,6 @@ function JamaCard({ entry, onPress, onReceipt }: { entry: Entry; onPress: () => 
 }
 
 const styles = StyleSheet.create({
-  avatar: { width: 44, height: 44, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
-  avatarText: { fontWeight: "700", color: colors.onBrandTertiary },
   name: { fontSize: 18, fontWeight: "700", color: colors.onSurface },
   sub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   balanceCard: { padding: spacing.xl, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },

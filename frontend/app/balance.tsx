@@ -20,6 +20,7 @@ export default function BalanceScreen() {
   const [move, setMove] = useState<MoveKind | null>(null);
   const [expense, setExpense] = useState(false);
   const [editMove, setEditMove] = useState<Move | null>(null);
+  const [shown, setShown] = useState(PAGE);
 
   const before = useMemo(() => computeFlows(book, persona, (d) => d < today), [book, persona, today]);
   const todayFlows = useMemo(() => computeFlows(book, persona, (d) => d === today), [book, persona, today]);
@@ -82,7 +83,7 @@ export default function BalanceScreen() {
           <>
             <Text style={styles.sectionHead}>जोड़े / निकाले</Text>
             <View style={styles.list}>
-              {mine.map((m, i) => {
+              {mine.slice(0, shown).map((m, i) => {
                 const ownKeys: string[] = [accountKey(persona, "cash"), accountKey(persona, "bank")];
                 const own = ownKeys.includes(m.to);
                 const swap = own && ownKeys.includes(m.from);
@@ -102,6 +103,11 @@ export default function BalanceScreen() {
                 );
               })}
             </View>
+            {mine.length > shown ? (
+              <Pressable style={styles.moreBtn} onPress={() => setShown((n) => n + PAGE)} testID="moves-more">
+                <Text style={styles.link}>और दिखाएँ ({mine.length - shown})</Text>
+              </Pressable>
+            ) : null}
           </>
         ) : null}
       </ScrollView>
@@ -134,4 +140,8 @@ const styles = StyleSheet.create({
   moveTitle: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
   moveSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   moveAmt: { fontSize: 15, fontWeight: "800" },
+  moreBtn: { alignSelf: "center", paddingVertical: spacing.md, paddingHorizontal: spacing.xl },
 });
+
+// Moves are drawn a page at a time; months of adjustments add up.
+const PAGE = 50;

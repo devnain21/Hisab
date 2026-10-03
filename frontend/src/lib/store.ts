@@ -169,6 +169,12 @@ export function useRejectedCount() {
   );
 }
 
+/** Lists whose server copy this change can alter (a customer delete also removes / unlinks its rows). */
+function touchedBy(op: Op): Coll[] {
+  if (op.coll === "customers" && op.kind === "delete") return ["customers", "entries", "jobs", "aeps"];
+  return [op.coll];
+}
+
 export async function flush() {
   await ensureLoaded();
   if (flushing || ops.length === 0) return;
@@ -178,6 +184,8 @@ export async function flush() {
     retryTimer = null;
   }
   let drained = false;
+  // Only lists that were written are fetched again, not all six.
+  const touched = new Set<Coll>();
   try {
     while (ops.length > 0) {
       const op = ops[0];
@@ -195,8 +203,8 @@ export async function flush() {
         serverFails = 0;
         // Deleting something already gone elsewhere is not worth reporting.
         if (!(op.kind === "delete" && status === 404)) reject(op, status);
-        for (const coll of COLLS) queryClient.invalidateQueries({ queryKey: [coll] });
       }
+      touchedBy(op).forEach((c) => touched.add(c));
       ops.shift();
       persist();
       notify();
@@ -204,8 +212,9 @@ export async function flush() {
     drained = true;
   } finally {
     flushing = false;
-    if (drained) {
-      for (const coll of COLLS) queryClient.invalidateQueries({ queryKey: [coll] });
+    // Also after a pause for retry: what was already sent should show the server's copy.
+    if (drained || touched.size) {
+      for (const coll of touched) queryClient.invalidateQueries({ queryKey: [coll] });
     }
   }
 }

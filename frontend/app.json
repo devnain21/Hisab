@@ -68,6 +68,7 @@
       "@react-native-vector-icons/material-design-icons",
       "@react-native-google-signin/google-signin",
       "expo-local-authentication",
+      "./plugins/with-recents-privacy",
       [
         "expo-contacts",
         {

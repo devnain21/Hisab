@@ -4,7 +4,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/context/AuthContext";
-import { authenticateBiometric, disableLock, getLockConfig, lockSupported, verifyPin, type LockConfig } from "@/src/lib/app-lock";
+import { authenticateBiometric, checkPin, disableLock, getLockConfig, lockSupported, pinWaitMs, resetPinFails, type LockConfig } from "@/src/lib/app-lock";
 import { confirmAction } from "@/src/lib/confirm";
 import { pendingCount } from "@/src/lib/store";
 import { colors, radius, spacing } from "@/src/theme";
@@ -107,32 +107,102 @@ export function PinSetupModal({ visible, onClose, onDone }: { visible: boolean; 
   );
 }
 
+const waitText = (ms: number) => {
+  const s = Math.ceil(ms / 1000);
+  return `बहुत बार गलत PIN। ${s >= 60 ? `${Math.ceil(s / 60)} मिनट` : `${s} सेकंड`} बाद कोशिश करें`;
+};
+
+/** PIN entry with the wrong-try wait shown as a live countdown. */
+function usePinCheck(active: boolean, onOk: () => void) {
+  const [pin, setPinValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [waitUntil, setWaitUntil] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  const waiting = waitUntil > now;
+  const okRef = useRef(onOk);
+  useEffect(() => {
+    okRef.current = onOk;
+  }, [onOk]);
+
+  useEffect(() => {
+    if (!active) return;
+    setPinValue("");
+    setError(null);
+    pinWaitMs().then((ms) => {
+      const t = Date.now();
+      setNow(t);
+      setWaitUntil(ms > 0 ? t + ms : 0);
+    });
+  }, [active]);
+
+  useEffect(() => {
+    if (!waiting) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [waiting]);
+
+  useEffect(() => {
+    if (pin.length !== PIN_LENGTH) return;
+    checkPin(pin).then(({ ok, waitMs }) => {
+      setPinValue("");
+      if (ok) {
+        okRef.current();
+        return;
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      const t = Date.now();
+      setNow(t);
+      setWaitUntil(waitMs > 0 ? t + waitMs : 0);
+      setError(waitMs > 0 ? null : "गलत PIN, दोबारा डालें");
+    });
+  }, [pin]);
+
+  const onChange = (v: string) => {
+    if (waiting) return;
+    setError(null);
+    setPinValue(v);
+  };
+  return { pin, onChange, error: waiting ? waitText(waitUntil - now) : error };
+}
+
+/** Asks for the current PIN before the lock is turned off or the PIN is changed. */
+export function PinVerifyModal({ visible, title, onClose, onVerified }: { visible: boolean; title: string; onClose: () => void; onVerified: () => void }) {
+  const insets = useSafeAreaInsets();
+  const { pin, onChange, error } = usePinCheck(visible, onVerified);
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
+      <View style={[styles.screen, { flex: 1, paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.lg }]}>
+        <View style={{ alignSelf: "stretch", flexDirection: "row", justifyContent: "flex-end", paddingHorizontal: spacing.lg }}>
+          <Pressable onPress={onClose} hitSlop={12} haptic={false} testID="pin-verify-close">
+            <MaterialIcon name="close" size={26} color={colors.muted} />
+          </Pressable>
+        </View>
+        <View style={{ alignItems: "center" }}>
+          <MaterialIcon name="lock-outline" size={40} color={colors.brandPrimary} />
+          <Text style={[styles.title, { marginTop: spacing.md }]}>{title}</Text>
+        </View>
+        <PinPad value={pin} onChange={onChange} error={error} />
+        <View style={{ height: 40 }} />
+      </View>
+    </Modal>
+  );
+}
+
 function LockScreen({ config, onUnlock }: { config: LockConfig; onUnlock: () => void }) {
   const insets = useSafeAreaInsets();
   const { signOut } = useAuth();
-  const [pin, setPin] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const { pin, onChange, error } = usePinCheck(true, onUnlock);
 
   const tryBiometric = useCallback(async () => {
-    if (await authenticateBiometric().catch(() => false)) onUnlock();
+    if (await authenticateBiometric().catch(() => false)) {
+      await resetPinFails();
+      onUnlock();
+    }
   }, [onUnlock]);
 
   useEffect(() => {
     if (config.biometric) void tryBiometric();
   }, [config.biometric, tryBiometric]);
-
-  useEffect(() => {
-    if (pin.length !== PIN_LENGTH) return;
-    verifyPin(pin).then((ok) => {
-      if (ok) {
-        onUnlock();
-      } else {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-        setError("गलत PIN, दोबारा डालें");
-        setPin("");
-      }
-    });
-  }, [pin, onUnlock]);
 
   const forgot = () => {
     const pending = pendingCount();
@@ -145,16 +215,19 @@ function LockScreen({ config, onUnlock }: { config: LockConfig; onUnlock: () => 
   };
 
   return (
-    <View style={[StyleSheet.absoluteFill, styles.screen, { paddingTop: insets.top + spacing.xxl, paddingBottom: insets.bottom + spacing.lg }]} testID="lock-screen">
-      <View style={{ alignItems: "center" }}>
-        <Image source={require("@/assets/images/splash-icon.png")} style={styles.logo} />
-        <Text style={styles.title}>PIN डालें</Text>
+    // A Modal so it also covers any sheet (itself a Modal) that was open when the app locked.
+    <Modal visible animationType="none" onRequestClose={() => {}} statusBarTranslucent navigationBarTranslucent>
+      <View style={[styles.screen, { flex: 1, paddingTop: insets.top + spacing.xxl, paddingBottom: insets.bottom + spacing.lg }]} testID="lock-screen">
+        <View style={{ alignItems: "center" }}>
+          <Image source={require("@/assets/images/splash-icon.png")} style={styles.logo} />
+          <Text style={styles.title}>PIN डालें</Text>
+        </View>
+        <PinPad value={pin} onChange={onChange} onBiometric={config.biometric ? tryBiometric : undefined} error={error} />
+        <Pressable onPress={forgot} haptic={false} testID="pin-forgot">
+          <Text style={styles.forgot}>PIN भूल गए?</Text>
+        </Pressable>
       </View>
-      <PinPad value={pin} onChange={(v) => { setError(null); setPin(v); }} onBiometric={config.biometric ? tryBiometric : undefined} error={error} />
-      <Pressable onPress={forgot} haptic={false} testID="pin-forgot">
-        <Text style={styles.forgot}>PIN भूल गए?</Text>
-      </Pressable>
-    </View>
+    </Modal>
   );
 }
 
@@ -164,6 +237,10 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(!lockSupported);
   const [locked, setLocked] = useState(false);
   const backgroundAt = useRef<number | null>(null);
+  const enabledRef = useRef(false);
+  useEffect(() => {
+    enabledRef.current = config.enabled;
+  }, [config.enabled]);
 
   const refresh = useCallback(async () => {
     setConfig(await getLockConfig());
@@ -183,6 +260,8 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
     const sub = AppState.addEventListener("change", (s) => {
       if (s === "background") backgroundAt.current = Date.now();
       if (s === "active" && backgroundAt.current && Date.now() - backgroundAt.current > RELOCK_AFTER_MS) {
+        // Lock at once from what is known, so the khata never shows for a moment before the PIN screen.
+        if (enabledRef.current) setLocked(true);
         getLockConfig().then((c) => {
           setConfig(c);
           if (c.enabled) setLocked(true);

@@ -184,8 +184,14 @@ export function useFoldLegacyCashRows() {
   useEffect(() => {
     if (done.current || !q.data || q.isFetching || !q.isFetchedAfterMount) return;
     if (q.data.length === 0 || q.data.some((e) => e.paid === undefined)) return;
-    done.current = true;
-    foldLegacyCashRows(q.data);
+    const rows = q.data;
+    // After the first screen has drawn, so opening the app never waits on this check.
+    const t = setTimeout(() => {
+      if (done.current) return;
+      done.current = true;
+      foldLegacyCashRows(rows);
+    }, 1500);
+    return () => clearTimeout(t);
   }, [q.data, q.isFetching, q.isFetchedAfterMount]);
 }
 
@@ -219,6 +225,8 @@ export type Ledger = {
 
 /** Work status for every customer at once (keyed by work entry id). */
 export function buildAllLedgers(entries: Entry[]): Map<string, WorkStatus> {
+  const hit = allLedgersCache.get(entries);
+  if (hit) return hit;
   const byCustomer = new Map<string, Entry[]>();
   for (const e of entries) {
     const list = byCustomer.get(e.customerId);
@@ -227,8 +235,12 @@ export function buildAllLedgers(entries: Entry[]): Map<string, WorkStatus> {
   }
   const all = new Map<string, WorkStatus>();
   byCustomer.forEach((list) => buildLedger(list).work.forEach((st, id) => all.set(id, st)));
+  allLedgersCache.set(entries, all);
   return all;
 }
+
+// Work tab (two lists) and the customer list ask for the same entries array; build it once.
+const allLedgersCache = new WeakMap<Entry[], Map<string, WorkStatus>>();
 
 function byTime(a: Entry, b: Entry) {
   return a.date !== b.date ? a.date.localeCompare(b.date) : a.createdAt.localeCompare(b.createdAt);
@@ -240,6 +252,34 @@ function byTime(a: Entry, b: Entry) {
  * this only explains which row that money covers, so the status can never disagree with the balance.
  * Credits (unlinked jama, unpaid purchases, overpaid work) settle the oldest open debt first.
  */
+/**
+ * settlementsFor for every row of one list, indexed once: same rows, same order, but without
+ * scanning the whole list again for each work (a busy "नकद ग्राहक" has thousands of rows).
+ */
+function settlementIndex(entries: Entry[]): (w: Entry) => Entry[] {
+  const order = new Map<Entry, number>();
+  const linked = new Map<string, Entry[]>();
+  const repaid = new Map<string, Entry[]>();
+  const unlinked = new Map<string, Entry[]>();
+  const add = (m: Map<string, Entry[]>, k: string, e: Entry) => {
+    const list = m.get(k);
+    if (list) list.push(e);
+    else m.set(k, [e]);
+  };
+  entries.forEach((e, i) => {
+    order.set(e, i);
+    if (isRepayment(e)) add(repaid, e.linkId!, e);
+    if (e.type !== "payment") return;
+    if (e.linkId) add(linked, e.linkId, e);
+    else add(unlinked, `${e.customerId}|${e.date}`, e);
+  });
+  return (w) => {
+    if (w.type === "purchase") return [...(repaid.get(w.id) ?? [])].sort(byTime);
+    const legacy = w.type === "work" ? (unlinked.get(`${w.customerId}|${w.date}`) ?? []).filter((e) => isLegacyPairFor(w, e)) : [];
+    return [...(linked.get(w.id) ?? []), ...legacy].sort((a, b) => order.get(a)! - order.get(b)!).sort(byTime);
+  };
+}
+
 export function buildLedger(entries: Entry[]): Ledger {
   const purchases = entries.filter((e) => e.type === "purchase").sort(byTime);
   const purchaseIds = new Set(purchases.map((p) => p.id));
@@ -247,11 +287,12 @@ export function buildLedger(entries: Entry[]): Ledger {
   const debts = entries.filter((e) => isDebt(e) || (isRepayment(e) && !purchaseIds.has(e.linkId!))).sort(byTime);
   const work = new Map<string, WorkStatus>();
   const nested = new Set<string>();
+  const settlementsOf = settlementIndex(entries);
 
   // Below half a paisa is float noise, not money still owed.
   const EPS = 0.005;
   for (const w of [...debts, ...purchases]) {
-    const settlements = settlementsFor(w, entries).filter((p) => !nested.has(p.id));
+    const settlements = settlementsOf(w).filter((p) => !nested.has(p.id));
     settlements.forEach((p) => nested.add(p.id));
     const paidAtBooking = Math.min(w.paid ?? 0, w.amount);
     const linked = settlements.reduce((s, p) => s + p.amount, 0);

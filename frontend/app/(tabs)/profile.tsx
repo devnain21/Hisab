@@ -22,7 +22,7 @@ import { useAeps, useCustomers, useEntries, useJobs, computeBalance } from "@/sr
 import { formatINR, todayISO, formatPhone } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { ShopProfileSheet } from "@/src/components/sheets";
-import { PinSetupModal, useAppLock } from "@/src/components/app-lock";
+import { PinSetupModal, PinVerifyModal, useAppLock } from "@/src/components/app-lock";
 import { biometricAvailable, disableLock, lockSupported, setBiometric, setPin } from "@/src/lib/app-lock";
 import { exportFullLedgerCsv } from "@/src/lib/export-data";
 import { flush, usePendingCount } from "@/src/lib/store";
@@ -85,6 +85,7 @@ export default function Profile() {
   // App Lock
   const { config: lock, refresh: refreshLock } = useAppLock();
   const [pinSetup, setPinSetup] = useState(false);
+  const [verifyFor, setVerifyFor] = useState<"off" | "change" | null>(null);
   const [hasBio, setHasBio] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
@@ -181,11 +182,19 @@ export default function Profile() {
       setPinSetup(true);
       return;
     }
-    confirmAction("ऐप लॉक बंद करें?", "अब ऐप बिना PIN के खुलेगा।", "बंद करें", async () => {
-      await disableLock();
-      await refreshLock();
-    });
+    setVerifyFor("off");
   };
+
+  const onVerified = useCallback(async () => {
+    const action = verifyFor;
+    setVerifyFor(null);
+    if (action === "change") {
+      setPinSetup(true);
+      return;
+    }
+    await disableLock();
+    await refreshLock();
+  }, [verifyFor, refreshLock]);
 
   const toggleBio = async (on: boolean) => {
     await setBiometric(on);
@@ -654,7 +663,7 @@ export default function Profile() {
             {lock.enabled && (
               <Pressable
                 style={[styles.settingRow, styles.rowBorder]}
-                onPress={() => setPinSetup(true)}
+                onPress={() => setVerifyFor("change")}
                 testID="change-pin"
               >
                 <View style={[styles.iconCircle, { backgroundColor: colors.brandTertiary }]}>
@@ -771,6 +780,12 @@ export default function Profile() {
       <ShopProfileSheet visible={shopSheet} onClose={() => setShopSheet(false)} />
       <ShopProfileSheet visible={openShop} openShop onClose={() => setOpenShop(false)} />
       <PinSetupModal visible={pinSetup} onClose={() => setPinSetup(false)} onDone={onPinSet} />
+      <PinVerifyModal
+        visible={verifyFor !== null}
+        title={verifyFor === "change" ? "अभी वाला PIN डालें" : "लॉक बंद करने के लिए PIN डालें"}
+        onClose={() => setVerifyFor(null)}
+        onVerified={onVerified}
+      />
       <RecycleBinModal visible={trashOpen} onClose={() => setTrashOpen(false)} />
 
       {/* Payment QR Code Modal */}

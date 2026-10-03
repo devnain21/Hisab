@@ -1,6 +1,7 @@
 from fastapi import FastAPI, APIRouter, Header, HTTPException, Depends
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import json
 import os
@@ -354,8 +355,11 @@ async def upsert_user_from_claims(claims: dict) -> dict:
         patch = {"name": name, "picture": picture, "email": email or existing.get("email")}
         if firebase_uid:
             patch["firebase_uid"] = firebase_uid
-        await db.users.update_one({"user_id": user_id}, {"$set": patch})
-        existing.update(patch)
+        # Runs on every request; only write when the Google profile actually changed.
+        changed = {k: v for k, v in patch.items() if existing.get(k) != v}
+        if changed:
+            await db.users.update_one({"user_id": user_id}, {"$set": changed})
+            existing.update(changed)
         return existing
 
     user_id = f"user_{uuid.uuid4().hex[:12]}"
@@ -659,6 +663,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Full lists of entries grow to a few MB; compressed they travel ~5-10x smaller.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.on_event("startup")

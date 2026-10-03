@@ -104,9 +104,23 @@ export function useAeps() {
   return useQuery<AepsTxn[]>({ queryKey: ["aeps"], queryFn: async () => withPending("aeps", await api.listAeps()) });
 }
 
+// Query data is replaced, never mutated, so one pass per entries array serves every customer.
+const balanceCache = new WeakMap<Entry[], Map<string, number>>();
+
+function balancesById(entries: Entry[]): Map<string, number> {
+  let byId = balanceCache.get(entries);
+  if (!byId) {
+    const sums = new Map<string, number>();
+    for (const e of entries) sums.set(e.customerId, (sums.get(e.customerId) ?? 0) + entryDelta(e));
+    byId = new Map([...sums].map(([id, s]) => [id, roundMoney(s)]));
+    balanceCache.set(entries, byId);
+  }
+  return byId;
+}
+
 export function computeBalance(entries: Entry[], customerId?: string): number {
-  const list = customerId ? entries.filter((e) => e.customerId === customerId) : entries;
-  return roundMoney(list.reduce((s, e) => s + entryDelta(e), 0));
+  if (customerId) return balancesById(entries).get(customerId) ?? 0;
+  return roundMoney(entries.reduce((s, e) => s + entryDelta(e), 0));
 }
 
 /** How much this row moves the customer's balance: udhaar part of work and money given up, payments down. */

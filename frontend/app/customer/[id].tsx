@@ -46,6 +46,8 @@ export default function CustomerDetail() {
     .filter((t) => t.customerId === id || (!t.customerId && phone10.length === 10 && t.mobile.replace(/\D/g, "").slice(-10) === phone10))
     .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : (b.time || "").localeCompare(a.time || "") || b.createdAt.localeCompare(a.createdAt)));
   const [filter, setFilter] = useState<LedgerFilter>("all");
+  // Rows are drawn a page at a time; a long-time customer can have hundreds.
+  const [shown, setShown] = useState(PAGE);
   const [settling, setSettling] = useState<Entry | null>(null);
   const [shareDoc, setShareDoc] = useState<ShareDoc | null>(null);
   const [qrModal, setQrModal] = useState(false);
@@ -294,7 +296,7 @@ export default function CustomerDetail() {
               const active = filter === f;
               const tone = f === "due" ? colors.error : f === "all" ? colors.brandPrimary : colors.success;
               return (
-                <Pressable key={f} onPress={() => setFilter(f)} style={[styles.filterChip, active && { backgroundColor: tone, borderColor: tone }]} testID={`ledger-filter-${f}`}>
+                <Pressable key={f} onPress={() => { setFilter(f); setShown(PAGE); }} style={[styles.filterChip, active && { backgroundColor: tone, borderColor: tone }]} testID={`ledger-filter-${f}`}>
                   <Text style={[styles.filterText, !active && f === "due" && { color: colors.error }, active && { color: "#fff" }]}>
                     {LEDGER_FILTER_LABEL[f]} ({counts[f]})
                   </Text>
@@ -314,7 +316,7 @@ export default function CustomerDetail() {
           </View>
         ) : (
           <View style={{ gap: spacing.sm }}>
-            {visible.map((e, i) => (
+            {visible.slice(0, shown).map((e, i) => (
               <Animated.View key={e.id} entering={FadeInDown.delay(Math.min(i, 8) * 40).duration(250)}>
                 {e.type !== "payment" ? (
                   <WorkCard entry={e} status={ledger.work.get(e.id)!} onPress={() => setEditing(e)} onSettle={() => setSettling(e)} onReceipt={() => openReceipt(e)} />
@@ -323,6 +325,11 @@ export default function CustomerDetail() {
                 )}
               </Animated.View>
             ))}
+            {visible.length > shown ? (
+              <Pressable style={styles.moreBtn} onPress={() => setShown((n) => n + PAGE)} testID="ledger-more">
+                <Text style={styles.linkText}>और दिखाएँ ({visible.length - shown})</Text>
+              </Pressable>
+            ) : null}
           </View>
         )}
       </ScrollView>
@@ -374,6 +381,7 @@ function stmtRange(r: StmtRange): { from: string; to: string } | undefined {
 }
 
 type LedgerFilter = "all" | "due" | "settled" | "cash" | "jama";
+const PAGE = 60;
 const LEDGER_FILTERS: LedgerFilter[] = ["all", "due", "settled", "cash", "jama"];
 const LEDGER_FILTER_LABEL: Record<LedgerFilter, string> = { all: "सभी", due: "बाकी", settled: "चुकता", cash: "नकद", jama: "मिले" };
 
@@ -578,6 +586,7 @@ const styles = StyleSheet.create({
   sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xl, marginBottom: spacing.md },  jobRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   jobTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   linkText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
+  moreBtn: { alignSelf: "center", paddingVertical: spacing.md, paddingHorizontal: spacing.xl },
   pillBtn: { paddingHorizontal: spacing.md, paddingVertical: 7, backgroundColor: colors.brandPrimary, borderRadius: radius.pill },
   pillBtnText: { color: colors.onBrandPrimary, fontWeight: "700", fontSize: 12 },
   filterChip: { height: 32, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },

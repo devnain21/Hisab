@@ -1,4 +1,5 @@
-const BASE = (process.env.EXPO_PUBLIC_BACKEND_URL as string | undefined)?.replace(/\/$/, "") || "";
+// Fallback for OTA bundles, which don't get the build's env vars.
+const BASE = ((process.env.EXPO_PUBLIC_BACKEND_URL as string | undefined) || "https://hisab-api-4i09.onrender.com").replace(/\/$/, "");
 
 type TokenProvider = () => Promise<string | null>;
 

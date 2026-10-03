@@ -12,14 +12,19 @@ import { SlowServerHint } from "@/src/components/slow-server-hint";
 import { AepsSheet } from "@/src/components/aeps-sheet";
 import { completeAeps } from "@/src/lib/aeps-due";
 import { confirmAction } from "@/src/lib/confirm";
+import { CalendarModal } from "@/src/components/calendar-modal";
+import { accountKey, addMove, balanceOf, useMoneyBook } from "@/src/lib/wallet";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-type Range = "today" | "yesterday" | "month" | "all";
+type Range = "today" | "yesterday" | "month" | "all" | "custom";
 const RANGES: { key: Range; label: string }[] = [
   { key: "today", label: "आज" },
   { key: "yesterday", label: "कल" },
   { key: "month", label: "इस महीने" },
   { key: "all", label: "सभी" },
+  { key: "custom", label: "तारीख" },
 ];
+const BANK_KEY = accountKey("business", "bank") as "business:bank";
 
 export default function AepsScreen() {
   const insets = useSafeAreaInsets();
@@ -31,19 +36,68 @@ export default function AepsScreen() {
   const [type, setType] = useState<AepsType | "all">("all");
   const [search, setSearch] = useState("");
   const [adding, setAdding] = useState(false);
+  const today = todayISO();
+  const [custom, setCustom] = useState({ from: todayISO(-6), to: today });
+  const [picking, setPicking] = useState<"from" | "to" | null>(null);
+  const book = useMoneyBook();
+  const appBank = useMemo(() => balanceOf(book, BANK_KEY), [book]);
+  const [portal, setPortal] = useState("");
+  const portalKey = `hisab_portal_bank_${today}`;
 
   useEffect(() => {
     if (params.range) setRange(params.range);
   }, [params.range, params.t]);
 
-  const today = todayISO();
+  useEffect(() => {
+    AsyncStorage.getItem(portalKey).then((v) => setPortal(v || "")).catch(() => {});
+  }, [portalKey]);
+  const savePortal = (v: string) => {
+    const clean = v.replace(/[^0-9]/g, "");
+    setPortal(clean);
+    AsyncStorage.setItem(portalKey, clean).catch(() => {});
+  };
+  const portalNum = portal ? parseInt(portal, 10) || 0 : null;
+  const portalDiff = portalNum !== null ? portalNum - appBank : null;
+  const matchPortal = () => {
+    if (!portalDiff) return;
+    confirmAction(
+      `दुकान बैंक ${formatINR(portalNum ?? 0)} कर दें?`,
+      portalDiff > 0 ? `हिसाब में ${formatINR(portalDiff)} "बाहर से जोड़े" लिखे जाएँगे।` : `हिसाब में ${formatINR(-portalDiff)} "बाहर निकाले" लिखे जाएँगे।`,
+      "हाँ, बराबर करें",
+      () =>
+        void addMove(
+          portalDiff > 0
+            ? { date: today, from: "", to: BANK_KEY, amount: portalDiff, note: "बैंक मिलान" }
+            : { date: today, from: BANK_KEY, to: "", amount: -portalDiff, note: "बैंक मिलान" },
+        ),
+    );
+  };
+
   const yesterday = todayISO(-1);
   const monthPrefix = today.slice(0, 7);
 
   const inRangeDate = useMemo(
-    () => (d: string) => (range === "today" ? d === today : range === "yesterday" ? d === yesterday : range === "month" ? d.startsWith(monthPrefix) : true),
-    [range, today, yesterday, monthPrefix],
+    () => (d: string) =>
+      range === "today" ? d === today
+      : range === "yesterday" ? d === yesterday
+      : range === "month" ? d.startsWith(monthPrefix)
+      : range === "custom" ? d >= custom.from && d <= custom.to
+      : true,
+    [range, today, yesterday, monthPrefix, custom],
   );
+  const pickRange = (r: Range) => {
+    setRange(r);
+    if (r === "custom") setPicking("from");
+  };
+  const onPickDate = (d: string) => {
+    if (picking === "from") {
+      setCustom((c) => ({ from: d, to: c.to < d ? d : c.to }));
+      setPicking("to");
+    } else {
+      setCustom((c) => ({ from: c.from > d ? d : c.from, to: d }));
+      setPicking(null);
+    }
+  };
   // Same rule as the totals: a row belongs to every day one of its sides moved money.
   const inRange = useMemo(
     () => txns.filter((t) => [t.date, cashLegDate(t), bankLegDate(t), commissionDate(t)].some((d) => !!d && inRangeDate(d))),
@@ -92,16 +146,64 @@ export default function AepsScreen() {
         <Text style={styles.h1}>काउंटर</Text>
         <View style={styles.segment}>
           {RANGES.map((r) => (
-            <Pressable key={r.key} onPress={() => setRange(r.key)} style={[styles.segmentBtn, range === r.key && styles.segmentActive]} testID={`aeps-range-${r.key}`}>
-              <Text style={[styles.segmentText, range === r.key && { color: colors.onBrandPrimary }]}>{r.label}</Text>
+            <Pressable key={r.key} onPress={() => pickRange(r.key)} style={[styles.segmentBtn, range === r.key && styles.segmentActive]} testID={`aeps-range-${r.key}`}>
+              <Text style={[styles.segmentText, range === r.key && { color: colors.onBrandPrimary }]} numberOfLines={1} adjustsFontSizeToFit>{r.label}</Text>
             </Pressable>
           ))}
         </View>
+        {range === "custom" ? (
+          <Pressable style={styles.customRow} onPress={() => setPicking("from")} testID="aeps-custom-range">
+            <MaterialIcon name="calendar-range" size={16} color={colors.brandPrimary} />
+            <Text style={styles.customText}>{formatDateShort(custom.from)} – {formatDateShort(custom.to)}</Text>
+            <MaterialIcon name="pencil-outline" size={14} color={colors.muted} />
+          </Pressable>
+        ) : null}
+        <CalendarModal
+          visible={picking !== null}
+          value={picking === "to" ? custom.to : custom.from}
+          heading={picking === "to" ? "कब तक?" : "कब से?"}
+          keepOpen
+          onPick={onPickDate}
+          onClose={() => setPicking(null)}
+          max={today}
+        />
 
         <View style={styles.statRow} testID="aeps-summary">
           <Stat label="गल्ला" value={signed(totals.cashNet)} sub={`आए ${formatINR(totals.cashIn)} · गए ${formatINR(totals.cashOut)}`} tone={totals.cashNet < 0 ? colors.error : colors.success} />
           <Stat label="बैंक" value={signed(totals.bankNet)} sub={`आए ${formatINR(totals.bankIn)} · गए ${formatINR(totals.bankOut)}`} tone={totals.bankNet < 0 ? colors.error : colors.success} />
           <Stat label="कमीशन" value={formatINR(totals.commission)} sub={`कैश ${formatINR(totals.commissionCash)} · बैंक ${formatINR(totals.commissionBank)}`} tone={colors.brandSecondary} />
+        </View>
+
+        <View style={styles.portalBox} testID="aeps-portal">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.statLabel}>पोर्टल / बैंक में अभी</Text>
+              <Text style={styles.meta}>हिसाब में दुकान बैंक: {formatINR(appBank)}</Text>
+            </View>
+            <TextInput
+              style={styles.portalInput}
+              value={portal}
+              onChangeText={savePortal}
+              keyboardType="number-pad"
+              placeholder="₹"
+              placeholderTextColor={colors.muted}
+              testID="aeps-portal-input"
+            />
+          </View>
+          {portalDiff !== null ? (
+            portalDiff === 0 ? (
+              <Text style={[styles.portalResult, { color: colors.success }]}>✓ मिल गया</Text>
+            ) : (
+              <>
+                <Text style={[styles.portalResult, { color: colors.error }]}>
+                  {portalDiff > 0 ? `पोर्टल में ${formatINR(portalDiff)} ज़्यादा` : `पोर्टल में ${formatINR(-portalDiff)} कम`} — कोई एंट्री छूटी या गलत है
+                </Text>
+                <Pressable style={styles.portalBtn} onPress={matchPortal} testID="aeps-portal-match">
+                  <Text style={styles.portalBtnText}>हिसाब को पोर्टल के बराबर करें</Text>
+                </Pressable>
+              </>
+            )
+          ) : null}
         </View>
 
         {pending.length > 0 ? (
@@ -244,6 +346,13 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 12, fontWeight: "700", color: colors.muted },
   statValue: { fontSize: 17, fontWeight: "800", marginTop: 2 },
   statSub: { fontSize: 10, color: colors.muted, marginTop: 2 },
+  customRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: spacing.sm, paddingVertical: 6 },
+  customText: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
+  portalBox: { marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, gap: spacing.sm },
+  portalInput: { width: 120, height: 40, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: spacing.sm, fontSize: 16, fontWeight: "700", color: colors.onSurface, textAlign: "right" },
+  portalResult: { fontSize: 12, fontWeight: "700" },
+  portalBtn: { alignSelf: "flex-start", paddingHorizontal: spacing.md, paddingVertical: 7, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandPrimary },
+  portalBtnText: { fontSize: 12, fontWeight: "700", color: colors.brandPrimary },
   pendingBox: { marginTop: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: "#F5D7A1", backgroundColor: "#FFFBF2", padding: spacing.md, gap: spacing.sm },
   pendingHead: { flexDirection: "row", alignItems: "center", gap: 6 },
   pendingTitle: { flex: 1, fontSize: 14, fontWeight: "800", color: colors.warning },

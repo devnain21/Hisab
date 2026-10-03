@@ -3,74 +3,99 @@ import { View, Text, StyleSheet, TextInput } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
-import { addExpense, EXPENSE_CATEGORIES, PERSONAL_EXPENSE_CATEGORIES, type ExpenseMode } from "@/src/lib/expenses";
+import { addExpense, deleteExpense, expensePersona, EXPENSE_CATEGORIES, PERSONAL_EXPENSE_CATEGORIES, type Expense, type ExpenseMode } from "@/src/lib/expenses";
 import { usePersona } from "@/src/lib/persona";
-import { formatDateShort, todayISO } from "@/src/lib/format";
-import { SheetShell } from "@/src/components/sheets";
+import { formatDateShort, formatINR, isBackdated, isValidISO, todayISO } from "@/src/lib/format";
+import { DangerLink, DateField, SheetShell } from "@/src/components/sheets";
+import { store } from "@/src/lib/store";
+import { confirmAction } from "@/src/lib/confirm";
 
 export function AddExpenseSheet({
   visible,
   onClose,
   initialDate,
+  initial,
 }: {
   visible: boolean;
   onClose: () => void;
   initialDate?: string;
+  /** Opens the sheet on an existing expense to change or delete it. */
+  initial?: Expense | null;
 }) {
   const { persona, isPersonal, labels } = usePersona();
-  const categories = isPersonal ? PERSONAL_EXPENSE_CATEGORIES : EXPENSE_CATEGORIES;
+  const base = isPersonal ? PERSONAL_EXPENSE_CATEGORIES : EXPENSE_CATEGORIES;
+  const categories = initial && !base.includes(initial.title) ? [...base, initial.title] : base;
   const [amount, setAmount] = useState("");
   const [title, setTitle] = useState(categories[0]);
   const [mode, setMode] = useState<ExpenseMode>("cash");
   const [notes, setNotes] = useState("");
+  const [date, setDate] = useState(todayISO());
   const [saving, setSaving] = useState(false);
 
   const amountRef = useRef<TextInput>(null);
   useEffect(() => {
     if (!visible) return;
-    setTitle(categories[0]);
+    if (initial) {
+      setTitle(initial.title);
+      setAmount(String(initial.amount));
+      setNotes(initial.notes ?? "");
+      setMode(initial.mode);
+      setDate(initial.date);
+      return;
+    }
+    setTitle(base[0]);
     setAmount("");
     setNotes("");
     setMode("cash");
+    setDate(initialDate || todayISO());
     const t = setTimeout(() => amountRef.current?.focus(), 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, isPersonal]);
+  }, [visible, isPersonal, initial?.id]);
 
   const amtNum = parseFloat(amount) || 0;
+  const valid = amtNum > 0 && isValidISO(date);
+  // An edit that moves the row before the day it was typed takes it out of galla / bank.
+  const nowOld = initial ? isBackdated(date, initial.createdAt) && !isBackdated(initial.date, initial.createdAt) : false;
 
   const handleSave = async () => {
-    if (amtNum <= 0) return;
+    if (!valid) return;
     setSaving(true);
     try {
-      await addExpense({
-        amount: amtNum,
-        title: title.trim() || "खर्च",
-        mode,
-        date: initialDate || todayISO(),
-        notes,
-        persona,
-      });
-      setAmount("");
-      setNotes("");
+      if (initial) {
+        store.updateExpense(initial.id, {
+          amount: amtNum,
+          title: title.trim() || "खर्च",
+          mode,
+          date,
+          notes: notes.trim(),
+          persona: expensePersona(initial),
+        });
+      } else {
+        await addExpense({ amount: amtNum, title: title.trim() || "खर्च", mode, date, notes, persona });
+      }
       onClose();
     } finally {
       setSaving(false);
     }
   };
 
+  const remove = () => {
+    if (!initial) return;
+    confirmAction("खर्च हटाएँ?", `${initial.title} · ${formatINR(initial.amount)}`, "हटा दें", () => {
+      void deleteExpense(initial.id);
+      onClose();
+    });
+  };
+
   return (
     <SheetShell
       visible={visible}
       onClose={onClose}
-      title={`खर्च लिखें${initialDate && initialDate < todayISO() ? ` · ${formatDateShort(initialDate)}` : ""}`}
+      title={initial ? "खर्च बदलें" : `खर्च लिखें${date < todayISO() ? ` · ${formatDateShort(date)}` : ""}`}
       testID="sheet-expense"
     >
       <View>
-
-          {initialDate && initialDate < todayISO() ? (
-            <Text style={styles.oldNote}>पुरानी तारीख — गल्ला / बैंक नहीं बदलेगा</Text>
-          ) : null}
 
           {/* Amount Input */}
           <View style={styles.field}>
@@ -157,18 +182,22 @@ export function AddExpenseSheet({
             />
           </View>
 
+          <DateField label="तारीख" value={date} onChange={setDate} money={!initial} testID="expense-date" />
+          {nowOld ? <Text style={styles.oldNote}>पुरानी तारीख — अब गल्ला / बैंक में नहीं गिना जाएगा</Text> : null}
+
           {/* Save Button */}
           <Pressable
-            style={[styles.saveBtn, amtNum <= 0 && { opacity: 0.5 }]}
-            disabled={amtNum <= 0 || saving}
+            style={[styles.saveBtn, !valid && { opacity: 0.5 }]}
+            disabled={!valid || saving}
             onPress={handleSave}
             testID="expense-save-btn"
           >
             <MaterialIcon name="check" size={20} color={colors.onBrandPrimary} />
             <Text style={styles.saveBtnText}>
-              {saving ? "सेव हो रहा है..." : "खर्च जोड़ें"}
+              {saving ? "सेव हो रहा है..." : initial ? "बदलाव सेव करें" : "खर्च जोड़ें"}
             </Text>
           </Pressable>
+          {initial ? <DangerLink label="यह खर्च हटाएँ" onPress={remove} testID="expense-delete" /> : null}
       </View>
     </SheetShell>
   );

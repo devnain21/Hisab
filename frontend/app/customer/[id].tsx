@@ -7,14 +7,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { computeBalance, isRepayment, itemsOf, useAeps, useCustomers, useEntries, useJobs, type AepsTxn, type Entry, type EntryType, type Job } from "@/src/lib/data";
 import { AEPS_META, STATUS_META, aepsBill, aepsDue, defaultVia, statusLabel, viaBill } from "@/src/lib/aeps";
-import { formatDate, formatINR, formatPhone, initials } from "@/src/lib/format";
+import { formatDate, formatINR, formatPhone, initials, monthRange, todayISO } from "@/src/lib/format";
 import { store } from "@/src/lib/store";
 import { buildLedger, type WorkState, type WorkStatus } from "@/src/lib/records";
-import { AddEntrySheet, AddJobSheet, AddCustomerSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
+import { AddEntrySheet, AddJobSheet, AddCustomerSheet, Chip, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import { aepsReceiptDoc, receiptDoc, statementDoc, reminderDoc, type ShareDoc } from "@/src/lib/receipt";
+import { DataLoadError } from "@/src/components/slow-server-hint";
 import { UpiQrModal } from "@/src/components/upi-qr-sheet";
 import { addRecentCustomer } from "@/src/lib/recent";
 import { accountName } from "@/src/lib/persona";
@@ -48,6 +49,7 @@ export default function CustomerDetail() {
   const [settling, setSettling] = useState<Entry | null>(null);
   const [shareDoc, setShareDoc] = useState<ShareDoc | null>(null);
   const [qrModal, setQrModal] = useState(false);
+  const [stmt, setStmt] = useState<StmtRange | null>(null);
 
   useEffect(() => {
     if (id) void addRecentCustomer(id);
@@ -106,6 +108,13 @@ export default function CustomerDetail() {
       </View>
     );
   }
+  if (!customer && customersQ.isError) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.surface, justifyContent: "center" }}>
+        <DataLoadError onRetry={() => { customersQ.refetch(); entriesQ.refetch(); }} />
+      </View>
+    );
+  }
   if (!customer) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center", padding: spacing.xl }}>
@@ -122,7 +131,8 @@ export default function CustomerDetail() {
     const txn = e.type === "aeps" ? aepsList.find((t) => t.id === e.linkId) : undefined;
     setShareDoc(txn ? aepsReceiptDoc(txn, user ?? {}) : receiptDoc(e, ledger.work.get(e.id), customer, due, isCustomer, user ?? {}));
   };
-  const openStatement = () => setShareDoc(statementDoc(entries, ledger, customer, isCustomer, user ?? {}));
+  const openStatement = () => setStmt("all");
+  const stmtDoc = stmt ? statementDoc(entries, ledger, customer, isCustomer, user ?? {}, stmtRange(stmt)) : null;
   const openReminder = () => setShareDoc(reminderDoc(customer, due, user ?? {}));
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -329,6 +339,17 @@ export default function CustomerDetail() {
       />
       <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
       <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
+      <ReceiptSheet
+        doc={stmtDoc}
+        onClose={() => setStmt(null)}
+        header={
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md }}>
+            {STMT_RANGES.map((r) => (
+              <Chip key={r} label={STMT_LABEL[r]} active={stmt === r} onPress={() => setStmt(r)} testID={`stmt-range-${r}`} />
+            ))}
+          </View>
+        }
+      />
       <UpiQrModal
         visible={qrModal}
         onClose={() => setQrModal(false)}
@@ -339,6 +360,17 @@ export default function CustomerDetail() {
       />
     </View>
   );
+}
+
+type StmtRange = "all" | "this" | "last" | "three";
+const STMT_RANGES: StmtRange[] = ["all", "this", "last", "three"];
+const STMT_LABEL: Record<StmtRange, string> = { all: "पूरा", this: "इस महीने", last: "पिछला महीना", three: "3 महीने" };
+function stmtRange(r: StmtRange): { from: string; to: string } | undefined {
+  const today = todayISO();
+  if (r === "this") return { from: monthRange(today).from, to: today };
+  if (r === "last") return monthRange(today, -1);
+  if (r === "three") return { from: monthRange(today, -2).from, to: today };
+  return undefined;
 }
 
 type LedgerFilter = "all" | "due" | "settled" | "cash" | "jama";

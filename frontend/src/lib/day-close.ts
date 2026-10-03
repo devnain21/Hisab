@@ -1,7 +1,6 @@
 import { formatDate, formatINR, formatPhone, todayISO } from "./format";
 import type { Customer, Entry, Job, AepsTxn } from "./data";
 import type { Expense } from "./expenses";
-import type { ContraTransfer } from "./contra";
 import type { ShopProfile } from "../context/AuthContext";
 import { shareMessage } from "./share-text";
 import type { PocketFlow } from "./wallet";

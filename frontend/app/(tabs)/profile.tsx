@@ -33,6 +33,8 @@ import { getTrashList, subscribeTrash } from "@/src/lib/trash";
 import { shareMessage } from "@/src/lib/share-text";
 import { computeFlows, pocketNet, useMoneyBook } from "@/src/lib/wallet";
 import { router } from "expo-router";
+import { upiLink } from "@/src/lib/qr";
+import { QrCode } from "@/src/components/qr-code";
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
@@ -108,11 +110,12 @@ export default function Profile() {
       .reduce((sum, e) => sum + (e.type === "payment" ? e.amount : (e.paid ?? 0)), 0);
   }, [entries, thisMonthPrefix]);
 
-  const recoveryRate = useMemo(() => {
-    const total = monthPayments + Math.max(totalDue, 0);
-    if (total <= 0) return 100;
-    return Math.min(100, Math.round((monthPayments / total) * 100));
-  }, [monthPayments, totalDue]);
+  // Money collected this month against what was billed this month (work + counter udhaar).
+  const monthBilled = useMemo(
+    () => entries.filter((e) => e.date.startsWith(thisMonthPrefix) && (e.type === "work" || e.type === "aeps")).reduce((s, e) => s + e.amount, 0),
+    [entries, thisMonthPrefix],
+  );
+  const recoveryRate = monthBilled <= 0 ? 100 : Math.min(100, Math.round((monthPayments / monthBilled) * 100));
 
   // Persona toggle with haptics
   const handleSwitchPersona = (target: "business" | "personal") => {
@@ -197,6 +200,8 @@ export default function Profile() {
         entries: allEntries ?? [],
         jobs,
         aeps,
+        expenses: book.expenses,
+        moves: book.moves,
         shop: user,
       });
     } catch {
@@ -473,8 +478,8 @@ export default function Profile() {
               <View style={[styles.progressBarFill, { width: `${recoveryRate}%` }]} />
             </View>
             <View style={styles.progressTextRow}>
-              <Text style={styles.progressSubText}>वसूली: {recoveryRate}%</Text>
-              <Text style={styles.progressSubText}>बाकी: {formatINR(totalDue)}</Text>
+              <Text style={styles.progressSubText}>इस माह वसूली: {recoveryRate}%</Text>
+              <Text style={styles.progressSubText}>इस माह काम: {formatINR(monthBilled)}</Text>
             </View>
           </View>
         ) : null}
@@ -727,12 +732,7 @@ function QrCodeModal({
 }) {
   const [copied, setCopied] = useState(false);
 
-  const upiUrl = upiId
-    ? `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(shopName)}&cu=INR`
-    : "";
-  const qrUrl = upiUrl
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(upiUrl)}`
-    : "";
+  const upiUrl = upiId ? upiLink(upiId, shopName) : "";
 
   const handleCopy = async () => {
     if (!upiId) return;
@@ -766,7 +766,7 @@ function QrCodeModal({
               </Text>
 
               <View style={qrStyles.qrFrame}>
-                <Image source={{ uri: qrUrl }} style={qrStyles.qrImage} />
+                <QrCode value={upiUrl} size={200} />
               </View>
 
               <View style={qrStyles.upiBox}>
@@ -1343,10 +1343,6 @@ const qrStyles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 2,
     borderColor: colors.border,
-  },
-  qrImage: {
-    width: 200,
-    height: 200,
   },
   upiBox: {
     flexDirection: "row",

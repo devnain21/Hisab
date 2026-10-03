@@ -8,11 +8,23 @@ export type ParsedEntry = {
   type: EntryType;
   amount: number;
   description: string;
+  /** Days before today ("कल" = -1, "परसों" = -2). */
+  dateOffset: number;
   confidence: "high" | "medium" | "low";
 };
 
 const PAYMENT_KEYWORDS = ["मिले", "मिला", "जमा", "आए", "प्राप्त", "paid", "received", "jama", "credit", "payment"];
 const GIVEN_KEYWORDS = ["दिए", "दिया", "लोन", "उधार दिया", "gave", "given", "loan", "debit"];
+const PURCHASE_KEYWORDS = ["सामान", "खरीदा", "खरीदी", "ख़रीदा", "लिया", "ली", "kharida", "saman", "purchase", "bought"];
+const DATE_WORDS: Record<string, number> = { "कल": -1, "परसों": -2, "kal": -1, "parso": -2, "yesterday": -1 };
+/** Words that are never a name or a description. */
+const NOISE = new Set([
+  ...PAYMENT_KEYWORDS,
+  ...GIVEN_KEYWORDS,
+  "लिया", "ली", "खरीदा", "खरीदी", "ख़रीदा",
+  "रुपये", "रुपया", "रुपए", "rs", "inr",
+  "को", "का", "की", "से", "ने",
+]);
 const WORK_KEYWORDS = ["काम", "फोटोकॉपी", "प्रिंट", "form", "फॉर्म", "कागज़", "पर्चा", "फाइल", "online", "बिल", "work", "udhaar", "उधार"];
 
 const HINDI_NUMBER_WORDS: Record<string, number> = {
@@ -45,6 +57,7 @@ export function parseQuickText(input: string, customers: Customer[]): ParsedEntr
       type: "work",
       amount: 0,
       description: "",
+      dateOffset: 0,
       confidence: "low",
     };
   }
@@ -73,22 +86,29 @@ export function parseQuickText(input: string, customers: Customer[]): ParsedEntr
   let type: EntryType = "work";
   const lower = text.toLowerCase();
 
+  const words = lower.split(/\s+/);
   const isPayment = PAYMENT_KEYWORDS.some((kw) => lower.includes(kw));
   const isGiven = GIVEN_KEYWORDS.some((kw) => lower.includes(kw));
+  const isPurchase = PURCHASE_KEYWORDS.some((kw) => words.includes(kw));
 
   if (isPayment) {
     type = "payment";
   } else if (isGiven) {
     type = "given";
+  } else if (isPurchase) {
+    type = "purchase";
   } else {
     type = "work";
   }
+
+  const dateWord = words.find((w) => w in DATE_WORDS);
+  const dateOffset = dateWord ? DATE_WORDS[dateWord] : 0;
 
   // Remove keywords from remaining text to find name and description
   const cleanTokens = remainingText
     .split(/\s+/)
     .map((w) => w.replace(/[₹,]/g, "").trim())
-    .filter(Boolean);
+    .filter((w) => w && !(w.toLowerCase() in DATE_WORDS));
 
   let matchedCustomer: Customer | null = null;
 
@@ -107,31 +127,18 @@ export function parseQuickText(input: string, customers: Customer[]): ParsedEntr
   if (matchedCustomer) {
     customerId = matchedCustomer.id;
     customerName = matchedCustomer.name;
-  } else if (cleanTokens.length > 0) {
+  } else {
     // First non-keyword word can be the customer name
-    customerName = cleanTokens[0];
-    isNewCustomer = true;
+    const first = cleanTokens.find((t) => !NOISE.has(t.toLowerCase()));
+    if (first) {
+      customerName = first;
+      isNewCustomer = true;
+    }
   }
 
-  // Words that aren't the customer name, amount, or common noise
-  const noise = new Set([
-    ...PAYMENT_KEYWORDS,
-    ...GIVEN_KEYWORDS,
-    "रुपये",
-    "रुपया",
-    "रुपए",
-    "rs",
-    "inr",
-    "को",
-    "का",
-    "की",
-    "से",
-    "ने",
-    customerName.toLowerCase(),
-  ]);
-
-  const descTokens = cleanTokens.filter((t) => !noise.has(t.toLowerCase()) && t !== customerName);
-  const description = descTokens.join(" ").trim() || (type === "payment" ? "भुगतान मिला" : type === "given" ? "पैसे दिए" : "काम");
+  const descTokens = cleanTokens.filter((t) => !NOISE.has(t.toLowerCase()) && t.toLowerCase() !== customerName.toLowerCase());
+  const description =
+    descTokens.join(" ").trim() || (type === "payment" ? "भुगतान मिला" : type === "given" ? "पैसे दिए" : type === "purchase" ? "सामान / सेवा ली" : "काम");
 
   const confidence = (amount > 0 && customerName.length > 0) ? (matchedCustomer ? "high" : "medium") : "low";
 
@@ -143,6 +150,7 @@ export function parseQuickText(input: string, customers: Customer[]): ParsedEntr
     type,
     amount,
     description,
+    dateOffset,
     confidence,
   };
 }

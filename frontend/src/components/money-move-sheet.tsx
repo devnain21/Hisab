@@ -1,19 +1,32 @@
 import { useEffect, useRef, useState } from "react";
 import { Text, TextInput, View, StyleSheet } from "react-native";
 import { colors, spacing } from "@/src/theme";
-import { formatINR, todayISO } from "@/src/lib/format";
+import { formatINR, isValidISO, todayISO } from "@/src/lib/format";
 import { usePersona, type Persona } from "@/src/lib/persona";
-import { accountKey, accountLabel, addMove, balanceOf, pocketName, useMoneyBook, type AccountKey, type Pocket } from "@/src/lib/wallet";
-import { Chip, DateField, Field, PrimaryButton, SheetShell, inputStyle } from "@/src/components/sheets";
+import { accountKey, accountLabel, addMove, balanceOf, deleteMove, pocketName, useMoneyBook, type AccountKey, type Move, type Pocket } from "@/src/lib/wallet";
+import { Chip, DangerLink, DateField, Field, PrimaryButton, SheetShell, inputStyle } from "@/src/components/sheets";
+import { store } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
 
 export type MoveKind = "in" | "out" | "swap";
 
 const TITLES: Record<MoveKind, string> = { in: "पैसे जोड़ें", out: "पैसे निकालें", swap: "ट्रांसफर" };
 
-export function MoneyMoveSheet({ kind, onClose, initialDate }: { kind: MoveKind | null; onClose: () => void; initialDate?: string }) {
+/** How a saved move looks from this persona's side, so the edit sheet opens on the same choices. */
+function readMove(m: Move, persona: Persona): { kind: MoveKind; pocket: Pocket; other: boolean } {
+  const side = (k: AccountKey) => (k ? (k.split(":") as [Persona, Pocket]) : null);
+  const from = side(m.from);
+  const to = side(m.to);
+  if (!from) return { kind: "in", pocket: to![1], other: false };
+  if (!to) return { kind: "out", pocket: from[1], other: false };
+  if (from[0] === to[0]) return { kind: "swap", pocket: from[1], other: false };
+  return to[0] === persona ? { kind: "in", pocket: to[1], other: true } : { kind: "out", pocket: from[1], other: true };
+}
+
+export function MoneyMoveSheet({ kind: newKind, onClose, initialDate, initial }: { kind: MoveKind | null; onClose: () => void; initialDate?: string; initial?: Move | null }) {
   const { persona, hasShop } = usePersona();
   const book = useMoneyBook();
+  const kind = initial ? readMove(initial, persona).kind : newKind;
   const [pocket, setPocket] = useState<Pocket>("cash");
   const [other, setOther] = useState(false);
   const [amount, setAmount] = useState("");
@@ -24,7 +37,17 @@ export function MoneyMoveSheet({ kind, onClose, initialDate }: { kind: MoveKind 
   const amountRef = useRef<TextInput>(null);
 
   useEffect(() => {
-    if (!kind) return;
+    if (initial) {
+      const r = readMove(initial, persona);
+      setPocket(r.pocket);
+      setOther(r.other);
+      setAmount(String(initial.amount));
+      setNote(initial.note ?? "");
+      setDate(initial.date);
+      setError("");
+      return;
+    }
+    if (!newKind) return;
     setPocket("cash");
     setOther(false);
     setAmount("");
@@ -33,7 +56,8 @@ export function MoneyMoveSheet({ kind, onClose, initialDate }: { kind: MoveKind 
     setError("");
     const t = setTimeout(() => amountRef.current?.focus(), 350);
     return () => clearTimeout(t);
-  }, [kind, initialDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newKind, initialDate, initial?.id]);
 
   const otherPersona: Persona = persona === "business" ? "personal" : "business";
   // Money can only cross to the shop when the shop exists; cash goes to cash, bank to bank.
@@ -56,11 +80,14 @@ export function MoneyMoveSheet({ kind, onClose, initialDate }: { kind: MoveKind 
 
   const amt = Math.max(parseFloat(amount) || 0, 0);
   // Taking money out on an earlier date must not leave a later day short either.
-  const available = from ? Math.min(balanceOf(book, from, date), balanceOf(book, from, date > todayISO() ? date : todayISO())) : Infinity;
+  // While editing, the row's own old amount is still inside the balance; give it back first.
+  const own0 = initial && from && initial.from === from ? initial.amount : 0;
+  const available = from ? Math.min(balanceOf(book, from, date), balanceOf(book, from, date > todayISO() ? date : todayISO())) + own0 : Infinity;
   const short = !!from && amt > available;
+  const valid = amt > 0 && isValidISO(date);
 
   const save = () => {
-    if (!kind || amt <= 0) return;
+    if (!kind || !valid) return;
     // The app's figure can lag the real drawer (an entry not written yet), so warn instead of blocking.
     if (short) {
       confirmAction(
@@ -78,7 +105,9 @@ export function MoneyMoveSheet({ kind, onClose, initialDate }: { kind: MoveKind 
     if (!kind) return;
     setSaving(true);
     try {
-      await addMove({ date, from, to, amount: amt, note: note.trim() });
+      const body = { date, from, to, amount: amt, note: other ? "" : note.trim() };
+      if (initial) store.updateMove(initial.id, body);
+      else await addMove(body);
       onClose();
     } finally {
       setSaving(false);
@@ -88,7 +117,7 @@ export function MoneyMoveSheet({ kind, onClose, initialDate }: { kind: MoveKind 
   const pocketLabel = (p: Pocket) => pocketName(persona, p);
 
   return (
-    <SheetShell visible={!!kind} onClose={onClose} title={kind ? TITLES[kind] : ""} testID="sheet-money-move">
+    <SheetShell visible={!!kind} onClose={onClose} title={kind ? `${TITLES[kind]}${initial ? " — बदलें" : ""}` : ""} testID="sheet-money-move">
       <Field label="रकम (₹)">
         <TextInput
           style={inputStyle}
@@ -151,7 +180,19 @@ export function MoneyMoveSheet({ kind, onClose, initialDate }: { kind: MoveKind 
       <DateField label="तारीख" value={date} onChange={setDate} testID="move-date" />
 
       {error ? <Text style={[styles.hint, { color: colors.error, marginBottom: spacing.sm }]}>{error}</Text> : null}
-      <PrimaryButton label="सेव करें" onPress={save} disabled={amt <= 0} saving={saving} testID="move-save" />
+      <PrimaryButton label={initial ? "बदलाव सेव करें" : "सेव करें"} onPress={save} disabled={!valid} saving={saving} testID="move-save" />
+      {initial ? (
+        <DangerLink
+          label="यह एंट्री हटाएँ"
+          testID="move-delete"
+          onPress={() =>
+            confirmAction("हटाएँ?", `${accountLabel(initial.from)} → ${accountLabel(initial.to)} · ${formatINR(initial.amount)}`, "हटा दें", () => {
+              void deleteMove(initial.id);
+              onClose();
+            })
+          }
+        />
+      ) : null}
     </SheetShell>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, FlatList, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, FlatList, ScrollView, ActivityIndicator, TextInput } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import Animated, { FadeInDown } from "react-native-reanimated";
@@ -9,13 +9,12 @@ import { useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/l
 import { formatDate, formatINR, todayISO } from "@/src/lib/format";
 import { buildAllLedgers, workForJob, type WorkStatus } from "@/src/lib/records";
 import { store } from "@/src/lib/store";
-import { AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
+import { AddEntrySheet, AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
 import { SlowServerHint } from "@/src/components/slow-server-hint";
 import { usePersona } from "@/src/lib/persona";
 type Filter = "open" | "late" | "today" | "unpaid" | "done" | "all";
 const FILTERS: Filter[] = ["open", "late", "today", "unpaid", "done", "all"];
-const CHIPS: Filter[] = ["open", "done"];
 const FILTER_LABEL: Record<Filter, string> = { open: "काम बाकी", late: "देर", today: "आज", unpaid: "लेने हैं", done: "पूरा", all: "सभी" };
 
 function matches(j: Job, f: Filter, today: string, pay?: WorkStatus) {
@@ -28,17 +27,18 @@ function matches(j: Job, f: Filter, today: string, pay?: WorkStatus) {
 }
 
 export default function WorkScreen() {
+  const { isPersonal } = usePersona();
+  return isPersonal ? <PersonalTxns /> : <ShopWork />;
+}
+
+function ShopWork() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ filter?: Filter; t?: string }>();
   const customersQ = useCustomers();
   const jobsQ = useJobs();
   const entriesQ = useEntries();
-  const { isPersonal } = usePersona();
   const allCustomers = customersQ.data;
-  const customers = useMemo(
-    () => (allCustomers ?? []).filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal")),
-    [allCustomers, isPersonal]
-  );
+  const customers = useMemo(() => (allCustomers ?? []).filter((c) => c.persona !== "personal"), [allCustomers]);
   const allJobs = jobsQ.data;
   const jobs = useMemo(() => {
     const mine = new Set(customers.map((c) => c.id));
@@ -46,6 +46,7 @@ export default function WorkScreen() {
   }, [allJobs, customers]);
   const entries = entriesQ.data ?? [];
   const [filter, setFilter] = useState<Filter>("open");
+  const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [completing, setCompleting] = useState<Job | null>(null);
   const [editing, setEditing] = useState<Job | null>(null);
@@ -71,7 +72,7 @@ export default function WorkScreen() {
     if (params.filter && FILTERS.includes(params.filter)) setFilter(params.filter);
   }, [params.filter, params.t]);
 
-  const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? (isPersonal ? "व्यक्ति" : "ग्राहक") : "खुद का काम");
+  const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? "ग्राहक" : "खुद का काम");
   // Own tasks have no money side, so finishing one is a single tap.
   const complete = (j: Job) => (j.customerId ? setCompleting(j) : store.updateJob(j.id, { status: "done", dueDate: today }));
 
@@ -89,15 +90,17 @@ export default function WorkScreen() {
   );
 
   const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
     return jobs
       .filter((j) => matches(j, filter, today, payOf(j)))
+      .filter((j) => !needle || j.title.toLowerCase().includes(needle) || nameOf(j.customerId).toLowerCase().includes(needle) || j.notes.toLowerCase().includes(needle))
       .sort((a, b) => {
         if (a.status === "done" && b.status !== "done") return 1;
         if (a.status !== "done" && b.status === "done") return -1;
         return a.status === "done" ? b.dueDate.localeCompare(a.dueDate) : a.dueDate.localeCompare(b.dueDate);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs, filter, today, ledger, workOf]);
+  }, [jobs, filter, today, ledger, workOf, q, customers]);
 
   const openValue = useMemo(() => jobs.filter((j) => j.status !== "done").reduce((s, j) => s + (j.estimatedAmount || 0), 0), [jobs]);
 
@@ -106,9 +109,10 @@ export default function WorkScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.md }}>
-        <Text style={styles.h1}>{isPersonal ? "लेन-देन" : "काम"}</Text>
+        <Text style={styles.h1}>काम</Text>
+        <SearchBox value={q} onChange={setQ} placeholder="काम या ग्राहक खोजें" testID="work-search" />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.md }}>
-          {CHIPS.map((f) => {
+          {FILTERS.filter((f) => f === "open" || f === "done" || f === "all" || counts[f] > 0 || filter === f).map((f) => {
             const active = filter === f;
             const warn = (f === "late" || f === "unpaid") && counts[f] > 0;
             return (
@@ -151,8 +155,8 @@ export default function WorkScreen() {
           ListEmptyComponent={
             <View style={styles.empty}>
               <MaterialIcon name="briefcase-outline" size={32} color={colors.muted} />
-              <Text style={styles.emptyTitle}>{filter === "late" ? "कोई काम देर से नहीं" : "कोई काम सूची में नहीं"}</Text>
-              {filter !== "late" ? <Text style={styles.emptySub}>नीचे + दबाकर काम जोड़ें</Text> : null}
+              <Text style={styles.emptyTitle}>{q ? "कोई नहीं मिला" : filter === "late" ? "कोई काम देर से नहीं" : "कोई काम सूची में नहीं"}</Text>
+              {filter !== "late" && !q ? <Text style={styles.emptySub}>नीचे + दबाकर काम जोड़ें</Text> : null}
             </View>
           }
           renderItem={({ item: j, index }) => {
@@ -202,6 +206,160 @@ export default function WorkScreen() {
   );
 }
 
+function SearchBox({ value, onChange, placeholder, testID }: { value: string; onChange: (v: string) => void; placeholder: string; testID: string }) {
+  return (
+    <View style={styles.searchWrap}>
+      <MaterialIcon name="magnify" size={18} color={colors.muted} />
+      <TextInput style={styles.search} value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor={colors.muted} testID={testID} />
+      {value ? (
+        <Pressable onPress={() => onChange("")} hitSlop={8}>
+          <MaterialIcon name="close-circle" size={18} color={colors.muted} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+type TxnFilter = "all" | "given" | "payment" | "purchase" | "open";
+const TXN_FILTERS: TxnFilter[] = ["all", "open", "given", "payment", "purchase"];
+const TXN_LABEL: Record<TxnFilter, string> = { all: "सभी", open: "बाकी", given: "दिए", payment: "मिले", purchase: "सामान / सेवा" };
+
+/** The personal book has no jobs: its tab is every rupee given, received and goods taken. */
+function PersonalTxns() {
+  const insets = useSafeAreaInsets();
+  const customersQ = useCustomers();
+  const entriesQ = useEntries();
+  const allCustomers = customersQ.data;
+  const allEntries = entriesQ.data;
+  const names = useMemo(() => new Map((allCustomers ?? []).filter((c) => c.persona === "personal").map((c) => [c.id, c.name])), [allCustomers]);
+  const entries = useMemo(() => (allEntries ?? []).filter((e) => names.has(e.customerId) && e.type !== "work" && e.type !== "aeps"), [allEntries, names]);
+  const ledger = useMemo(() => buildAllLedgers(entries), [entries]);
+  const [filter, setFilter] = useState<TxnFilter>("all");
+  const [q, setQ] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Entry | null>(null);
+  const [settling, setSettling] = useState<Entry | null>(null);
+  const today = todayISO();
+  const month = today.slice(0, 7);
+
+  const left = (e: Entry) => ((e.type === "given" && !e.linkId) || e.type === "purchase" ? ledger.get(e.id)?.remaining ?? 0 : 0);
+  const is = (e: Entry, f: TxnFilter) => (f === "all" ? true : f === "open" ? left(e) > 0 : e.type === f);
+  const counts = useMemo(() => {
+    const c = {} as Record<TxnFilter, number>;
+    TXN_FILTERS.forEach((f) => { c[f] = entries.filter((e) => is(e, f)).length; });
+    return c;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, ledger]);
+  const monthGiven = entries.filter((e) => e.date.startsWith(month) && e.type === "given").reduce((s, e) => s + e.amount, 0);
+  const monthGot = entries.filter((e) => e.date.startsWith(month) && e.type === "payment").reduce((s, e) => s + e.amount, 0);
+  const monthGoods = entries.filter((e) => e.date.startsWith(month) && e.type === "purchase").reduce((s, e) => s + e.amount, 0);
+
+  const needle = q.trim().toLowerCase();
+  const rows = entries
+    .filter((e) => is(e, filter))
+    .filter((e) => !needle || (names.get(e.customerId) ?? "").toLowerCase().includes(needle) || e.description.toLowerCase().includes(needle) || e.notes.toLowerCase().includes(needle))
+    .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : b.createdAt.localeCompare(a.createdAt)));
+
+  const loading = customersQ.isLoading || entriesQ.isLoading;
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.surface }}>
+      <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.md }}>
+        <Text style={styles.h1}>लेन-देन</Text>
+        <SearchBox value={q} onChange={setQ} placeholder="नाम या विवरण खोजें" testID="txn-search" />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.md }}>
+          {TXN_FILTERS.map((f) => {
+            const active = filter === f;
+            const warn = f === "open" && counts.open > 0;
+            return (
+              <Pressable
+                key={f}
+                onPress={() => setFilter(f)}
+                style={[styles.chip, warn && !active && { borderColor: colors.error }, active && (warn ? { backgroundColor: colors.error, borderColor: colors.error } : styles.chipActive)]}
+                testID={`txn-filter-${f}`}
+              >
+                <Text style={[styles.chipText, warn && !active && { color: colors.error }, active && { color: colors.onBrandPrimary }]}>
+                  {TXN_LABEL[f]} ({counts[f] ?? 0})
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+        {!loading && monthGiven + monthGot + monthGoods > 0 ? (
+          <Text style={styles.summary} testID="txn-month">
+            इस महीने: दिए <Text style={{ color: colors.error, fontWeight: "800" }}>{formatINR(monthGiven)}</Text>
+            {" · "}मिले <Text style={{ color: colors.success, fontWeight: "800" }}>{formatINR(monthGot)}</Text>
+            {monthGoods > 0 ? <Text> · सामान <Text style={{ color: colors.warning, fontWeight: "800" }}>{formatINR(monthGoods)}</Text></Text> : null}
+          </Text>
+        ) : null}
+      </View>
+
+      {loading ? (
+        <View style={{ marginTop: spacing.xxl, alignItems: "center" }}><ActivityIndicator color={colors.brandPrimary} /><SlowServerHint /></View>
+      ) : (
+        <FlatList
+          data={rows}
+          keyExtractor={(e) => e.id}
+          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl * 2, gap: spacing.sm }}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <MaterialIcon name="swap-vertical" size={32} color={colors.muted} />
+              <Text style={styles.emptyTitle}>{q ? "कोई नहीं मिला" : filter === "open" ? "कुछ बाकी नहीं" : "अभी कोई लेन-देन नहीं"}</Text>
+              {!q && filter === "all" ? <Text style={styles.emptySub}>नीचे + दबाकर लिखें</Text> : null}
+            </View>
+          }
+          renderItem={({ item: e }) => {
+            const ui = TXN_UI[e.type as "given" | "payment" | "purchase"] ?? TXN_UI.given;
+            const rest = left(e);
+            const repay = e.type === "given" && !!e.linkId;
+            return (
+              <Pressable style={[styles.jobCard, rest > 0 && { borderLeftWidth: 4, borderLeftColor: e.type === "purchase" ? colors.warning : colors.error }]} onPress={() => setEditing(e)} testID={`txn-${e.id}`}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                  <View style={[styles.txnIcon, { backgroundColor: ui.bg }]}>
+                    <MaterialIcon name={ui.icon as any} size={18} color={ui.fg} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.jobTitle} numberOfLines={1}>{names.get(e.customerId) ?? "व्यक्ति"}</Text>
+                    <Text style={styles.jobSub} numberOfLines={1}>
+                      {[repay ? "सामान के पैसे चुकाए" : ui.label, e.description, e.date === today ? "आज" : formatDate(e.date), e.mode === "online" ? "ऑनलाइन" : ""].filter(Boolean).join(" · ")}
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: "flex-end" }}>
+                    <Text style={[styles.txnAmt, { color: ui.fg }]}>{e.type === "payment" ? "+" : "−"}{formatINR(e.type === "purchase" ? e.paid ?? 0 : e.amount)}</Text>
+                    {e.type === "purchase" ? <Text style={styles.jobSub}>कुल {formatINR(e.amount)}</Text> : null}
+                  </View>
+                </View>
+                {rest > 0 ? (
+                  <Pressable
+                    style={[styles.wideBtn, { backgroundColor: e.type === "purchase" ? colors.warning : colors.success, borderColor: e.type === "purchase" ? colors.warning : colors.success }]}
+                    onPress={() => setSettling(e)}
+                    testID={`txn-settle-${e.id}`}
+                  >
+                    <MaterialIcon name="cash-check" size={16} color="#fff" />
+                    <Text style={[styles.smBtnText, { color: "#fff" }]}>{e.type === "purchase" ? `पैसे चुकाए · ${formatINR(rest)} देने हैं` : `वापस मिले · ${formatINR(rest)} लेने हैं`}</Text>
+                  </Pressable>
+                ) : null}
+              </Pressable>
+            );
+          }}
+        />
+      )}
+
+      <Pressable style={[styles.fab, { bottom: insets.bottom + 16 }]} onPress={() => setAdding(true)} testID="add-txn-fab">
+        <MaterialIcon name="plus" size={26} color={colors.onBrandPrimary} />
+      </Pressable>
+      <AddEntrySheet visible={adding} type="given" kinds={["given", "payment", "purchase"]} onClose={() => setAdding(false)} />
+      <EditRecordSheet entry={editing} onClose={() => setEditing(null)} />
+      <SettleSheet work={settling} onClose={() => setSettling(null)} />
+    </View>
+  );
+}
+
+const TXN_UI = {
+  given: { label: "दिए", icon: "arrow-top-right", fg: colors.error, bg: colors.errorSoft },
+  payment: { label: "मिले", icon: "arrow-bottom-left", fg: colors.success, bg: colors.successSoft },
+  purchase: { label: "सामान / सेवा ली", icon: "cart-outline", fg: colors.warning, bg: "#FEF3E2" },
+} as const;
+
 // Completion notes carry the payment split as it was on that day ("₹500 उधार"); the live
 // status pill replaces it, so drop those parts to avoid showing stale money info.
 function stripPayNote(notes: string) {
@@ -248,6 +406,10 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, color: colors.onSurface, fontWeight: "600" },
   summary: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: spacing.md },
   summaryOn: { fontWeight: "800", color: colors.onSurface },
+  searchWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44, borderWidth: 1, borderColor: colors.border },
+  search: { flex: 1, color: colors.onSurface, fontSize: 15 },
+  txnIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  txnAmt: { fontSize: 16, fontWeight: "800" },
   wideBtn: { marginTop: spacing.md, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", paddingVertical: 10, borderRadius: radius.md, borderWidth: 1 },
   jobCard: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
   jobTitle: { fontSize: 15, fontWeight: "700", color: colors.onSurface },

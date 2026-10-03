@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { View, Text, StyleSheet, Modal, Image, Alert } from "react-native";
+import { View, Text, StyleSheet, Modal, Alert } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import * as Linking from "expo-linking";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { formatINR } from "@/src/lib/format";
 import { shareMessage } from "@/src/lib/share-text";
+import { upiLink } from "@/src/lib/qr";
+import { QrCode } from "@/src/components/qr-code";
 
 export function UpiQrModal({
   visible,
@@ -25,13 +27,7 @@ export function UpiQrModal({
   const [copied, setCopied] = useState(false);
 
   const cleanUpi = upiId.trim();
-  const upiUrl = cleanUpi
-    ? `upi://pay?pa=${encodeURIComponent(cleanUpi)}&pn=${encodeURIComponent(shopName)}&am=${amount > 0 ? amount : ""}&cu=INR&tn=Hisab_${encodeURIComponent(customerName)}`
-    : "";
-
-  const qrImageUrl = cleanUpi
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(upiUrl)}`
-    : "";
+  const upiUrl = cleanUpi ? upiLink(cleanUpi, shopName, amount, `Hisab ${customerName}`) : "";
 
   const handleCopy = async () => {
     if (!cleanUpi) return;
@@ -85,9 +81,7 @@ export function UpiQrModal({
               </View>
 
               <View style={styles.qrContainer}>
-                {qrImageUrl ? (
-                  <Image source={{ uri: qrImageUrl }} style={styles.qrImage} resizeMode="contain" />
-                ) : null}
+                {upiUrl ? <QrCode value={upiUrl} size={180} /> : null}
               </View>
 
               <View style={styles.upiRow}>
@@ -184,10 +178,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     alignItems: "center",
     justifyContent: "center",
-  },
-  qrImage: {
-    width: "100%",
-    height: "100%",
   },
   upiRow: {
     flexDirection: "row",

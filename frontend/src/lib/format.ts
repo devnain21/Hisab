@@ -23,6 +23,42 @@ export function todayISO(offsetDays = 0): string {
   return `${y}-${m}-${day}`;
 }
 
+/** A real calendar day written as YYYY-MM-DD (rejects 2026-02-30, 2026-13-01, ...). */
+export function isValidISO(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, d] = s.split("-").map((n) => parseInt(n, 10));
+  const dt = new Date(y, m - 1, d);
+  return y >= 2000 && y <= 2100 && dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+}
+
+/** Day `n` days after (or before) `iso`. */
+export function shiftISO(iso: string, n: number): string {
+  const d = parseISO(iso);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** First and last day of the month `offset` months from the one holding `iso`. */
+export function monthRange(iso: string, offset = 0): { from: string; to: string } {
+  const d = parseISO(iso);
+  const first = new Date(d.getFullYear(), d.getMonth() + offset, 1);
+  const last = new Date(d.getFullYear(), d.getMonth() + offset + 1, 0);
+  const f = (x: Date) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+  return { from: f(first), to: f(last) };
+}
+
+/** Monday-to-Sunday week holding `iso`. */
+export function weekRange(iso: string): { from: string; to: string } {
+  const back = (parseISO(iso).getDay() + 6) % 7;
+  const from = shiftISO(iso, -back);
+  return { from, to: shiftISO(from, 6) };
+}
+
+export function formatMonth(iso: string): string {
+  const d = parseISO(iso);
+  return `${HINDI_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
 const HINDI_MONTHS = [
   "जनवरी", "फरवरी", "मार्च", "अप्रैल", "मई", "जून",
   "जुलाई", "अगस्त", "सितंबर", "अक्टूबर", "नवंबर", "दिसंबर",

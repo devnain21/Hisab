@@ -1,14 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, TextInput, Alert } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
-import { formatINR, todayISO } from "@/src/lib/format";
+import { formatINR, isValidISO, todayISO } from "@/src/lib/format";
 import { useCustomers, type Customer, type EntryType } from "@/src/lib/data";
 import { parseQuickText } from "@/src/lib/quick-parser";
 import { store } from "@/src/lib/store";
 import { usePersona } from "@/src/lib/persona";
-import { SheetShell } from "@/src/components/sheets";
+import { DateField, SheetShell } from "@/src/components/sheets";
 
 export function VoiceEntryModal({
   visible,
@@ -30,10 +30,23 @@ export function VoiceEntryModal({
   const parsed = useMemo(() => parseQuickText(text, customers), [text, customers]);
   const [overrideType, setOverrideType] = useState<EntryType | null>(null);
   const [mode, setMode] = useState<"cash" | "online">("cash");
+  const [dateOverride, setDateOverride] = useState<string | null>(null);
 
-  const parsedType = isPersonal && parsed.type === "work" ? "given" : parsed.type;
+  useEffect(() => {
+    if (!visible) return;
+    setText("");
+    setOverrideType(null);
+    setMode("cash");
+    setDateOverride(null);
+  }, [visible]);
+
+  const parsedType: EntryType = isPersonal
+    ? parsed.type === "work" ? "given" : parsed.type
+    : parsed.type === "purchase" ? "work" : parsed.type;
   const finalType = overrideType || parsedType;
-  const types: EntryType[] = isPersonal ? ["given", "payment"] : ["work", "payment", "given"];
+  const types: EntryType[] = isPersonal ? ["given", "payment", "purchase"] : ["work", "payment", "given"];
+  const date = dateOverride ?? todayISO(parsed.dateOffset);
+  const typeLabel = (t: EntryType) => (t === "work" ? "काम" : t === "payment" ? "मिले" : t === "purchase" ? "सामान लिया" : "दिए");
 
   const handleSave = () => {
     if (!parsed.amount || parsed.amount <= 0) {
@@ -42,6 +55,10 @@ export function VoiceEntryModal({
     }
     if (!parsed.customerName) {
       Alert.alert("नाम लिखें");
+      return;
+    }
+    if (!isValidISO(date)) {
+      Alert.alert("तारीख सही लिखें");
       return;
     }
 
@@ -60,17 +77,14 @@ export function VoiceEntryModal({
     store.createEntry({
       customerId: custId,
       type: finalType,
-      date: todayISO(),
+      date,
       description: parsed.description,
       amount: parsed.amount,
-      paid: finalType === "work" ? 0 : undefined,
-      mode: finalType === "work" ? undefined : mode,
+      paid: finalType === "work" || finalType === "purchase" ? 0 : undefined,
+      mode: finalType === "work" || finalType === "purchase" ? undefined : mode,
       notes: "",
     });
 
-    setText("");
-    setOverrideType(null);
-    setMode("cash");
     onClose();
     if (onSuccess) onSuccess();
   };
@@ -91,6 +105,7 @@ export function VoiceEntryModal({
               onChangeText={(t) => {
                 setText(t);
                 setOverrideType(null);
+                setDateOverride(null);
               }}
               autoFocus
               testID="voice-input"
@@ -111,6 +126,7 @@ export function VoiceEntryModal({
                 onPress={() => {
                   setText(c);
                   setOverrideType(null);
+                  setDateOverride(null);
                 }}
               >
                 <Text style={styles.chipText}>{c}</Text>
@@ -149,7 +165,7 @@ export function VoiceEntryModal({
                 <View style={styles.typeSelector}>
                   {types.map((t) => {
                     const active = finalType === t;
-                    const label = t === "work" ? "काम" : t === "payment" ? "मिले" : "दिए";
+                    const label = typeLabel(t);
                     return (
                       <Pressable
                         key={t}
@@ -165,7 +181,7 @@ export function VoiceEntryModal({
                 </View>
               </View>
 
-              {finalType !== "work" ? (
+              {finalType !== "work" && finalType !== "purchase" ? (
                 <View style={styles.previewRow}>
                   <Text style={styles.previewLabel}>कैसे</Text>
                   <View style={styles.typeSelector}>
@@ -183,6 +199,8 @@ export function VoiceEntryModal({
                 <Text style={styles.previewValue}>{parsed.description || "—"}</Text>
               </View>
 
+              <DateField label="तारीख" value={date} onChange={setDateOverride} money testID="voice-date" />
+
               <Pressable
                 style={[styles.saveBtn, (!parsed.amount || !parsed.customerName) && { opacity: 0.5 }]}
                 disabled={!parsed.amount || !parsed.customerName}
@@ -197,7 +215,7 @@ export function VoiceEntryModal({
             <View style={styles.tipBox}>
               <MaterialIcon name="lightbulb-on-outline" size={24} color={colors.brandPrimary} />
               <Text style={styles.tipText}>
-                कीबोर्ड का माइक दबाकर बोलें: "राकेश 500 मिले"
+                कीबोर्ड का माइक दबाकर बोलें: &quot;राकेश 500 मिले&quot; या &quot;कल राजू 200 दिए&quot;
               </Text>
             </View>
           )}

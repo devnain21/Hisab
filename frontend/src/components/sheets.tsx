@@ -14,11 +14,12 @@ import {
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
-import { advanceOf, computeBalance, itemsOf, useCustomers, useEntries, useJobs, type Entry, type EntryItem, type EntryType, type Job } from "@/src/lib/data";
+import { advanceOf, computeBalance, itemsOf, useCustomers, useEntries, useJobs, type Customer, type Entry, type EntryItem, type EntryType, type Job } from "@/src/lib/data";
 import { ADVANCE, advancesForJob, buildLedger, jobForWork, linkedPayment, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
-import { formatDate, formatINR, todayISO } from "@/src/lib/format";
+import { formatDate, formatINR, isValidISO, todayISO } from "@/src/lib/format";
+import { CalendarModal } from "@/src/components/calendar-modal";
 import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
 import { useContactPicker } from "@/src/components/contact-picker-modal";
@@ -158,26 +159,69 @@ export function Chip({ label, active, onPress, icon, testID, tone }: { label: st
   );
 }
 
+/**
+ * Day chips, a calendar and a typed date. Only a real calendar day reaches `onChange`, so a
+ * half-typed or impossible date can never be saved; the box shows what is wrong instead.
+ */
 export function DateField({ label, value, onChange, future, money, testID }: { label: string; value: string; onChange: (v: string) => void; future?: boolean; money?: boolean; testID?: string }) {
-  const old = money && /^\d{4}-\d{2}-\d{2}$/.test(value) && value < todayISO();
+  const [text, setText] = useState(value);
+  const [calendar, setCalendar] = useState(false);
+  useEffect(() => setText(value), [value]);
+  const today = todayISO();
+  const typedOk = isValidISO(text);
+  const old = money && isValidISO(value) && value < today;
+  const ahead = !future && isValidISO(value) && value > today;
   const presets = future
-    ? [{ label: "आज", d: todayISO() }, { label: "कल", d: todayISO(1) }, { label: "परसों", d: todayISO(2) }, { label: "1 हफ़्ता", d: todayISO(7) }]
-    : [{ label: "आज", d: todayISO() }, { label: "कल (बीता)", d: todayISO(-1) }];
+    ? [{ label: "आज", d: today }, { label: "कल", d: todayISO(1) }, { label: "परसों", d: todayISO(2) }, { label: "1 हफ़्ता", d: todayISO(7) }]
+    : [{ label: "आज", d: today }, { label: "कल (बीता)", d: todayISO(-1) }];
+  const pick = (d: string) => { setText(d); onChange(d); };
   return (
     <Field label={label}>
       <View style={styles.chipRow}>
         {presets.map((p) => (
-          <Chip key={p.label} label={p.label} active={value === p.d} onPress={() => onChange(p.d)} />
+          <Chip key={p.label} label={p.label} active={value === p.d} onPress={() => pick(p.d)} />
         ))}
       </View>
-      <TextInput style={[inputStyle, { marginTop: spacing.sm }]} value={value} onChangeText={onChange} placeholder="YYYY-MM-DD" placeholderTextColor={colors.muted} testID={testID} />
-      {old ? <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>पुरानी तारीख — खाते में जुड़ेगा, गल्ला / बैंक नहीं बदलेगा</Text> : null}
+      <View style={[styles.searchRow, { marginTop: spacing.sm }]}>
+        <TextInput
+          style={[inputStyle, { flex: 1 }, !typedOk && { borderColor: colors.error }]}
+          value={text}
+          onChangeText={(t) => {
+            setText(t);
+            if (isValidISO(t)) onChange(t);
+          }}
+          onBlur={() => { if (!isValidISO(text)) setText(value); }}
+          placeholder="YYYY-MM-DD"
+          placeholderTextColor={colors.muted}
+          maxLength={10}
+          testID={testID}
+        />
+        <Pressable style={styles.contactBtn} onPress={() => setCalendar(true)} hitSlop={4} testID={testID ? `${testID}-cal` : undefined}>
+          <MaterialIcon name="calendar-month-outline" size={22} color={colors.brandPrimary} />
+        </Pressable>
+      </View>
+      {!typedOk ? (
+        <Text style={[styles.hint, { color: colors.error, marginTop: 6 }]}>तारीख ऐसे लिखें: {today} (अभी {formatDate(value)} ही रहेगी)</Text>
+      ) : ahead ? (
+        <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>आगे की तारीख है — {formatDate(value)}</Text>
+      ) : old ? (
+        <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>पुरानी तारीख — खाते में जुड़ेगा, गल्ला / बैंक नहीं बदलेगा</Text>
+      ) : null}
+      <CalendarModal visible={calendar} value={value} onPick={pick} onClose={() => setCalendar(false)} max={future ? undefined : today} />
     </Field>
   );
 }
 
 const NEW_CUSTOMER = "__new__";
 const SELF = "__self__";
+
+const last10 = (p: string) => p.replace(/\D/g, "").slice(-10);
+/** Another person in the list who already has this phone number. */
+function samePhone(list: Customer[], phone: string, exceptId?: string): Customer | undefined {
+  const d = last10(phone);
+  if (d.length < 10) return undefined;
+  return list.find((c) => c.id !== exceptId && last10(c.phone || "") === d);
+}
 
 // Lets a sheet pick an existing customer (searchable, most recent first), create one from the
 // typed name, or — for jobs — mark it as the shopkeeper's own task.
@@ -268,6 +312,7 @@ export function CustomerPicker({ choice, label = "नाम", allowSelf, testPre
   }
 
   const typed = query.trim();
+  const dupe = isNew ? samePhone(recent, choice.newPhone) : undefined;
   return (
     <Field label={label}>
       <View style={styles.searchRow}>
@@ -298,6 +343,12 @@ export function CustomerPicker({ choice, label = "नाम", allowSelf, testPre
       {isNew ? (
         <TextInput style={[inputStyle, { marginTop: spacing.sm }]} value={choice.newPhone} onChangeText={choice.setNewPhone} placeholder="फ़ोन (वैकल्पिक)" placeholderTextColor={colors.muted} keyboardType="phone-pad" testID="input-new-cust-phone" />
       ) : null}
+      {isNew && dupe ? (
+        <Pressable style={styles.dupeRow} onPress={() => { setCustomerId(dupe.id); setQuery(""); }} testID={`${testPrefix}-dupe`}>
+          <MaterialIcon name="alert-circle-outline" size={16} color={colors.warning} />
+          <Text style={styles.dupeText}>यह नंबर पहले से &quot;{dupe.name}&quot; के नाम है — उन्हें चुनें</Text>
+        </Pressable>
+      ) : null}
       {contacts.modal}
     </Field>
   );
@@ -311,6 +362,13 @@ function useMoneyInput() {
   const [total, setTotalRaw] = useState("");
   const [received, setReceivedRaw] = useState("");
   const [touched, setTouched] = useState(false);
+  // Already-received money (e.g. a job advance) that the "received now" default leaves out.
+  const [less, setLess] = useState(0);
+  const follow = (t: string) => {
+    if (!less) return t;
+    const n = parseFloat(t);
+    return Number.isFinite(n) ? String(Math.max(n - less, 0)) : "";
+  };
   return {
     total,
     received,
@@ -318,16 +376,22 @@ function useMoneyInput() {
     receivedNum: Math.max(parseFloat(received) || 0, 0),
     setTotal: (t: string) => {
       setTotalRaw(t);
-      if (!touched) setReceivedRaw(t);
+      if (!touched) setReceivedRaw(follow(t));
     },
     setReceived: (r: string) => {
       setTouched(true);
       setReceivedRaw(r);
     },
-    reset: (t: string, r?: string) => {
+    reset: (t: string, r?: string, alreadyGot = 0) => {
+      setLess(alreadyGot);
       setTotalRaw(t);
-      setReceivedRaw(r ?? t);
       setTouched(r !== undefined);
+      if (r !== undefined) setReceivedRaw(r);
+      else if (!alreadyGot) setReceivedRaw(t);
+      else {
+        const n = parseFloat(t);
+        setReceivedRaw(Number.isFinite(n) ? String(Math.max(n - alreadyGot, 0)) : "");
+      }
     },
   };
 }
@@ -574,7 +638,8 @@ function recordWork({
   feeMode?: "cash" | "online";
   items?: EntryItem[];
 }): string {
-  if (amount <= 0) return "";
+  // Free work is still booked when the shop paid a fee for it, so the cost shows up.
+  if (amount <= 0 && !(fee > 0 && customerId)) return "";
   const work = store.createEntry({
     customerId,
     type: "work",
@@ -628,6 +693,11 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
     }
   }, [visible, initial, isPersonal]);
 
+  const allCustomers = useCustomers().data ?? [];
+  const sameBook = allCustomers.filter((c) => (targetPersona === "personal" ? c.persona === "personal" : c.persona !== "personal"));
+  const phoneDupe = samePhone(sameBook, phone, initial?.id);
+  const nameDupe = !!name.trim() && sameBook.some((c) => c.id !== initial?.id && c.name.trim().toLowerCase() === name.trim().toLowerCase());
+
   const save = async () => {
     if (!name.trim()) return;
     setSaving(true);
@@ -674,8 +744,20 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
       <Field label="नाम">
         <TextInput style={inputStyle} value={name} onChangeText={setName} placeholder="नाम" placeholderTextColor={colors.muted} testID="input-cust-name" />
       </Field>
+      {nameDupe ? (
+        <View style={[styles.dupeRow, { marginTop: -spacing.sm, marginBottom: spacing.sm }]}>
+          <MaterialIcon name="alert-circle-outline" size={16} color={colors.warning} />
+          <Text style={styles.dupeText}>इस नाम से पहले से एक खाता है</Text>
+        </View>
+      ) : null}
       <Field label="फ़ोन (वैकल्पिक)">
         <TextInput style={inputStyle} value={phone} onChangeText={setPhone} placeholder="10 अंक" placeholderTextColor={colors.muted} keyboardType="phone-pad" testID="input-cust-phone" />
+        {phoneDupe ? (
+          <View style={styles.dupeRow}>
+            <MaterialIcon name="alert-circle-outline" size={16} color={colors.warning} />
+            <Text style={styles.dupeText}>यह नंबर पहले से &quot;{phoneDupe.name}&quot; के नाम है</Text>
+          </View>
+        ) : null}
       </Field>
       <Field label="पता (वैकल्पिक)">
         <TextInput style={inputStyle} value={address} onChangeText={setAddress} placeholder="मोहल्ला, गली या गांव" placeholderTextColor={colors.muted} testID="input-cust-address" />
@@ -920,7 +1002,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   }, [entry?.id]);
 
   const amt = money.totalNum;
-  const valid = items.titled && amt > 0;
+  const valid = items.titled && (amt > 0 || (parseFloat(govtFee) || 0) > 0);
 
   const save = () => {
     if (!entry || !valid) return;
@@ -1440,7 +1522,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
     if (job) {
       const est = job.estimatedAmount > 0 ? job.estimatedAmount : 0;
       // The advance for this job already sits in the drawer/bank; only the remainder is new money.
-      money.reset(est ? String(est) : "", jobAdvance > 0 ? String(Math.max(est - jobAdvance, 0)) : undefined);
+      money.reset(est ? String(est) : "", undefined, jobAdvance);
       setPayMode("cash");
       setFee("");
       setFeeMode("online");
@@ -1490,7 +1572,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
         <>
           <MoneyFields money={money} advance={advance} receivedLabel="आज मिले (₹)" freeAllowed />
           {got > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
-          {amt > 0 ? <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} /> : null}
+          <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
         </>
       ) : null}
       <DateField label="काम की तारीख" value={workDate} onChange={(d) => { setWorkDate(d); setCashDate(d); }} testID="input-complete-date" />
@@ -1517,6 +1599,8 @@ const styles = StyleSheet.create({
   pickedRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 48, paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.border },
   pickedName: { flex: 1, fontSize: 15, fontWeight: "700", color: colors.onSurface },
   changeText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
+  dupeRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: spacing.sm },
+  dupeText: { flex: 1, fontSize: 12, fontWeight: "600", color: colors.warning },
   chip: { flexDirection: "row", gap: 6, paddingHorizontal: spacing.md, height: 36, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   chipText: { fontSize: 13, color: colors.onSurface, fontWeight: "600" },
   segment: { flexDirection: "row", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: 4, marginBottom: spacing.lg, borderWidth: 1, borderColor: colors.border },

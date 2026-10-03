@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, TextInput, FlatList, ScrollView, ActivityIndicator } from "react-native";
 import { Pressable } from "@/src/components/tap";
-import { SlowServerHint } from "@/src/components/slow-server-hint";
+import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
 import { entryDelta, useCustomers, useEntries } from "@/src/lib/data";
+import { buildAllLedgers } from "@/src/lib/records";
 import { formatDateShort, formatINR, formatPhone, initials, todayISO } from "@/src/lib/format";
 import { usePersona } from "@/src/lib/persona";
 
 type Filter = "due" | "owe" | "all";
 const FILTERS: Filter[] = ["due", "owe", "all"];
+type Sort = "recent" | "amount" | "oldest";
+const SORTS: Sort[] = ["recent", "amount", "oldest"];
+const SORT_LABEL: Record<Sort, string> = { recent: "नई एंट्री", amount: "ज़्यादा रकम", oldest: "सबसे पुराना बाकी" };
 
 export default function CustomersScreen() {
   const insets = useSafeAreaInsets();
@@ -24,7 +28,9 @@ export default function CustomersScreen() {
   const entries = entriesQ.data ?? [];
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("due");
+  const [sort, setSort] = useState<Sort>("recent");
   const today = todayISO();
+  const daysSince = (d: string) => Math.round((new Date(today).getTime() - new Date(d).getTime()) / 86400000);
 
   const customers = useMemo(
     () => allCustomers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal")),
@@ -40,18 +46,21 @@ export default function CustomersScreen() {
 
   const all = useMemo(() => {
     // `latest` orders by the newest entry: its date, then when it was typed.
-    const stats = new Map<string, { due: number; last: string; latest: string }>();
+    // `since` is the day of the oldest row still open (unpaid udhaar, or goods we still owe for).
+    const stats = new Map<string, { due: number; last: string; latest: string; since: string }>();
+    const open = buildAllLedgers(entries);
     for (const e of entries) {
-      const s = stats.get(e.customerId) ?? { due: 0, last: "", latest: "" };
+      const s = stats.get(e.customerId) ?? { due: 0, last: "", latest: "", since: "" };
       s.due += entryDelta(e);
       if (e.date > s.last) s.last = e.date;
       const key = `${e.date}|${e.createdAt}`;
       if (key > s.latest) s.latest = key;
+      if ((open.get(e.id)?.remaining ?? 0) > 0 && (!s.since || e.date < s.since)) s.since = e.date;
       stats.set(e.customerId, s);
     }
     return customers.map((c) => {
       const s = stats.get(c.id);
-      return { c, due: s?.due ?? 0, last: s?.last ?? "", latest: s?.latest ?? "" };
+      return { c, due: s?.due ?? 0, last: s?.last ?? "", latest: s?.latest ?? "", since: s?.since ?? "" };
     });
   }, [customers, entries]);
 
@@ -68,10 +77,16 @@ export default function CustomersScreen() {
     return all
       .filter(({ c }) => !needle || c.name.toLowerCase().includes(needle) || c.phone.includes(needle) || c.address.toLowerCase().includes(needle))
       .filter(({ due }) => (filter === "due" ? due > 0 : filter === "owe" ? due < 0 : true))
-      .sort((a, b) => (filter === "all" ? a.c.name.localeCompare(b.c.name, "hi") : b.latest.localeCompare(a.latest)));
-  }, [all, q, filter]);
+      .sort((a, b) => {
+        if (filter === "all") return a.c.name.localeCompare(b.c.name, "hi");
+        if (sort === "amount") return Math.abs(b.due) - Math.abs(a.due);
+        if (sort === "oldest") return (a.since || a.last || "9").localeCompare(b.since || b.last || "9");
+        return b.latest.localeCompare(a.latest);
+      });
+  }, [all, q, filter, sort]);
 
   const loading = customersQ.isLoading || entriesQ.isLoading;
+  const loadFailed = !loading && (customersQ.isError || entriesQ.isError) && (customersQ.data == null || entriesQ.data == null);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -112,9 +127,21 @@ export default function CustomersScreen() {
             · {counts[filter]} {labels.customers}
           </Text>
         ) : null}
+        {!loading && filter !== "all" && counts[filter] > 1 ? (
+          <View style={styles.sortRow}>
+            <MaterialIcon name="sort" size={16} color={colors.muted} />
+            {SORTS.map((s) => (
+              <Pressable key={s} onPress={() => setSort(s)} hitSlop={6} testID={`sort-${s}`}>
+                <Text style={[styles.sortText, sort === s && styles.sortOn]}>{SORT_LABEL[s]}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </View>
 
-      {loading ? (
+      {loadFailed ? (
+        <DataLoadError onRetry={() => { customersQ.refetch(); entriesQ.refetch(); }} />
+      ) : loading ? (
         <View style={{ marginTop: spacing.xxl, alignItems: "center" }}><ActivityIndicator color={colors.brandPrimary} /><SlowServerHint /></View>
       ) : (
         <FlatList
@@ -144,7 +171,12 @@ export default function CustomersScreen() {
                   {item.c.phone ? formatPhone(item.c.phone) : "फ़ोन नहीं"}{item.c.address ? ` · ${item.c.address}` : ""}
                 </Text>
                 {item.last ? (
-                  <Text style={styles.last} numberOfLines={1}>आख़िरी एंट्री: {item.last === today ? "आज" : formatDateShort(item.last)}</Text>
+                  <Text style={styles.last} numberOfLines={1}>
+                    आख़िरी एंट्री: {item.last === today ? "आज" : formatDateShort(item.last)}
+                    {item.due > 0 && item.since && daysSince(item.since) >= 30 ? (
+                      <Text style={{ color: colors.error, fontWeight: "700" }}> · {daysSince(item.since)} दिन से बाकी</Text>
+                    ) : null}
+                  </Text>
                 ) : null}
               </View>
               <View style={{ alignItems: "flex-end" }}>
@@ -173,6 +205,9 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
   chipText: { fontSize: 13, color: colors.onSurface, fontWeight: "600" },
   summary: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: spacing.md },
+  sortRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginTop: spacing.sm },
+  sortText: { fontSize: 12, color: colors.muted, fontWeight: "600" },
+  sortOn: { color: colors.brandPrimary, fontWeight: "800", textDecorationLine: "underline" },
   row: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderLeftWidth: 1, borderRightWidth: 1, borderColor: colors.border },
   firstRow: { borderTopLeftRadius: radius.md, borderTopRightRadius: radius.md, borderTopWidth: 1 },
   lastRow: { borderBottomLeftRadius: radius.md, borderBottomRightRadius: radius.md, borderBottomWidth: 1 },

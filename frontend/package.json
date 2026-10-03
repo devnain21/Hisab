@@ -46,6 +46,7 @@
     "expo-updates": "~57.0.24",
     "expo-web-browser": "57.0.3",
     "firebase": "12.19.0",
+    "qrcode-generator": "1.4.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",

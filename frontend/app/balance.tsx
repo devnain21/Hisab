@@ -7,12 +7,10 @@ import { colors, radius, spacing } from "@/src/theme";
 import { formatDateShort, formatINR, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { usePersona } from "@/src/lib/persona";
-import { accountKey, accountLabel, computeFlows, deleteMove, pocketNet, useMoneyBook } from "@/src/lib/wallet";
+import { accountKey, accountLabel, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
 import { PocketCard, pocketTitle } from "@/src/components/pocket-card";
 import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet";
 import { AddExpenseSheet } from "@/src/components/expense-sheet";
-import { confirmAction } from "@/src/lib/confirm";
-
 export default function BalanceScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -21,6 +19,7 @@ export default function BalanceScreen() {
   const today = todayISO();
   const [move, setMove] = useState<MoveKind | null>(null);
   const [expense, setExpense] = useState(false);
+  const [editMove, setEditMove] = useState<Move | null>(null);
 
   const before = useMemo(() => computeFlows(book, persona, (d) => d < today), [book, persona, today]);
   const todayFlows = useMemo(() => computeFlows(book, persona, (d) => d === today), [book, persona, today]);
@@ -88,7 +87,7 @@ export default function BalanceScreen() {
                 const own = ownKeys.includes(m.to);
                 const swap = own && ownKeys.includes(m.from);
                 return (
-                  <View key={m.id} style={[styles.moveRow, i > 0 && styles.moveBorder]}>
+                  <Pressable key={m.id} style={[styles.moveRow, i > 0 && styles.moveBorder]} onPress={() => setEditMove(m)} testID={`move-row-${m.id}`}>
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={styles.moveTitle} numberOfLines={1}>
                         {accountLabel(m.from)} → {accountLabel(m.to)}
@@ -98,14 +97,8 @@ export default function BalanceScreen() {
                       </Text>
                     </View>
                     <Text style={[styles.moveAmt, { color: swap ? colors.onSurface : own ? colors.success : colors.error }]}>{swap ? "" : own ? "+" : "-"}{formatINR(m.amount)}</Text>
-                    <Pressable
-                      onPress={() => confirmAction("हटाएँ?", `${accountLabel(m.from)} → ${accountLabel(m.to)} · ${formatINR(m.amount)}`, "हटा दें", () => deleteMove(m.id))}
-                      hitSlop={8}
-                      testID={`move-delete-${m.id}`}
-                    >
-                      <MaterialIcon name="delete-outline" size={18} color={colors.muted} />
-                    </Pressable>
-                  </View>
+                    <MaterialIcon name="pencil-outline" size={16} color={colors.muted} />
+                  </Pressable>
                 );
               })}
             </View>
@@ -114,6 +107,7 @@ export default function BalanceScreen() {
       </ScrollView>
 
       <MoneyMoveSheet kind={move} onClose={() => setMove(null)} />
+      <MoneyMoveSheet kind={null} initial={editMove} onClose={() => setEditMove(null)} />
       <AddExpenseSheet visible={expense} onClose={() => setExpense(false)} />
     </View>
   );

@@ -8,6 +8,7 @@ import { formatDate, formatDateShort, formatINR, formatPhone, todayISO } from "@
 import type { ShopProfile } from "@/src/context/AuthContext";
 import { AEPS_META, aepsBill, customerCharge, defaultVia, maskAccount, statusLabel, viaBill } from "@/src/lib/aeps";
 import { accountName } from "@/src/lib/persona";
+import { qrSvg, upiLink } from "@/src/lib/qr";
 
 type Tone = "due" | "ok";
 export type Line = { label: string; value: string; tone?: Tone };
@@ -44,11 +45,10 @@ const fileSafe = (s: string) => s.replace(/[\\/:*?"<>|\s]+/g, "-").slice(0, 30) 
 
 function upiQrHtml(shop: ShopProfile, amount: number, customerName: string): string {
   if (!shop.shop_upi || amount <= 0) return "";
-  const upiUrl = `upi://pay?pa=${encodeURIComponent(shop.shop_upi)}&pn=${encodeURIComponent(shop.shop_name)}&am=${amount}&cu=INR&tn=Hisab_${encodeURIComponent(customerName)}`;
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(upiUrl)}`;
+  const upiUrl = upiLink(shop.shop_upi, shop.shop_name, amount, `Hisab ${customerName}`);
   return `
   <div style="margin-top:14px;padding:10px 12px;border:1.5px solid ${BRAND};border-radius:8px;display:flex;align-items:center;gap:14px;background:#F0FAF8;">
-    <img src="${qrUrl}" width="76" height="76" style="border-radius:4px;border:1px solid #CCC;background:#FFF;"/>
+    <div style="flex-shrink:0;border:1px solid #CCC;border-radius:4px;line-height:0;">${qrSvg(upiUrl, 84)}</div>
     <div>
       <div style="font-weight:700;color:${BRAND};font-size:12px;">ऑनलाइन भुगतान के लिए स्कैन करें (${formatINR(amount)})</div>
       <div style="font-size:11px;color:#222;margin-top:2px;">UPI ID: <b>${esc(shop.shop_upi)}</b></div>
@@ -142,40 +142,59 @@ export function statementDoc(
   customer: Customer,
   isCustomer: boolean,
   shopIn: Partial<ShopProfile>,
+  range?: { from: string; to: string },
 ): ShareDoc {
   const shop = fullShop(shopIn);
   const sorted = [...entries].sort((a, b) => (a.date !== b.date ? a.date.localeCompare(b.date) : a.createdAt.localeCompare(b.createdAt)));
-  let running = 0;
+  // d raises what they owe, c lowers it. A purchase is goods they gave (c) less what we paid on the spot (d).
+  const legs = (e: Entry) => ({
+    d: e.type === "payment" ? 0 : e.type === "purchase" ? e.paid ?? 0 : e.amount,
+    c: e.type === "work" ? e.paid ?? 0 : e.type === "payment" || e.type === "purchase" ? e.amount : 0,
+  });
+  const inRange = (e: Entry) => !range || (e.date >= range.from && e.date <= range.to);
+  const opening = range ? sorted.filter((e) => e.date < range.from).reduce((s, e) => { const l = legs(e); return s + l.d - l.c; }, 0) : 0;
+  let running = opening;
   let debit = 0;
   let credit = 0;
-  // d raises what they owe, c lowers it. A purchase is goods they gave (c) less what we paid on the spot (d).
-  const rows = sorted.map((e) => {
-    const d = e.type === "payment" ? 0 : e.type === "purchase" ? e.paid ?? 0 : e.amount;
-    const c = e.type === "work" ? e.paid ?? 0 : e.type === "payment" || e.type === "purchase" ? e.amount : 0;
+  const rows = sorted.filter(inRange).map((e) => {
+    const { d, c } = legs(e);
     running += d - c;
     debit += d;
     credit += c;
-    const text = e.description || (e.type === "payment" ? "पैसे मिले" : e.type === "given" ? "पैसे दिए" : e.type === "purchase" ? "सामान / सेवा ली" : "काम");
-    const sub = e.items && e.items.length > 1 ? e.items.map((i) => `${i.title} ${formatINR(i.amount)}`).join(" · ") : "";
-    return { date: e.date, text, sub, d, c, bal: running };
+    const base = e.description || (e.type === "payment" ? "पैसे मिले" : e.type === "given" ? "पैसे दिए" : e.type === "purchase" ? "सामान / सेवा" : e.type === "aeps" ? "काउंटर सेवा" : "काम");
+    const text = e.type === "purchase" ? `सामान / सेवा ली: ${base}` : base;
+    const parts = e.items && e.items.length > 1 ? e.items.map((i) => `${i.title} ${formatINR(i.amount)}`) : [];
+    if (e.type === "purchase" && (e.paid ?? 0) > 0) parts.push(`उसी दिन चुकाए ${formatINR(e.paid ?? 0)}`);
+    return { date: e.date, text, sub: parts.join(" · "), d, c, bal: running };
   });
-  const balance = running;
+  const closing = running;
+  const balance = sorted.reduce((s, e) => { const l = legs(e); return s + l.d - l.c; }, 0);
   const account = accountLine(balance, isCustomer);
   const open = sorted.filter((e) => e.type !== "payment" && e.type !== "purchase" && (ledger.work.get(e.id)?.remaining ?? 0) > 0);
   const owed = sorted.filter((e) => e.type === "purchase" && (ledger.work.get(e.id)?.remaining ?? 0) > 0);
   const today = todayISO();
-  const period = sorted.length ? `${formatDate(sorted[0].date)} – ${formatDate(sorted[sorted.length - 1].date)}` : "";
-  const debitLabel = isCustomer ? "कुल काम" : "कुल दिए";
+  const shown = sorted.filter(inRange);
+  const period = range
+    ? `${formatDate(range.from)} – ${formatDate(range.to)}`
+    : shown.length
+      ? `${formatDate(shown[0].date)} – ${formatDate(shown[shown.length - 1].date)}`
+      : "";
+  const debitLabel = isCustomer ? "कुल काम / दिए" : "कुल दिए";
+  const creditLabel = isCustomer ? "कुल जमा" : "कुल मिले / सामान";
+  const signed = (b: number) => (b > 0 ? `${formatINR(b)} लेने` : b < 0 ? `${formatINR(-b)} ${isCustomer ? "एडवांस" : "देने"}` : "₹0");
 
   const lines: Line[] = [
+    ...(range ? [{ label: "पिछला हिसाब", value: signed(opening) }] : []),
     { label: `${debitLabel} (${rows.length} एंट्री)`, value: formatINR(debit) },
-    { label: "कुल जमा", value: formatINR(credit), tone: "ok" },
+    { label: creditLabel, value: formatINR(credit), tone: "ok" as Tone },
+    ...(range && range.to < today ? [{ label: `${formatDate(range.to)} तक`, value: signed(closing) }] : []),
   ];
 
   const message = [
     ...messageHead(shop),
     `*खाता विवरण* · ${formatDate(today)}`,
     `${customer.persona === "personal" ? "नाम" : "ग्राहक"}: ${customer.name}`,
+    ...(period ? [`अवधि: ${period}`] : []),
     "",
     ...lines.map(lineText),
     `*${account.label}: ${account.value}*`,
@@ -194,14 +213,15 @@ export function statementDoc(
   const body = `
   ${period ? `<div class="meta" style="margin-bottom:8px">अवधि: ${esc(period)}</div>` : ""}
   <table class="ledger">
-    <tr><th>तारीख</th><th>विवरण</th><th class="amt">रकम</th><th class="amt">जमा</th><th class="amt">हिसाब</th></tr>
+    <tr><th>तारीख</th><th>विवरण</th><th class="amt">${isCustomer ? "काम / दिए" : "दिए"}</th><th class="amt">${isCustomer ? "जमा" : "मिले / सामान"}</th><th class="amt">हिसाब</th></tr>
+    ${range ? `<tr><td class="nowrap">${esc(formatDateShort(range.from))}</td><td><b>पिछला हिसाब</b></td><td class="amt"></td><td class="amt"></td><td class="amt">${balCell(opening)}</td></tr>` : ""}
     ${rows
       .map(
         (r) =>
           `<tr><td class="nowrap">${esc(formatDateShort(r.date))}</td><td>${esc(r.text)}${r.sub ? `<div class="sub">${esc(r.sub)}</div>` : ""}</td><td class="amt">${r.d ? esc(formatINR(r.d)) : ""}</td><td class="amt" style="color:${OK}">${r.c ? esc(formatINR(r.c)) : ""}</td><td class="amt">${balCell(r.bal)}</td></tr>`,
       )
       .join("")}
-    <tr class="total"><td colspan="2">कुल</td><td class="amt">${esc(formatINR(debit))}</td><td class="amt" style="color:${OK}">${esc(formatINR(credit))}</td><td class="amt">${balCell(balance)}</td></tr>
+    <tr class="total"><td colspan="2">कुल</td><td class="amt">${esc(formatINR(debit))}</td><td class="amt" style="color:${OK}">${esc(formatINR(credit))}</td><td class="amt">${balCell(closing)}</td></tr>
   </table>
   ${accountBox(account)}
   ${upiQrHtml(shop, balance, customer.name)}`;
@@ -225,9 +245,7 @@ export function reminderDoc(
   shopIn: Partial<ShopProfile>,
 ): ShareDoc {
   const shop = fullShop(shopIn);
-  const upiUrl = shop.shop_upi
-    ? `upi://pay?pa=${encodeURIComponent(shop.shop_upi)}&pn=${encodeURIComponent(shop.shop_name)}&am=${balance}&cu=INR&tn=Hisab_${encodeURIComponent(customer.name)}`
-    : "";
+  const upiUrl = shop.shop_upi ? upiLink(shop.shop_upi, shop.shop_name, balance, `Hisab ${customer.name}`) : "";
 
   const lines: Line[] = [
     { label: "कुल बाकी रकम (लेने हैं)", value: formatINR(balance), tone: "due" },

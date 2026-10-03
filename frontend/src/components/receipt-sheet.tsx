@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { View, Text, StyleSheet, Alert, ActivityIndicator } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
@@ -7,7 +7,7 @@ import { Pressable } from "@/src/components/tap";
 import { pdfSupported, sharePdf, type ShareDoc } from "@/src/lib/receipt";
 import { shareMessage } from "@/src/lib/share-text";
 
-export function ReceiptSheet({ doc, onClose }: { doc: ShareDoc | null; onClose: () => void }) {
+export function ReceiptSheet({ doc, onClose, header }: { doc: ShareDoc | null; onClose: () => void; header?: ReactNode }) {
   const [making, setMaking] = useState(false);
 
   const sendText = async () => {
@@ -36,6 +36,7 @@ export function ReceiptSheet({ doc, onClose }: { doc: ShareDoc | null; onClose: 
 
   return (
     <SheetShell visible={doc !== null} onClose={onClose} title={`${doc?.heading ?? "रसीद"} भेजें`} testID="sheet-receipt">
+      {header}
       {doc ? (
         <View style={styles.preview}>
           <Text style={styles.previewTitle} numberOfLines={1}>{doc.title}</Text>

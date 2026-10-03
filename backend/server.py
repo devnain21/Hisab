@@ -499,7 +499,9 @@ async def update_entry(entry_id: str, payload: EntryUpdate, user: dict = Depends
     existing = await db.entries.find_one({"id": entry_id, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not existing:
         raise HTTPException(404, "Not found")
-    if payload.amount <= 0:
+    # Free work stays bookable when the shop paid a fee for it.
+    free_with_fee = payload.amount == 0 and payload.type == "work" and (payload.fee or 0) > 0
+    if payload.amount < 0 or (payload.amount == 0 and not free_with_fee):
         raise HTTPException(422, "Amount must be greater than 0")
     patch = payload.dict(exclude_none=True)
     paid = patch.get("paid", existing.get("paid", 0)) if payload.type in PAID_TYPES else 0

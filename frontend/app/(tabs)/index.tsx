@@ -58,7 +58,21 @@ export default function Home() {
 
   const personaCustIds = useMemo(() => new Set(customers.map((c) => c.id)), [customers]);
   const allJobs = jobsQ.data;
-  const jobs = useMemo(() => (allJobs ?? []).filter((j) => !j.customerId || personaCustIds.has(j.customerId)), [allJobs, personaCustIds]);
+  // Own tasks (no customer) belong to the shop book only.
+  const jobs = useMemo(
+    () => (allJobs ?? []).filter((j) => (j.customerId ? personaCustIds.has(j.customerId) : !isPersonal)),
+    [allJobs, personaCustIds, isPersonal],
+  );
+  const recentTxns = useMemo(
+    () =>
+      isPersonal
+        ? entries
+            .filter((e) => personaCustIds.has(e.customerId))
+            .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : b.createdAt.localeCompare(a.createdAt)))
+            .slice(0, 5)
+        : [],
+    [entries, personaCustIds, isPersonal],
+  );
 
   const recentCustomers = useMemo(() => {
     return recentIds
@@ -391,6 +405,46 @@ export default function Home() {
             </Pressable>
             ) : null}
 
+            {isPersonal ? (
+              <>
+                <View style={styles.sectionRow}>
+                  <Text style={styles.sectionHead}>हाल के लेन-देन</Text>
+                  {recentTxns.length > 0 ? (
+                    <Pressable onPress={() => go("/(tabs)/work", {})} hitSlop={8}>
+                      <Text style={styles.link}>सभी देखें</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+                {recentTxns.length === 0 ? (
+                  <View style={styles.emptyRow}>
+                    <MaterialIcon name="swap-vertical" size={20} color={colors.muted} />
+                    <Text style={{ color: colors.muted, fontSize: 14 }}>अभी कोई लेन-देन नहीं</Text>
+                  </View>
+                ) : (
+                  <View style={{ gap: spacing.sm }}>
+                    {recentTxns.map((e) => {
+                      const got = e.type === "payment";
+                      const goods = e.type === "purchase";
+                      return (
+                        <Pressable key={e.id} style={styles.jobCard} onPress={() => router.push(`/customer/${e.customerId}`)} testID={`home-txn-${e.id}`}>
+                          <MaterialIcon name={got ? "arrow-bottom-left" : goods ? "cart-outline" : "arrow-top-right"} size={20} color={got ? colors.success : goods ? colors.warning : colors.error} />
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <Text style={styles.rowTitle} numberOfLines={1}>{nameOf(e.customerId)}</Text>
+                            <Text style={styles.rowSub} numberOfLines={1}>
+                              {[got ? "मिले" : goods ? "सामान / सेवा" : "दिए", e.description, e.date === today ? "आज" : formatDateShort(e.date)].filter(Boolean).join(" · ")}
+                            </Text>
+                          </View>
+                          <Text style={{ fontSize: 15, fontWeight: "800", color: got ? colors.success : goods ? colors.warning : colors.error }}>{formatINR(e.amount)}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                )}
+              </>
+            ) : null}
+
+            {isPersonal && upcoming.length === 0 ? null : (
+            <>
             <View style={styles.sectionRow}>
               <Text style={styles.sectionHead}>आने वाला काम</Text>
               {stats.openJobs > upcoming.length ? (
@@ -424,6 +478,8 @@ export default function Home() {
                   );
                 })}
               </View>
+            )}
+            </>
             )}
           </Animated.View>
         )}

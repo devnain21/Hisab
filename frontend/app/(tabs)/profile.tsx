@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   Modal,
   Platform,
-  Share,
+  Linking,
 } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,6 +20,8 @@ import { useAuth } from "@/src/context/AuthContext";
 import { colors, spacing, radius } from "@/src/theme";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
+import * as Application from "expo-application";
+import * as Clipboard from "expo-clipboard";
 import { useAeps, useCustomers, useEntries, useJobs } from "@/src/lib/data";
 import { formatINR, todayISO, formatPhone } from "@/src/lib/format";
 import { LOCK_CHOICES, daysSinceBackup, savePrefs, usePrefs } from "@/src/lib/prefs";
@@ -41,6 +43,17 @@ import { computeFlows, pocketNet, useMoneyBook } from "@/src/lib/wallet";
 import { router } from "expo-router";
 import { upiLink } from "@/src/lib/qr";
 import { QrCode } from "@/src/components/qr-code";
+
+const SUPPORT_PHONE = "8950101037";
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await Clipboard.setStringAsync(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
@@ -105,8 +118,6 @@ export default function Profile() {
   const [exportScope, setExportScope] = useState<"mine" | "all">("mine");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const backupDays = daysSinceBackup(prefs);
-  const canCopy = Platform.OS === "web";
-
   const sync =
     pending > 0
       ? { tone: "warn", icon: "cloud-upload-outline", color: colors.warning, text: `${pending} बदलाव फ़ोन में सेव, सर्वर पर जाने बाकी`, action: "भेजें" }
@@ -127,18 +138,20 @@ export default function Profile() {
     return { pct: Math.round((done / checks.length) * 100), next: checks.find(([ok]) => !ok)?.[1] ?? "" };
   }, [user, isPersonal]);
 
+  // Version and build come from the installed APK; the OTA date tells which update runs on top of it.
   const versionText = useMemo(() => {
-    const v = Constants.expoConfig?.version ?? "";
+    const v = Application.nativeApplicationVersion || Constants.expoConfig?.version || "";
+    const build = Application.nativeBuildVersion;
     let ota = "";
     try {
       if (Platform.OS === "web") ota = "वेबसाइट";
-      else if (Updates.isEmbeddedLaunch || !Updates.createdAt) ota = "APK वाला वर्ज़न";
+      else if (Updates.isEmbeddedLaunch || !Updates.createdAt) ota = "APK के साथ आया कोड";
       else {
         const d = Updates.createdAt;
         ota = `अपडेट ${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()} ${d.toTimeString().slice(0, 5)}`;
       }
     } catch {}
-    return [v ? `संस्करण ${v}` : "", ota].filter(Boolean).join(" · ");
+    return [v ? `संस्करण ${v}${build ? ` (बिल्ड ${build})` : ""}` : "", ota].filter(Boolean).join(" · ");
   }, []);
 
   const checkUpdate = async () => {
@@ -173,18 +186,19 @@ export default function Profile() {
     setPersona(target);
   };
 
-  // The phone app has no clipboard module yet, so there the UPI ID is shared instead of copied.
   const handleCopyUpi = async (upiId: string) => {
     if (!upiId) return;
-    try {
-      if (canCopy && typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(upiId);
-        setCopiedUpi(true);
-        setTimeout(() => setCopiedUpi(false), 2000);
-      } else {
-        await Share.share({ message: upiId });
-      }
-    } catch {}
+    if (await copyText(upiId)) {
+      setCopiedUpi(true);
+      setTimeout(() => setCopiedUpi(false), 2000);
+    }
+  };
+
+  const openSupport = () => {
+    const text = `नमस्ते, हिसाब ऐप में मदद चाहिए।\n(${accountName(user) || user?.email || ""} · ${versionText})`;
+    void Linking.openURL(`https://wa.me/91${SUPPORT_PHONE}?text=${encodeURIComponent(text)}`).catch(() =>
+      showNotice("WhatsApp नहीं खुला", `इस नंबर पर संपर्क करें: ${formatPhone(SUPPORT_PHONE)}`),
+    );
   };
 
   // Share digital visiting card
@@ -438,7 +452,7 @@ export default function Profile() {
               </Text>
             </View>
             <Pressable style={styles.upiCopyBtn} onPress={() => handleCopyUpi(user.shop_upi || "")} testID="copy-upi-btn">
-              <Text style={styles.upiCopyText}>{canCopy ? (copiedUpi ? "कॉपी हुआ ✓" : "कॉपी") : "भेजें"}</Text>
+              <Text style={styles.upiCopyText}>{copiedUpi ? "कॉपी हुआ ✓" : "कॉपी"}</Text>
             </Pressable>
           </View>
         ) : null}
@@ -528,7 +542,7 @@ export default function Profile() {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.rowValue}>बिल / रसीद सेटिंग</Text>
-              <Text style={styles.rowLabel} numberOfLines={1}>{prefs.receiptNote || "रसीद के नीचे नोट, GSTIN दिखाना"}</Text>
+              <Text style={styles.rowLabel} numberOfLines={1}>{prefs.receiptNote || "लोगो, रसीद के नीचे नोट, GSTIN दिखाना"}</Text>
             </View>
             <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
           </Pressable>
@@ -732,6 +746,16 @@ export default function Profile() {
           </View>
           <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
         </Pressable>
+        <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={openSupport} testID="profile-support">
+          <View style={[styles.iconCircle, { backgroundColor: "#E7F6EC" }]}>
+            <MaterialIcon name="whatsapp" size={20} color="#128C7E" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowValue}>मदद चाहिए? WhatsApp करें</Text>
+            <Text style={styles.rowLabel}>{formatPhone(SUPPORT_PHONE)}</Text>
+          </View>
+          <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
+        </Pressable>
         <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={checkUpdate} disabled={checkingUpdate} testID="profile-check-update">
           <View style={[styles.iconCircle, { backgroundColor: colors.successSoft }]}>
             <MaterialIcon name="cellphone-arrow-down" size={20} color={colors.success} />
@@ -824,15 +848,10 @@ function QrCodeModal({
 
   const handleCopy = async () => {
     if (!upiId) return;
-    try {
-      if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(upiId);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } else {
-        await Share.share({ message: upiId });
-      }
-    } catch {}
+    if (await copyText(upiId)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   return (
@@ -861,7 +880,7 @@ function QrCodeModal({
                 <Text style={qrStyles.upiLabel}>UPI ID: </Text>
                 <Text style={qrStyles.upiVal} numberOfLines={1}>{upiId}</Text>
                 <Pressable style={qrStyles.copyPill} onPress={handleCopy} testID="qr-copy-btn">
-                  <Text style={qrStyles.copyPillText}>{Platform.OS === "web" ? (copied ? "कॉपी ✓" : "कॉपी") : "भेजें"}</Text>
+                  <Text style={qrStyles.copyPillText}>{copied ? "कॉपी ✓" : "कॉपी"}</Text>
                 </Pressable>
               </View>
 

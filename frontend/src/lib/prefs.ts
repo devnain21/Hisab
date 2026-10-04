@@ -6,6 +6,8 @@ export type Prefs = {
   /** Printed at the foot of every slip, e.g. return policy. */
   receiptNote: string;
   showGst: boolean;
+  /** Shop logo for slips, as a small JPEG data URI. */
+  logo: string;
   /** Custom WhatsApp reminder; "" uses the built-in text. Placeholders: {नाम} {रकम} {दुकान} */
   reminderText: string;
   defaultMode: "cash" | "online";
@@ -32,6 +34,7 @@ const KEY = "hisab_prefs_v1";
 const DEFAULTS: Prefs = {
   receiptNote: "",
   showGst: true,
+  logo: "",
   reminderText: "",
   defaultMode: "cash",
   hideAmounts: false,

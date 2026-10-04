@@ -2,7 +2,7 @@
   "expo": {
     "name": "Hisab",
     "slug": "nain-hisab",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "nainhisab",
@@ -69,6 +69,14 @@
       "@react-native-google-signin/google-signin",
       "expo-local-authentication",
       "./plugins/with-recents-privacy",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "रसीद पर दुकान का लोगो लगाने के लिए फ़ोटो चुनने की अनुमति दें।",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
       [
         "expo-contacts",
         {

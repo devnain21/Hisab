@@ -25,6 +25,7 @@
       "extends": "base",
       "channel": "production",
       "distribution": "internal",
+      "autoIncrement": true,
       "android": {
         "buildType": "apk"
       }

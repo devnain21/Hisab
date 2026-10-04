@@ -1,11 +1,16 @@
 import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TextInput, Switch } from "react-native";
+import { View, Text, StyleSheet, TextInput, Switch, Image } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
+import * as ImagePicker from "expo-image-picker";
+import { showNotice } from "@/src/lib/confirm";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { Field, PrimaryButton, SheetShell, inputStyle } from "@/src/components/sheets";
 import { REMINDER_PLACEHOLDERS, savePrefs, usePrefs } from "@/src/lib/prefs";
 import { fillReminder } from "@/src/lib/receipt";
+
+/** Every slip carries the logo inline, so it has to stay small. */
+const MAX_LOGO_CHARS = 400_000;
 
 const NOTE_EXAMPLES = ["बिका हुआ माल वापस नहीं होगा", "सामान 7 दिन में बदला जा सकता है", "भुगतान 15 दिन में करें"];
 
@@ -14,21 +19,59 @@ export function ReceiptSettingsSheet({ visible, onClose, hasGst }: { visible: bo
   const prefs = usePrefs();
   const [note, setNote] = useState("");
   const [showGst, setShowGst] = useState(true);
+  const [logo, setLogo] = useState("");
   useEffect(() => {
     if (!visible) return;
     setNote(prefs.receiptNote);
     setShowGst(prefs.showGst);
+    setLogo(prefs.logo);
     // Only when the sheet opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
+  const pickLogo = async () => {
+    try {
+      const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsEditing: true, aspect: [1, 1], quality: 0.3, base64: true });
+      const a = r.canceled ? undefined : r.assets[0];
+      if (!a) return;
+      const uri = a.base64 ? `data:${a.mimeType === "image/png" ? "image/png" : "image/jpeg"};base64,${a.base64}` : a.uri.startsWith("data:image/") ? a.uri : "";
+      if (!uri) return;
+      if (uri.length > MAX_LOGO_CHARS) {
+        showNotice("फ़ोटो बहुत बड़ी है", "छोटी या साफ़ बैकग्राउंड वाली लोगो फ़ोटो चुनें।");
+        return;
+      }
+      setLogo(uri);
+    } catch {
+      showNotice("फ़ोटो नहीं खुली", "दोबारा कोशिश करें।");
+    }
+  };
+
   const save = () => {
-    void savePrefs({ receiptNote: note.trim(), showGst });
+    void savePrefs({ receiptNote: note.trim(), showGst, logo });
     onClose();
   };
 
   return (
     <SheetShell visible={visible} onClose={onClose} title="बिल / रसीद सेटिंग" testID="sheet-receipt-settings">
+      <Field label="दुकान का लोगो (वैकल्पिक)">
+        <View style={styles.logoRow}>
+          <View style={styles.logoBox}>
+            {logo ? <Image source={{ uri: logo }} style={styles.logoImg} /> : <MaterialIcon name="image-outline" size={26} color={colors.muted} />}
+          </View>
+          <View style={{ flex: 1, gap: spacing.xs }}>
+            <Pressable style={styles.logoBtn} onPress={pickLogo} testID="pick-logo">
+              <Text style={styles.logoBtnText}>{logo ? "लोगो बदलें" : "लोगो चुनें"}</Text>
+            </Pressable>
+            {logo ? (
+              <Pressable onPress={() => setLogo("")} hitSlop={6} testID="remove-logo">
+                <Text style={{ color: colors.error, fontWeight: "700", fontSize: 12 }}>लोगो हटाएँ</Text>
+              </Pressable>
+            ) : (
+              <Text style={styles.sub}>चौकोर फ़ोटो सबसे अच्छी लगती है</Text>
+            )}
+          </View>
+        </View>
+      </Field>
       <Field label="रसीद के नीचे लिखा जाए (वैकल्पिक)">
         <TextInput
           style={[inputStyle, { minHeight: 80, textAlignVertical: "top" }]}
@@ -158,6 +201,11 @@ export function GuideSheet({ visible, onClose }: { visible: boolean; onClose: ()
 }
 
 const styles = StyleSheet.create({
+  logoRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  logoBox: { width: 64, height: 64, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  logoImg: { width: 64, height: 64 },
+  logoBtn: { alignSelf: "flex-start", paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.md, backgroundColor: colors.brandTertiary },
+  logoBtnText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
   chip: { paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   chipText: { fontSize: 12, fontWeight: "600", color: colors.onSurface },

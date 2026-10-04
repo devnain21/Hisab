@@ -317,6 +317,7 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
   const personal = customer.persona === "personal";
   const prefs = getPrefs();
   const note = !personal && customer.id !== OWN_BOOK ? prefs.receiptNote.trim() : "";
+  const logo = !personal && /^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(prefs.logo) ? prefs.logo : "";
   const shopMeta = [shop.shop_address, shop.shop_phone ? `फ़ोन: ${formatPhone(shop.shop_phone)}` : "", shop.shop_gst && !personal && prefs.showGst ? `GSTIN: ${shop.shop_gst}` : ""]
     .filter(Boolean)
     .map((s) => `<div>${esc(s)}</div>`)
@@ -328,6 +329,8 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
   * { box-sizing: border-box; }
   body { font-family: "Noto Sans Devanagari", Roboto, Arial, "Mangal", sans-serif; font-style: normal; color: #1A1A1A; margin: 0; font-size: 13px; }
   .head { border-bottom: 3px solid ${BRAND}; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .logo { width: 52px; height: 52px; object-fit: contain; border-radius: 8px; }
   .shop { font-size: 22px; font-weight: 800; color: ${BRAND}; }
   .meta { color: #555; font-size: 11px; line-height: 1.5; margin-top: 2px; }
   .doc { text-align: right; }
@@ -356,7 +359,7 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
   .foot { margin-top: 24px; text-align: center; color: #777; font-size: 12px; border-top: 1px solid #EEE; padding-top: 10px; }
 </style></head><body>
   <div class="head">
-    <div><div class="shop">${esc(shop.shop_name)}</div><div class="meta">${shopMeta}</div></div>
+    <div class="brand">${logo ? `<img class="logo" src="${logo}" alt=""/>` : ""}<div><div class="shop">${esc(shop.shop_name)}</div><div class="meta">${shopMeta}</div></div></div>
     <div class="doc"><div class="title">${esc(heading)}</div><div class="meta">${docMeta}</div></div>
   </div>
   ${customer.id === OWN_BOOK ? `<div class="to"><div class="name">${esc(customer.name)}</div></div>` : `<div class="to"><div class="label">${customer.persona === "personal" ? "नाम" : "ग्राहक"}</div><div class="name">${esc(customer.name)}</div>${customer.phone ? `<div class="meta">${esc(formatPhone(customer.phone))}</div>` : ""}</div>`}

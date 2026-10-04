@@ -42,7 +42,8 @@ export default function CustomerDetail() {
   const jobs = useMemo(() => (jobsQ.data ?? []).filter((j) => j.customerId === id), [jobsQ.data, id]);
   const ledger = useMemo(() => buildLedger(entries), [entries]);
   const phone10 = (customer?.phone ?? "").replace(/\D/g, "").slice(-10);
-  const aepsList = (aepsQ.data ?? [])
+  // Counter rows belong to the shop book only.
+  const aepsList = (customer?.persona === "personal" ? [] : aepsQ.data ?? [])
     .filter((t) => t.customerId === id || (!t.customerId && phone10.length === 10 && t.mobile.replace(/\D/g, "").slice(-10) === phone10))
     .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : (b.time || "").localeCompare(a.time || "") || b.createdAt.localeCompare(a.createdAt)));
   const [filter, setFilter] = useState<LedgerFilter>("all");

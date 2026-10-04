@@ -277,7 +277,7 @@ export function reminderDoc(
 
   return {
     heading: "भुगतान रिमाइंडर",
-    title: "उधारी तगादा",
+    title: customer.persona === "personal" ? "पैसे की याद" : "उधारी तगादा",
     sub: `${customer.name} · ${formatDate(today)}`,
     phone: customer.phone,
     lines,
@@ -303,7 +303,8 @@ const accountBox = (l: Line) =>
   `<div class="account" style="border-color:${toneColor(l.tone)}"><span>${esc(l.label)}</span><b style="color:${toneColor(l.tone)}">${esc(l.value)}</b></div>`;
 
 function page(shop: ShopProfile, heading: string, docMeta: string, customer: Customer, body: string, size: "A4" | "A5"): string {
-  const shopMeta = [shop.shop_address, shop.shop_phone ? `फ़ोन: ${formatPhone(shop.shop_phone)}` : "", shop.shop_gst ? `GSTIN: ${shop.shop_gst}` : ""]
+  const personal = customer.persona === "personal";
+  const shopMeta = [shop.shop_address, shop.shop_phone ? `फ़ोन: ${formatPhone(shop.shop_phone)}` : "", shop.shop_gst && !personal ? `GSTIN: ${shop.shop_gst}` : ""]
     .filter(Boolean)
     .map((s) => `<div>${esc(s)}</div>`)
     .join("");
@@ -346,7 +347,7 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
   </div>
   <div class="to"><div class="label">${customer.persona === "personal" ? "नाम" : "ग्राहक"}</div><div class="name">${esc(customer.name)}</div>${customer.phone ? `<div class="meta">${esc(formatPhone(customer.phone))}</div>` : ""}</div>
   ${body}
-  <div class="foot">धन्यवाद, फिर पधारें 🙏</div>
+  <div class="foot">${personal ? "धन्यवाद 🙏" : "धन्यवाद, फिर पधारें 🙏"}</div>
 </body></html>`;
 }
 

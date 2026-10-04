@@ -110,7 +110,7 @@ export default function Profile() {
   const thisMonthPrefix = todayISO().slice(0, 7);
   const monthPayments = useMemo(() => {
     return entries
-      .filter((e) => e.date.startsWith(thisMonthPrefix) && (e.type === "payment" || (e.paid ?? 0) > 0))
+      .filter((e) => e.date.startsWith(thisMonthPrefix) && (e.type === "payment" || (e.type === "work" && (e.paid ?? 0) > 0)))
       .reduce((sum, e) => sum + (e.type === "payment" ? e.amount : (e.paid ?? 0)), 0);
   }, [entries, thisMonthPrefix]);
 
@@ -289,7 +289,7 @@ export default function Profile() {
       <View style={styles.topHeader}>
         <View>
           <Text style={styles.eyebrow}>प्रोफ़ाइल व सेटिंग्स</Text>
-          <Text style={styles.h1}>खाता व व्यापार</Text>
+          <Text style={styles.h1}>{isPersonal ? "मेरा खाता" : "खाता व व्यापार"}</Text>
         </View>
         <Pressable
           style={styles.syncIconButton}

@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { useAeps, useCustomers, type AepsTxn } from "@/src/lib/data";
+import { useAeps, useCustomers, useEntries, type AepsTxn } from "@/src/lib/data";
 import { AEPS_META, STATUS_META, aepsBill, aepsDue, cashLegDate, cashOf, commissionModeLabel, defaultVia, fieldLabel, isLater, moneyLines, statusLabel, viaBill, type AepsField } from "@/src/lib/aeps";
 import { formatDate, formatINR, formatPhone } from "@/src/lib/format";
 import { shareMessage } from "@/src/lib/share-text";
@@ -13,7 +13,7 @@ import { useAuth } from "@/src/context/AuthContext";
 import { Pressable } from "@/src/components/tap";
 import { AepsSheet } from "@/src/components/aeps-sheet";
 import { aepsReceiptDoc, sharePdf } from "@/src/lib/receipt";
-import { cashSettledAeps, completeAeps, failAeps, khataPaid, removeAeps } from "@/src/lib/aeps-due";
+import { aepsJamaEntry, cashSettledAeps, completeAeps, failAeps, jamaKindOf, khataPaid, removeAeps } from "@/src/lib/aeps-due";
 
 const TONE = { in: colors.success, out: colors.error, wait: colors.warning, muted: colors.muted } as const;
 
@@ -39,7 +39,9 @@ export default function AepsDetail() {
   const [editing, setEditing] = useState(false);
   const [sharingPdf, setSharingPdf] = useState(false);
   const customers = useCustomers().data ?? [];
+  const entries = useEntries().data;
   const t = (q.data ?? []).find((x) => x.id === id);
+  const jama = t ? aepsJamaEntry(t.id, entries ?? []) : undefined;
 
   if (!t) {
     return (
@@ -68,9 +70,10 @@ export default function AepsDetail() {
     confirmAction("फेल मार्क करें?", cashLegDate(t) ? "लिया हुआ कैश वापस कर दें, गल्ले से हट जाएगा।" : "हिसाब में नहीं जुड़ेगा।", "फेल करें", () => failAeps(t));
   const details = DETAIL_ORDER.map((f) => ({ f, v: displayValue(t, f) })).filter((d) => d.v);
 
+  const keptLabel = jama ? (jamaKindOf(jama) === "old" ? "पुरानी उधारी में कटे" : "खाते में जमा") : "";
   const share = async () => {
     try {
-      const doc = aepsReceiptDoc(t, user || {});
+      const doc = aepsReceiptDoc(t, user || {}, jama?.amount ?? 0, keptLabel);
       const result = await shareMessage(doc.message);
       if (result === "copied") Alert.alert("मैसेज कॉपी हो गया", "जिसे भेजना है, वहाँ पेस्ट कर दें।");
     } catch {
@@ -81,7 +84,7 @@ export default function AepsDetail() {
   const handleSharePdf = async () => {
     try {
       setSharingPdf(true);
-      const doc = aepsReceiptDoc(t, user || {});
+      const doc = aepsReceiptDoc(t, user || {}, jama?.amount ?? 0, keptLabel);
       await sharePdf(doc);
     } catch {
       Alert.alert("PDF नहीं बन पाई", "दोबारा कोशिश करें।");
@@ -137,6 +140,18 @@ export default function AepsDetail() {
               <Text style={[styles.rowValue, { color: TONE[r.tone] }]}>{r.value}</Text>
             </View>
           ))}
+          {jama ? (
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>{cashOf(t) === "out" ? "गल्ले में रखे (ग्राहक के)" : "ज़्यादा मिले"}</Text>
+              <Text style={[styles.rowValue, { color: TONE.in }]}>+{formatINR(jama.amount)}</Text>
+            </View>
+          ) : null}
+          {jama ? (
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>ग्राहक का खाता</Text>
+              <Text style={[styles.rowValue, { color: colors.info }]}>{jamaKindOf(jama) === "old" ? "पुरानी उधारी में कटे" : "जमा"} {formatINR(jama.amount)}</Text>
+            </View>
+          ) : null}
         </View>
 
         {bill.flow !== "out" && bill.total > 0 && t.status !== "failed" ? (

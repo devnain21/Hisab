@@ -18,6 +18,7 @@ import { aepsReceiptDoc, receiptDoc, statementDoc, reminderDoc, type ShareDoc } 
 import { DataLoadError } from "@/src/components/slow-server-hint";
 import { UpiQrModal } from "@/src/components/upi-qr-sheet";
 import { addRecentCustomer } from "@/src/lib/recent";
+import { aepsJamaEntry, jamaKindOf } from "@/src/lib/aeps-due";
 import { accountName } from "@/src/lib/persona";
 
 export default function CustomerDetail() {
@@ -132,7 +133,9 @@ export default function CustomerDetail() {
 
   const openReceipt = (e: Entry) => {
     const txn = e.type === "aeps" ? aepsList.find((t) => t.id === e.linkId) : undefined;
-    setShareDoc(txn ? aepsReceiptDoc(txn, user ?? {}) : receiptDoc(e, ledger.work.get(e.id), customer, due, isCustomer, user ?? {}));
+    const jama = txn ? aepsJamaEntry(txn.id, entries) : undefined;
+    const keptLabel = jama ? (jamaKindOf(jama) === "old" ? "पुरानी उधारी में कटे" : "खाते में जमा") : "";
+    setShareDoc(txn ? aepsReceiptDoc(txn, user ?? {}, jama?.amount ?? 0, keptLabel) : receiptDoc(e, ledger.work.get(e.id), customer, due, isCustomer, user ?? {}));
   };
   const openStatement = () => setStmt("all");
   const stmtDoc = stmt ? statementDoc(entries, ledger, customer, isCustomer, user ?? {}, stmtRange(stmt)) : null;

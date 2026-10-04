@@ -352,7 +352,8 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
 }
 
 /** Counter service receipt: what was done, through which channel, and where the money stands. */
-export function aepsReceiptDoc(t: AepsTxn, shopIn: Partial<ShopProfile>): ShareDoc {
+/** `kept`: money the customer left with the shop on this visit (khata jama), with its label. */
+export function aepsReceiptDoc(t: AepsTxn, shopIn: Partial<ShopProfile>, kept = 0, keptLabel = ""): ShareDoc {
   const shop = fullShop(shopIn);
   const m = AEPS_META[t.type] ?? AEPS_META.other;
   const service = t.type === "other" && t.billerName ? t.billerName : m.label;
@@ -384,11 +385,11 @@ export function aepsReceiptDoc(t: AepsTxn, shopIn: Partial<ShopProfile>): ShareD
   } else if (bill.flow === "out") {
     summary.push({ label: m.amountLabel.replace(" (₹)", ""), value: formatINR(t.amount) });
     if (charge > 0) summary.push({ label: t.commissionMode === "cash" ? "सेवा शुल्क (कटौती)" : "सेवा शुल्क (ऑनलाइन)", value: t.commissionMode === "cash" ? `− ${formatINR(charge)}` : formatINR(charge) });
-    summary.push(
-      bill.due > 0
-        ? { label: "ग्राहक को देने बाकी", value: formatINR(bill.due), tone: "due" }
-        : { label: "ग्राहक को नकद दिए", value: formatINR(bill.total), tone: "ok" },
-    );
+    if (bill.due > 0) summary.push({ label: "ग्राहक को देने बाकी", value: formatINR(bill.due), tone: "due" });
+    else if (kept > 0) {
+      summary.push({ label: "ग्राहक को नकद दिए", value: formatINR(Math.max(0, bill.total - kept)), tone: "ok" });
+      summary.push({ label: keptLabel || "खाते में जमा", value: formatINR(kept) });
+    } else summary.push({ label: "ग्राहक को नकद दिए", value: formatINR(bill.total), tone: "ok" });
   } else {
     if (bill.flow === "in") summary.push({ label: m.amountLabel.replace(" (₹)", ""), value: formatINR(t.amount) });
     if (charge > 0) summary.push({ label: "सेवा शुल्क", value: formatINR(charge) });
@@ -396,6 +397,7 @@ export function aepsReceiptDoc(t: AepsTxn, shopIn: Partial<ShopProfile>): ShareD
     else if (bill.flow === "none") summary.push({ label: "कुल", value: formatINR(bill.total) });
     summary.push({ label: "जमा", value: formatINR(bill.settled), tone: bill.settled > 0 ? "ok" : undefined });
     summary.push({ label: "बाकी", value: formatINR(bill.due), tone: bill.due > 0 ? "due" : "ok" });
+    if (kept > 0) summary.push({ label: keptLabel || "ज़्यादा मिले (खाते में जमा)", value: formatINR(kept) });
   }
 
   const stamp: { text: string; color: string } = failed

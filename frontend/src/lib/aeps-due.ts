@@ -51,16 +51,69 @@ function withKhata(id: string | null, t: AepsBody): AepsBody {
   return { ...t, collected: Math.min(t.collected, Math.max(0, t.amount - paid)) };
 }
 
-export function createAeps(t: AepsBody): AepsTxn {
+/**
+ * Money the customer left with the shop on a counter row: cash kept back from a withdrawal
+ * (towards old udhaar, or to be handed over later) or paid over the amount. It is a normal
+ * "जमा" payment on the khata linked to the row, so the ledger settles the oldest udhaar with it.
+ */
+export type JamaKind = "old" | "later" | "advance";
+export type Jama = { amount: number; mode: "cash" | "online"; kind: JamaKind };
+
+const JAMA_TEXT: Record<JamaKind, string> = {
+  old: "पुरानी उधारी में काटे",
+  later: "जमा — बाकी पैसे बाद में देने हैं",
+  advance: "एडवांस जमा",
+};
+
+export function aepsJamaEntry(aepsId: string, entries: Entry[] = entriesNow()): Entry | undefined {
+  return entries.find((e) => e.type === "payment" && e.linkId === aepsId);
+}
+
+export function jamaKindOf(e: Entry): JamaKind {
+  return e.description.endsWith(JAMA_TEXT.old) ? "old" : e.description.endsWith(JAMA_TEXT.later) ? "later" : "advance";
+}
+
+/** `undefined` leaves the jama as it is (status changes from the list); a failed or unlinked row drops it. */
+function syncAepsJama(id: string, t: AepsBody, jama: Jama | null | undefined) {
+  const existing = aepsJamaEntry(id);
+  const drop = t.status === "failed" || !t.customerId || jama === null || (jama !== undefined && jama.amount <= 0);
+  if (drop) {
+    if (existing) store.deleteEntry(existing.id);
+    return;
+  }
+  const day = cashLegDate(t) || t.date;
+  if (!jama) {
+    if (existing && existing.date !== day && existing.customerId === t.customerId) store.updateEntry(existing.id, { date: day });
+    return;
+  }
+  const body = {
+    type: "payment" as const,
+    date: day,
+    description: `${AEPS_META[t.type]?.short ?? "काउंटर"} · ${JAMA_TEXT[jama.kind]}`,
+    amount: jama.amount,
+    mode: jama.mode,
+    notes: t.reference ? `Txn ${t.reference}` : "",
+    linkId: id,
+  };
+  if (existing && existing.customerId === t.customerId) store.updateEntry(existing.id, body);
+  else {
+    if (existing) store.deleteEntry(existing.id);
+    store.createEntry({ customerId: t.customerId!, paid: 0, ...body });
+  }
+}
+
+export function createAeps(t: AepsBody, jama?: Jama | null): AepsTxn {
   const row = store.createAeps(t);
   syncAepsDue(row.id, t);
+  syncAepsJama(row.id, t, jama);
   return row;
 }
 
-export function saveAeps(id: string, t: AepsBody) {
+export function saveAeps(id: string, t: AepsBody, jama?: Jama | null) {
   const body = withKhata(id, t);
   store.updateAeps(id, body);
   syncAepsDue(id, body);
+  syncAepsJama(id, body, jama);
 }
 
 const bodyOf = ({ id: _id, createdAt: _c, ...body }: AepsTxn): AepsBody => body;
@@ -95,5 +148,7 @@ export function failAeps(t: AepsTxn) {
 export function removeAeps(t: AepsTxn) {
   const due = aepsDueEntry(t.id);
   if (due) store.deleteEntry(due.id);
+  const jama = aepsJamaEntry(t.id);
+  if (jama) store.deleteEntry(jama.id);
   store.deleteAeps(t.id);
 }

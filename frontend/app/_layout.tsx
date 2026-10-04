@@ -10,9 +10,11 @@ import { CACHE_MAX_AGE, queryClient, queryPersister } from "@/src/query-client";
 import { AuthProvider } from "@/src/context/AuthContext";
 import { wakeBackend } from "@/src/lib/api";
 import { pruneDailyKeys } from "@/src/lib/daily-keys";
+import { loadPrefs } from "@/src/lib/prefs";
 
 LogBox.ignoreAllLogs(true);
 wakeBackend();
+void loadPrefs();
 setTimeout(() => void pruneDailyKeys(), 8000);
 
 export default function RootLayout() {

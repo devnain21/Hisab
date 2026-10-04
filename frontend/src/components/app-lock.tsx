@@ -7,11 +7,11 @@ import { useAuth } from "@/src/context/AuthContext";
 import { authenticateBiometric, checkPin, disableLock, getLockConfig, lockSupported, pinWaitMs, resetPinFails, type LockConfig } from "@/src/lib/app-lock";
 import { confirmAction } from "@/src/lib/confirm";
 import { pendingCount } from "@/src/lib/store";
+import { getPrefs } from "@/src/lib/prefs";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 
 export const PIN_LENGTH = 4;
-const RELOCK_AFTER_MS = 30_000;
 
 type LockCtx = { config: LockConfig; refresh: () => Promise<void> };
 const AppLockContext = createContext<LockCtx>({ config: { enabled: false, biometric: false }, refresh: async () => {} });
@@ -259,7 +259,7 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
     if (!lockSupported) return;
     const sub = AppState.addEventListener("change", (s) => {
       if (s === "background") backgroundAt.current = Date.now();
-      if (s === "active" && backgroundAt.current && Date.now() - backgroundAt.current > RELOCK_AFTER_MS) {
+      if (s === "active" && backgroundAt.current && Date.now() - backgroundAt.current >= getPrefs().lockAfterMs) {
         // Lock at once from what is known, so the khata never shows for a moment before the PIN screen.
         if (enabledRef.current) setLocked(true);
         getLockConfig().then((c) => {

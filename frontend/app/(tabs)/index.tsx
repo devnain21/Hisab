@@ -21,6 +21,7 @@ import { computeFlows, pocketNet, useMoneyBook } from "@/src/lib/wallet";
 import { useCounterMode } from "@/src/lib/counter";
 import { accountName, usePersona } from "@/src/lib/persona";
 import { TERMS, balanceTerm } from "@/src/lib/terms";
+import { HIDDEN, savePrefs, usePrefs } from "@/src/lib/prefs";
 import { useRecentCustomerIds } from "@/src/lib/recent";
 import { TaskSheet } from "@/src/components/task-sheet";
 import { TaskRow } from "@/src/components/task-row";
@@ -151,7 +152,9 @@ export default function Home() {
 
   const aepsToday = useMemo(() => aepsTotals(aeps, (d) => d === today), [aeps, today]);
   const aepsDue = useMemo(() => aeps.filter((t) => t.status === "pending" && (t.dueDate || t.date) <= today).length, [aeps, today]);
-  const signedINR = (n: number) => `${n < 0 ? "−" : "+"}${formatINR(Math.abs(n))}`;
+  const { hideAmounts } = usePrefs();
+  const money = (n: number) => (hideAmounts ? HIDDEN : formatINR(n));
+  const signedINR = (n: number) => (hideAmounts ? HIDDEN : `${n < 0 ? "−" : "+"}${formatINR(Math.abs(n))}`);
   // Today's change of cash + bank together; the day screen breaks it down.
   const todayMoneyCard = (
     <StatCard
@@ -225,6 +228,9 @@ export default function Home() {
             <Text style={styles.eyebrow}>{formatWeekdayDate(today)}</Text>
             <Text style={styles.h1} numberOfLines={2} testID="shop-name">{accountName(user) || "आज का खाता"}</Text>
           </View>
+          <Pressable onPress={() => void savePrefs({ hideAmounts: !hideAmounts })} hitSlop={8} testID="toggle-hide-amounts" style={styles.accountBtn}>
+            <MaterialIcon name={hideAmounts ? "eye-off-outline" : "eye-outline"} size={24} color={colors.onSurface} />
+          </Pressable>
           <Pressable onPress={() => router.push("/(tabs)/profile")} hitSlop={8} testID="open-profile" style={styles.accountBtn}>
             <MaterialIcon name="account-circle-outline" size={28} color={colors.onSurface} />
           </Pressable>
@@ -354,7 +360,7 @@ export default function Home() {
                 <>
                   <StatCard
                     label={TERMS.get}
-                    value={formatINR(Math.max(stats.totalDue, 0))}
+                    value={money(Math.max(stats.totalDue, 0))}
                     hint={`${stats.dueCustomers} लोग`}
                     icon="account-arrow-left-outline"
                     tone="due"
@@ -363,7 +369,7 @@ export default function Home() {
                   />
                   <StatCard
                     label={TERMS.give}
-                    value={formatINR(Math.max(stats.totalWeOwe, 0))}
+                    value={money(Math.max(stats.totalWeOwe, 0))}
                     hint={`${stats.weOweCount} लोग`}
                     icon="account-arrow-right-outline"
                     tone="warn"
@@ -385,7 +391,7 @@ export default function Home() {
                 <>
                   <StatCard
                     label={TERMS.get}
-                    value={formatINR(Math.max(stats.totalDue, 0))}
+                    value={money(Math.max(stats.totalDue, 0))}
                     hint={`${stats.dueCustomers} ग्राहक`}
                     icon="account-cash-outline"
                     tone="due"
@@ -403,7 +409,7 @@ export default function Home() {
                   />
                   <StatCard
                     label="आज का काम"
-                    value={formatINR(stats.todayWork)}
+                    value={money(stats.todayWork)}
                     hint={`${stats.todayWorkCount} एंट्री`}
                     icon="clipboard-text-outline"
                     tone="neutral"
@@ -419,13 +425,13 @@ export default function Home() {
               <Pressable style={styles.walletCell} onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "cash" } })} testID="home-wallet-cash">
                 <MaterialIcon name="cash" size={16} color={colors.success} />
                 <Text style={styles.walletLabel}>{labels.cash}</Text>
-                <Text style={[styles.walletValue, cashBal < 0 && { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{formatINR(cashBal)}</Text>
+                <Text style={[styles.walletValue, cashBal < 0 && { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(cashBal)}</Text>
               </Pressable>
               <View style={styles.walletDivider} />
               <Pressable style={styles.walletCell} onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "bank" } })} testID="home-wallet-bank">
                 <MaterialIcon name="bank-outline" size={16} color={colors.info} />
                 <Text style={styles.walletLabel}>बैंक</Text>
-                <Text style={[styles.walletValue, bankBal < 0 && { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{formatINR(bankBal)}</Text>
+                <Text style={[styles.walletValue, bankBal < 0 && { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(bankBal)}</Text>
               </Pressable>
               <Pressable onPress={() => router.push("/balance" as never)} hitSlop={10} style={styles.walletMore} testID="home-wallet">
                 <Text style={styles.walletMoreText}>कुल</Text>
@@ -456,7 +462,7 @@ export default function Home() {
               <Text style={styles.aepsLineText} numberOfLines={2}>
                 {(aepsToday.count === 0
                   ? "काउंटर · आज कुछ नहीं"
-                  : `काउंटर · गल्ला ${signedINR(aepsToday.cashNet)} · बैंक ${signedINR(aepsToday.bankNet)}${aepsToday.commission > 0 ? ` · कमीशन ${formatINR(aepsToday.commission)}` : ""}`) +
+                  : `काउंटर · गल्ला ${signedINR(aepsToday.cashNet)} · बैंक ${signedINR(aepsToday.bankNet)}${aepsToday.commission > 0 ? ` · कमीशन ${money(aepsToday.commission)}` : ""}`) +
                   (aepsDue > 0 ? ` · ${aepsDue} भेजनी बाकी` : "")}
               </Text>
               <MaterialIcon name="chevron-right" size={18} color={colors.muted} />

@@ -18,8 +18,12 @@ import * as Haptics from "expo-haptics";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/src/context/AuthContext";
 import { colors, spacing, radius } from "@/src/theme";
-import { useAeps, useCustomers, useEntries, useJobs, computeBalance } from "@/src/lib/data";
+import Constants from "expo-constants";
+import * as Updates from "expo-updates";
+import { useAeps, useCustomers, useEntries, useJobs } from "@/src/lib/data";
 import { formatINR, todayISO, formatPhone } from "@/src/lib/format";
+import { LOCK_CHOICES, daysSinceBackup, savePrefs, usePrefs } from "@/src/lib/prefs";
+import { GuideSheet, ReceiptSettingsSheet, ReminderTextSheet } from "@/src/components/settings-sheets";
 import { Pressable } from "@/src/components/tap";
 import { ShopProfileSheet } from "@/src/components/sheets";
 import { CloseShopSheet } from "@/src/components/close-shop-sheet";
@@ -30,7 +34,6 @@ import { flush, usePendingCount } from "@/src/lib/store";
 import { confirmAction, showNotice } from "@/src/lib/confirm";
 import { applyRestore, exportBackupJson, pickBackup } from "@/src/lib/backup";
 import { accountName, usePersona } from "@/src/lib/persona";
-import { TERMS, balanceTerm } from "@/src/lib/terms";
 import { RecycleBinModal } from "@/src/components/recycle-bin-sheet";
 import { getTrashList, subscribeTrash } from "@/src/lib/trash";
 import { shareMessage } from "@/src/lib/share-text";
@@ -55,7 +58,6 @@ export default function Profile() {
   const [trashCount, setTrashCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
 
-  // Each book (shop / personal) shows only its own people and money.
   const allCustomers = useCustomers().data;
   const entriesQ = useEntries();
   const allEntries = entriesQ.data;
@@ -65,17 +67,6 @@ export default function Profile() {
     const hm = d.toTimeString().slice(0, 5);
     return d.toDateString() === new Date().toDateString() ? `आज ${hm}` : `${d.getDate()}/${d.getMonth() + 1} ${hm}`;
   };
-  const customers = useMemo(
-    () => (allCustomers ?? []).filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal")),
-    [allCustomers, isPersonal]
-  );
-  const entries = useMemo(() => {
-    const mine = new Set(customers.map((c) => c.id));
-    return (allEntries ?? []).filter((e) => mine.has(e.customerId));
-  }, [allEntries, customers]);
-  const balances = useMemo(() => customers.map((c) => computeBalance(entries, c.id)), [customers, entries]);
-  const totalDue = balances.reduce((s, b) => s + (b > 0 ? b : 0), 0);
-  const totalWeOwe = balances.reduce((s, b) => s + (b < 0 ? -b : 0), 0);
   const jobs = useJobs().data ?? [];
   const aeps = useAeps().data ?? [];
   const book = useMoneyBook();
@@ -107,20 +98,71 @@ export default function Profile() {
     return subscribeTrash(updateTrash);
   }, []);
 
-  // Financial health calculations
-  const thisMonthPrefix = todayISO().slice(0, 7);
-  const monthPayments = useMemo(() => {
-    return entries
-      .filter((e) => e.date.startsWith(thisMonthPrefix) && (e.type === "payment" || (e.type === "work" && (e.paid ?? 0) > 0)))
-      .reduce((sum, e) => sum + (e.type === "payment" ? e.amount : (e.paid ?? 0)), 0);
-  }, [entries, thisMonthPrefix]);
+  const prefs = usePrefs();
+  const [receiptSheet, setReceiptSheet] = useState(false);
+  const [reminderSheet, setReminderSheet] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [exportScope, setExportScope] = useState<"mine" | "all">("mine");
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const backupDays = daysSinceBackup(prefs);
+  const canCopy = Platform.OS === "web";
 
-  // Money collected this month against what was billed this month (work + counter udhaar).
-  const monthBilled = useMemo(
-    () => entries.filter((e) => e.date.startsWith(thisMonthPrefix) && (e.type === "work" || e.type === "aeps")).reduce((s, e) => s + e.amount, 0),
-    [entries, thisMonthPrefix],
-  );
-  const recoveryRate = monthBilled <= 0 ? 100 : Math.min(100, Math.round((monthPayments / monthBilled) * 100));
+  const sync =
+    pending > 0
+      ? { tone: "warn", icon: "cloud-upload-outline", color: colors.warning, text: `${pending} बदलाव फ़ोन में सेव, सर्वर पर जाने बाकी`, action: "भेजें" }
+      : syncFailed
+        ? { tone: "bad", icon: "cloud-off-outline", color: colors.error, text: `सर्वर से नहीं जुड़ पाया${lastSync ? ` · आख़िरी ${syncTime(lastSync)}` : ""}`, action: "दोबारा" }
+        : { tone: "ok", icon: "cloud-check-outline", color: colors.success, text: `सब सेव है${lastSync ? ` · ${syncTime(lastSync)}` : ""}`, action: "ताज़ा करें" };
+
+  // What a slip, QR and visiting card need; GSTIN is optional so it is not counted.
+  const completeness = useMemo(() => {
+    const checks: [boolean, string][] = [
+      [!!accountName(user), isPersonal ? "नाम" : "दुकान का नाम"],
+      [!!user?.shop_phone, "फ़ोन"],
+      [!!user?.shop_upi, "UPI ID"],
+      [!!user?.shop_address, "पता"],
+      ...(isPersonal ? [] : ([[!!user?.owner_name, "मालिक का नाम"]] as [boolean, string][])),
+    ];
+    const done = checks.filter(([ok]) => ok).length;
+    return { pct: Math.round((done / checks.length) * 100), next: checks.find(([ok]) => !ok)?.[1] ?? "" };
+  }, [user, isPersonal]);
+
+  const versionText = useMemo(() => {
+    const v = Constants.expoConfig?.version ?? "";
+    let ota = "";
+    try {
+      if (Platform.OS === "web") ota = "वेबसाइट";
+      else if (Updates.isEmbeddedLaunch || !Updates.createdAt) ota = "APK वाला वर्ज़न";
+      else {
+        const d = Updates.createdAt;
+        ota = `अपडेट ${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()} ${d.toTimeString().slice(0, 5)}`;
+      }
+    } catch {}
+    return [v ? `संस्करण ${v}` : "", ota].filter(Boolean).join(" · ");
+  }, []);
+
+  const checkUpdate = async () => {
+    if (Platform.OS === "web" || __DEV__) {
+      showNotice("सब नया है", "वेबसाइट हर बार खुलने पर सबसे नया वर्ज़न ही दिखाती है।");
+      return;
+    }
+    setCheckingUpdate(true);
+    try {
+      const r = await Updates.checkForUpdateAsync();
+      if (!r.isAvailable) {
+        showNotice("सब नया है", "आपके फ़ोन में सबसे नया अपडेट लगा है।");
+        return;
+      }
+      await Updates.fetchUpdateAsync();
+      confirmAction("नया अपडेट तैयार", "ऐप एक बार बंद होकर खुलेगा और नया अपडेट लग जाएगा। आपका सारा हिसाब सुरक्षित रहेगा।", "अभी लगाएँ", () => {
+        void Updates.reloadAsync().catch(() => {});
+      });
+    } catch {
+      showNotice("जाँच नहीं हो पाई", "इंटरनेट चालू करके दोबारा कोशिश करें।");
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   // Persona toggle with haptics
   const handleSwitchPersona = (target: "business" | "personal") => {
@@ -131,17 +173,17 @@ export default function Profile() {
     setPersona(target);
   };
 
-  // Copy UPI
+  // The phone app has no clipboard module yet, so there the UPI ID is shared instead of copied.
   const handleCopyUpi = async (upiId: string) => {
     if (!upiId) return;
     try {
-      if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      if (canCopy && typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(upiId);
+        setCopiedUpi(true);
+        setTimeout(() => setCopiedUpi(false), 2000);
       } else {
         await Share.share({ message: upiId });
       }
-      setCopiedUpi(true);
-      setTimeout(() => setCopiedUpi(false), 2000);
     } catch {}
   };
 
@@ -216,7 +258,9 @@ export default function Profile() {
         expenses: book.expenses,
         moves: book.moves,
         shop: user,
+        only: exportScope === "mine" || !hasShop ? persona : undefined,
       });
+      void savePrefs({ lastBackupAt: new Date().toISOString() });
     } catch {
       setBackupError("बैकअप नहीं बन पाया, दोबारा कोशिश करें।");
     } finally {
@@ -229,6 +273,7 @@ export default function Profile() {
     setBackingUp(true);
     try {
       await exportBackupJson(accountName(user) || "हिसाब");
+      void savePrefs({ lastBackupAt: new Date().toISOString() });
     } catch {
       setBackupError("बैकअप नहीं बन पाया, दोबारा कोशिश करें।");
     } finally {
@@ -286,27 +331,33 @@ export default function Profile() {
         paddingBottom: spacing.xxl,
       }}
     >
-      {/* Header title */}
       <View style={styles.topHeader}>
-        <View>
+        <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.eyebrow}>प्रोफ़ाइल व सेटिंग्स</Text>
-          <Text style={styles.h1}>{isPersonal ? "मेरा खाता" : "खाता व व्यापार"}</Text>
+          <Text style={styles.h1}>{isPersonal ? "मेरा खाता" : "मेरी दुकान"}</Text>
         </View>
-        <Pressable
-          style={styles.syncIconButton}
-          onPress={handleForceSync}
-          disabled={syncing}
-          testID="profile-force-sync"
-        >
-          {syncing ? (
-            <ActivityIndicator size="small" color={colors.brandPrimary} />
-          ) : (
-            <MaterialIcon name="sync" size={22} color={colors.brandPrimary} />
-          )}
-        </Pressable>
       </View>
 
-      {!hasShop ? (
+      {hasShop ? (
+        <View style={styles.personaSwitchRow}>
+          <Pressable
+            style={[styles.personaSegment, isPersonal && styles.personaSegmentActive]}
+            onPress={() => handleSwitchPersona("personal")}
+            testID="persona-personal-btn"
+          >
+            <MaterialIcon name="account" size={17} color={isPersonal ? colors.brandPrimary : colors.muted} />
+            <Text style={[styles.personaText, isPersonal && styles.personaTextActive]}>व्यक्तिगत</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.personaSegment, !isPersonal && styles.personaSegmentActive]}
+            onPress={() => handleSwitchPersona("business")}
+            testID="persona-business-btn"
+          >
+            <MaterialIcon name="storefront" size={17} color={!isPersonal ? colors.brandPrimary : colors.muted} />
+            <Text style={[styles.personaText, !isPersonal && styles.personaTextActive]}>दुकान</Text>
+          </Pressable>
+        </View>
+      ) : (
         <Pressable style={styles.openShopCard} onPress={() => setOpenShop(true)} testID="open-shop-btn">
           <View style={styles.openShopIcon}>
             <MaterialIcon name="storefront-outline" size={24} color={colors.onBrandPrimary} />
@@ -317,38 +368,31 @@ export default function Profile() {
           </View>
           <MaterialIcon name="chevron-right" size={22} color={colors.brandPrimary} />
         </Pressable>
-      ) : null}
+      )}
 
-      {/* IMPROVEMENT 1: Executive Digital Visiting Card */}
-      <LinearGradient
-        colors={["#0F172A", "#1E293B", "#334155"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.cardContainer}
+      <Pressable
+        style={[styles.syncLine, sync.tone === "bad" && { backgroundColor: colors.errorSoft }, sync.tone === "warn" && { backgroundColor: "#FEF3E2" }]}
+        onPress={handleForceSync}
+        disabled={syncing}
+        testID="profile-sync-line"
       >
-        {/* Card Top Row */}
+        <MaterialIcon name={sync.icon as any} size={18} color={sync.color} />
+        <Text style={[styles.syncLineText, { color: sync.color }]} numberOfLines={1}>{sync.text}</Text>
+        {syncing ? <ActivityIndicator size="small" color={sync.color} /> : <Text style={[styles.syncLineAction, { color: sync.color }]}>{sync.action}</Text>}
+      </Pressable>
+
+      <LinearGradient colors={["#0F172A", "#1E293B", "#334155"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.cardContainer}>
         <View style={styles.cardTopRow}>
           <View style={styles.merchantBadge}>
-            <MaterialIcon
-              name={isPersonal ? "account" : "storefront"}
-              size={13}
-              color="#FCD34D"
-            />
-            <Text style={styles.merchantBadgeText}>
-              {isPersonal ? "निजी खाता" : "दुकान खाता"}
-            </Text>
+            <MaterialIcon name={isPersonal ? "account" : "storefront"} size={13} color="#FCD34D" />
+            <Text style={styles.merchantBadgeText}>{isPersonal ? "निजी खाता" : "दुकान खाता"}</Text>
           </View>
-          <Pressable
-            style={styles.editCardBtn}
-            onPress={() => setShopSheet(true)}
-            testID="profile-edit-visiting-card"
-          >
+          <Pressable style={styles.editCardBtn} onPress={() => setShopSheet(true)} testID="profile-edit-visiting-card">
             <MaterialIcon name="pencil" size={14} color="#CBD5E1" />
             <Text style={styles.editCardBtnText}>बदलें</Text>
           </Pressable>
         </View>
 
-        {/* Card Body */}
         <View style={styles.cardMain}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={styles.cardShopName} numberOfLines={1}>
@@ -357,47 +401,34 @@ export default function Profile() {
             <Text style={styles.cardOwnerName} numberOfLines={1}>
               {isPersonal ? user?.email : ownerName ? `प्रोपराइटर: ${ownerName}` : user?.email}
             </Text>
-
-            {/* Phone & Address */}
             <View style={styles.cardDetailRow}>
               <MaterialIcon name="phone-outline" size={13} color="#94A3B8" />
               <Text style={styles.cardDetailText} numberOfLines={1}>
                 {user?.shop_phone ? formatPhone(user.shop_phone) : "फ़ोन नंबर जोड़ें"}
               </Text>
             </View>
-
             {user?.shop_address ? (
               <View style={styles.cardDetailRow}>
                 <MaterialIcon name="map-marker-outline" size={13} color="#94A3B8" />
-                <Text style={styles.cardDetailText} numberOfLines={1}>
-                  {user.shop_address}
-                </Text>
+                <Text style={styles.cardDetailText} numberOfLines={1}>{user.shop_address}</Text>
               </View>
             ) : null}
-
             {!isPersonal && user?.shop_gst ? (
               <View style={styles.cardDetailRow}>
                 <MaterialIcon name="card-account-details-outline" size={13} color="#94A3B8" />
-                <Text style={styles.cardDetailText} numberOfLines={1}>
-                  GSTIN: {user.shop_gst}
-                </Text>
+                <Text style={styles.cardDetailText} numberOfLines={1}>GSTIN: {user.shop_gst}</Text>
               </View>
             ) : null}
           </View>
-
-          {/* Avatar / Picture */}
           {user?.picture ? (
             <Image source={{ uri: user.picture }} style={styles.cardAvatar} />
           ) : (
             <View style={styles.cardAvatarFallback}>
-              <Text style={styles.cardAvatarInitials}>
-                {(accountName(user) || user?.name || "B")[0].toUpperCase()}
-              </Text>
+              <Text style={styles.cardAvatarInitials}>{(accountName(user) || user?.name || "B")[0].toUpperCase()}</Text>
             </View>
           )}
         </View>
 
-        {/* Quick UPI Pill */}
         {user?.shop_upi ? (
           <View style={styles.upiPill}>
             <View style={styles.upiPillLeft}>
@@ -406,237 +437,148 @@ export default function Profile() {
                 UPI: <Text style={styles.upiPillBold}>{user.shop_upi}</Text>
               </Text>
             </View>
-            <Pressable
-              style={styles.upiCopyBtn}
-              onPress={() => handleCopyUpi(user.shop_upi || "")}
-              testID="copy-upi-btn"
-            >
-              <Text style={styles.upiCopyText}>{copiedUpi ? "कॉपी हुआ ✓" : "कॉपी"}</Text>
+            <Pressable style={styles.upiCopyBtn} onPress={() => handleCopyUpi(user.shop_upi || "")} testID="copy-upi-btn">
+              <Text style={styles.upiCopyText}>{canCopy ? (copiedUpi ? "कॉपी हुआ ✓" : "कॉपी") : "भेजें"}</Text>
             </Pressable>
           </View>
         ) : null}
 
-        {/* Card Footer Actions */}
+        {completeness.pct < 100 ? (
+          <Pressable style={styles.meter} onPress={() => setShopSheet(true)} testID="profile-meter">
+            <View style={styles.meterHead}>
+              <Text style={styles.meterText}>प्रोफ़ाइल {completeness.pct}% पूरी</Text>
+              <Text style={styles.meterAction}>{completeness.next} जोड़ें ›</Text>
+            </View>
+            <View style={styles.meterTrack}>
+              <View style={[styles.meterFill, { width: `${completeness.pct}%` }]} />
+            </View>
+          </Pressable>
+        ) : null}
+
         <View style={styles.cardActionsRow}>
-          <Pressable
-            style={styles.cardPrimaryBtn}
-            onPress={handleShareVisitingCard}
-            testID="share-card-btn"
-          >
+          <Pressable style={styles.cardPrimaryBtn} onPress={handleShareVisitingCard} testID="share-card-btn">
             <MaterialIcon name="share-variant-outline" size={15} color="#0F172A" />
             <Text style={styles.cardPrimaryBtnText}>कार्ड शेयर करें</Text>
           </Pressable>
-
-          <Pressable
-            style={styles.cardSecondaryBtn}
-            onPress={() => setQrModalOpen(true)}
-            testID="view-qr-btn"
-          >
+          <Pressable style={styles.cardSecondaryBtn} onPress={() => setQrModalOpen(true)} testID="view-qr-btn">
             <MaterialIcon name="qrcode" size={15} color="#F8FAFC" />
             <Text style={styles.cardSecondaryBtnText}>{isPersonal ? "मेरा QR" : "पेमेंट QR कोड"}</Text>
           </Pressable>
         </View>
       </LinearGradient>
 
-      {hasShop ? (
-        <View style={styles.personaContainer}>
-          <Text style={styles.sectionMiniLabel}>खाता</Text>
-          <View style={styles.personaSwitchRow}>
-            <Pressable
-              style={[styles.personaSegment, isPersonal && styles.personaSegmentActive]}
-              onPress={() => handleSwitchPersona("personal")}
-              testID="persona-personal-btn"
-            >
-              <MaterialIcon name="account" size={17} color={isPersonal ? colors.brandPrimary : colors.muted} />
-              <Text style={[styles.personaText, isPersonal && styles.personaTextActive]}>व्यक्तिगत</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.personaSegment, !isPersonal && styles.personaSegmentActive]}
-              onPress={() => handleSwitchPersona("business")}
-              testID="persona-business-btn"
-            >
-              <MaterialIcon name="storefront" size={17} color={!isPersonal ? colors.brandPrimary : colors.muted} />
-              <Text style={[styles.personaText, !isPersonal && styles.personaTextActive]}>दुकान</Text>
-            </Pressable>
+      <Text style={styles.groupHead}>रिपोर्ट व हिसाब</Text>
+      <View style={styles.card}>
+        <Pressable style={styles.settingRow} onPress={() => router.push("/report" as never)} testID="profile-report">
+          <View style={[styles.iconCircle, { backgroundColor: colors.brandTertiary }]}>
+            <MaterialIcon name="chart-box-outline" size={20} color={colors.brandPrimary} />
           </View>
-        </View>
-      ) : null}
-
-      <Pressable style={styles.balanceCard} onPress={() => router.push("/balance" as never)} testID="profile-total-balance">
-        <View style={[styles.iconCircle, { backgroundColor: colors.successSoft }]}>
-          <MaterialIcon name="wallet-outline" size={20} color={colors.success} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.rowLabel}>कुल बैलेंस</Text>
-          <Text style={styles.balanceVal}>{formatINR(cashBal + bankBal)}</Text>
-          <Text style={styles.rowLabel} numberOfLines={1}>
-            {labels.cash} {formatINR(cashBal)} · बैंक {formatINR(bankBal)}
-          </Text>
-        </View>
-        <MaterialIcon name="chevron-right" size={22} color={colors.muted} />
-      </Pressable>
-
-      <View style={styles.analyticsSection}>
-        <View style={styles.analyticsHeader}>
-          <Text style={styles.sectionHead}>{isPersonal ? "मेरा हिसाब" : "दुकान का हिसाब"}</Text>
-          {!isPersonal ? (
-            <View
-              style={[
-                styles.healthChip,
-                recoveryRate >= 75 ? styles.healthChipGood : recoveryRate >= 50 ? styles.healthChipAvg : styles.healthChipLow,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.healthChipText,
-                  recoveryRate >= 75 ? styles.healthTextGood : recoveryRate >= 50 ? styles.healthTextAvg : styles.healthTextLow,
-                ]}
-              >
-                {recoveryRate >= 75 ? "बढ़िया" : recoveryRate >= 50 ? "ठीक" : "ध्यान दें"}
-              </Text>
-            </View>
-          ) : null}
-        </View>
-
-        <View style={styles.analyticsGrid}>
-          <View style={styles.analyticsCard}>
-            <View style={styles.analyticsCardTop}>
-              <Text style={styles.analyticsLabel}>{isPersonal ? "लोग" : "ग्राहक"}</Text>
-              <MaterialIcon name="account-group-outline" size={17} color={colors.brandPrimary} />
-            </View>
-            <Text style={styles.analyticsVal}>{customers.length}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowValue}>महीने की रिपोर्ट</Text>
+            <Text style={styles.rowLabel} numberOfLines={1}>
+              {isPersonal ? "मिले, दिए, खर्च और बचत · PDF" : "कमाई, खर्च, कमीशन, वसूली · PDF"}
+            </Text>
           </View>
-
-          <View style={styles.analyticsCard}>
-            <View style={styles.analyticsCardTop}>
-              <Text style={styles.analyticsLabel}>{TERMS.get}</Text>
-              <MaterialIcon name="arrow-bottom-left" size={17} color={colors.error} />
-            </View>
-            <Text style={[styles.analyticsVal, { color: colors.error }]}>{formatINR(totalDue)}</Text>
+          <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
+        </Pressable>
+        <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => router.push("/balance" as never)} testID="profile-total-balance">
+          <View style={[styles.iconCircle, { backgroundColor: colors.successSoft }]}>
+            <MaterialIcon name="wallet-outline" size={20} color={colors.success} />
           </View>
-
-          <View style={styles.analyticsCard}>
-            <View style={styles.analyticsCardTop}>
-              <Text style={styles.analyticsLabel}>{balanceTerm(-1, isPersonal)}</Text>
-              <MaterialIcon name="arrow-top-right" size={17} color={colors.warning} />
-            </View>
-            <Text style={[styles.analyticsVal, { color: colors.warning }]}>{formatINR(totalWeOwe)}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowValue}>{labels.cash} व बैंक</Text>
+            <Text style={styles.rowLabel} numberOfLines={1}>
+              {prefs.hideAmounts ? "रकम छुपी है" : `कुल ${formatINR(cashBal + bankBal)} · ${labels.cash} ${formatINR(cashBal)} · बैंक ${formatINR(bankBal)}`}
+            </Text>
           </View>
-
-          <View style={styles.analyticsCard}>
-            <View style={styles.analyticsCardTop}>
-              <Text style={styles.analyticsLabel}>{isPersonal ? "इस माह मिले" : "इस माह वसूली"}</Text>
-              <MaterialIcon name="cash-check" size={17} color={colors.success} />
-            </View>
-            <Text style={[styles.analyticsVal, { color: colors.success }]}>{formatINR(monthPayments)}</Text>
-          </View>
-        </View>
-
-        {!isPersonal ? (
-          <View style={styles.progressBarWrapper}>
-            <View style={styles.progressBarBackground}>
-              <View style={[styles.progressBarFill, { width: `${recoveryRate}%` }]} />
-            </View>
-            <View style={styles.progressTextRow}>
-              <Text style={styles.progressSubText}>इस माह वसूली: {recoveryRate}%</Text>
-              <Text style={styles.progressSubText}>इस माह काम: {formatINR(monthBilled)}</Text>
-            </View>
-          </View>
-        ) : null}
+          <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
+        </Pressable>
       </View>
 
-      {/* IMPROVEMENT 5 (Top): Real-time Cloud Sync Card */}
-      {pending > 0 ? (
-        <View style={[styles.syncCard, { backgroundColor: colors.errorSoft }]} testID="sync-pending">
-          <MaterialIcon name="cloud-upload-outline" size={22} color={colors.warning} />
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.syncTitle, { color: colors.warning }]}>
-              {pending} बदलाव सिंक होने बाकी
-            </Text>
-            <Text style={styles.syncSub}>
-              फ़ोन में सुरक्षित रूप से सेव हैं, इंटरनेट मिलते ही अपने आप सर्वर पर चले जाएँगे
-            </Text>
-          </View>
-          <Pressable style={styles.syncBtnSmall} onPress={handleForceSync} disabled={syncing}>
-            <Text style={styles.syncBtnSmallText}>सिंक करें</Text>
-          </Pressable>
-        </View>
-      ) : syncFailed ? (
-        <View style={[styles.syncCard, { backgroundColor: colors.errorSoft }]} testID="sync-offline">
-          <MaterialIcon name="cloud-off-outline" size={22} color={colors.error} />
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.syncTitle, { color: colors.error }]}>सर्वर से नहीं जुड़ पाया</Text>
-            <Text style={styles.syncSub}>
-              {lastSync ? `आख़िरी सिंक: ${syncTime(lastSync)}` : "अभी तक सिंक नहीं हुआ"}
-            </Text>
-          </View>
-          <Pressable style={styles.syncBtnSmall} onPress={handleForceSync} disabled={syncing}>
-            <Text style={styles.syncBtnSmallText}>दोबारा</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <View style={styles.syncCard}>
-          <MaterialIcon name="cloud-check-outline" size={22} color={colors.success} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.syncTitle}>सारा डेटा सर्वर पर सेव है</Text>
-            <Text style={styles.syncSub}>
-              {lastSync ? `आख़िरी सिंक: ${syncTime(lastSync)}` : "सिंक हो रहा है…"}
-            </Text>
-          </View>
-          <Pressable onPress={handleForceSync} disabled={syncing} hitSlop={8} testID="sync-refresh">
-            <MaterialIcon name={syncing ? "sync" : "refresh"} size={20} color={colors.success} />
-          </Pressable>
-        </View>
-      )}
-
-      {/* IMPROVEMENT 4: Grouped Professional Settings */}
-      {/* Category 1: दुकान व बिलिंग सेटिंग्स */}
       <Text style={styles.groupHead}>{isPersonal ? "मेरी सेटिंग्स" : "दुकान सेटिंग्स"}</Text>
       <View style={styles.card}>
-        <Pressable
-          style={styles.settingRow}
-          onPress={() => setShopSheet(true)}
-          testID="profile-shop-settings"
-        >
+        <Pressable style={styles.settingRow} onPress={() => setShopSheet(true)} testID="profile-shop-settings">
           <View style={[styles.iconCircle, { backgroundColor: colors.brandTertiary }]}>
             <MaterialIcon name="storefront-outline" size={20} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowValue}>{labels.profileHeading}</Text>
             <Text style={styles.rowLabel} numberOfLines={1}>
-              {accountName(user)
-                ? `${accountName(user)} · ${user?.shop_phone || "फ़ोन"}`
-                : "नाम, फ़ोन, पता"}
+              {accountName(user) ? `${accountName(user)} · ${user?.shop_phone || "फ़ोन"}` : "नाम, फ़ोन, पता"}
             </Text>
           </View>
           <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
         </Pressable>
 
-        <Pressable
-          style={[styles.settingRow, styles.rowBorder]}
-          onPress={() => setQrModalOpen(true)}
-          testID="profile-qr-settings"
-        >
+        <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => setQrModalOpen(true)} testID="profile-qr-settings">
           <View style={[styles.iconCircle, { backgroundColor: "#EFF6FF" }]}>
             <MaterialIcon name="qrcode" size={20} color="#2563EB" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowValue}>{isPersonal ? "मेरा QR कोड" : "दुकान का QR कोड"}</Text>
-            <Text style={styles.rowLabel} numberOfLines={1}>
-              {user?.shop_upi ? `UPI: ${user.shop_upi}` : "UPI ID जोड़ें"}
-            </Text>
+            <Text style={styles.rowLabel} numberOfLines={1}>{user?.shop_upi ? `UPI: ${user.shop_upi}` : "UPI ID जोड़ें"}</Text>
           </View>
           <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
         </Pressable>
 
+        {!isPersonal ? (
+          <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => setReceiptSheet(true)} testID="profile-receipt-settings">
+            <View style={[styles.iconCircle, { backgroundColor: "#F5F3FF" }]}>
+              <MaterialIcon name="receipt-text-outline" size={20} color="#6D28D9" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowValue}>बिल / रसीद सेटिंग</Text>
+              <Text style={styles.rowLabel} numberOfLines={1}>{prefs.receiptNote || "रसीद के नीचे नोट, GSTIN दिखाना"}</Text>
+            </View>
+            <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
+          </Pressable>
+        ) : null}
+
+        <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => setReminderSheet(true)} testID="profile-reminder-text">
+          <View style={[styles.iconCircle, { backgroundColor: "#E7F6EC" }]}>
+            <MaterialIcon name="whatsapp" size={20} color="#128C7E" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowValue}>तगादा मैसेज</Text>
+            <Text style={styles.rowLabel} numberOfLines={1}>{prefs.reminderText ? prefs.reminderText.replace(/\s+/g, " ") : "अपने शब्दों में WhatsApp याद-दिहानी"}</Text>
+          </View>
+          <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
+        </Pressable>
+
+        <View style={[styles.settingRow, styles.rowBorder]}>
+          <View style={[styles.iconCircle, { backgroundColor: colors.successSoft }]}>
+            <MaterialIcon name="cash-sync" size={20} color={colors.success} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowValue}>पैसे अक्सर कैसे मिलते हैं</Text>
+            <Text style={styles.rowLabel}>नई एंट्री में यही पहले से चुना रहेगा</Text>
+          </View>
+          <View style={styles.miniSeg}>
+            {(["cash", "online"] as const).map((m) => (
+              <Pressable key={m} onPress={() => void savePrefs({ defaultMode: m })} style={[styles.miniSegBtn, prefs.defaultMode === m && styles.miniSegOn]} testID={`default-mode-${m}`}>
+                <Text style={[styles.miniSegText, prefs.defaultMode === m && styles.miniSegTextOn]}>{m === "cash" ? "नकद" : "ऑनलाइन"}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
       </View>
 
-      {/* Category 2: सुरक्षा व गोपनीयता */}
       <Text style={styles.groupHead}>सुरक्षा व गोपनीयता</Text>
       <View style={styles.card}>
-        {lockSupported && (
+        <View style={styles.settingRow}>
+          <View style={[styles.iconCircle, { backgroundColor: colors.surface }]}>
+            <MaterialIcon name="eye-off-outline" size={20} color={colors.onSurface} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowValue}>बैलेंस छुपाएँ</Text>
+            <Text style={styles.rowLabel}>होम पर कुल रकम ₹ •••• दिखेगी · होम की आँख से भी बदलें</Text>
+          </View>
+          <Switch value={prefs.hideAmounts} onValueChange={(v) => void savePrefs({ hideAmounts: v })} trackColor={{ true: colors.brandPrimary }} testID="toggle-hide-amounts-setting" />
+        </View>
+
+        {lockSupported ? (
           <>
-            <View style={styles.settingRow}>
+            <View style={[styles.settingRow, styles.rowBorder]}>
               <View style={[styles.iconCircle, { backgroundColor: "#FEF2F2" }]}>
                 <MaterialIcon name="shield-lock-outline" size={20} color={colors.error} />
               </View>
@@ -644,153 +586,186 @@ export default function Profile() {
                 <Text style={styles.rowValue}>ऐप लॉक (PIN)</Text>
                 <Text style={styles.rowLabel}>ऐप खोलते समय 4-अंकों का PIN माँगे</Text>
               </View>
-              <Switch
-                value={lock.enabled}
-                onValueChange={toggleLock}
-                trackColor={{ true: colors.brandPrimary }}
-                testID="toggle-lock"
-              />
+              <Switch value={lock.enabled} onValueChange={toggleLock} trackColor={{ true: colors.brandPrimary }} testID="toggle-lock" />
             </View>
 
-            {lock.enabled && hasBio && (
+            {lock.enabled ? (
+              <View style={[styles.settingRow, styles.rowBorder, { flexWrap: "wrap" }]}>
+                <View style={[styles.iconCircle, { backgroundColor: colors.brandTertiary }]}>
+                  <MaterialIcon name="timer-lock-outline" size={20} color={colors.brandPrimary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowValue}>कितनी देर बाद लॉक हो</Text>
+                  <Text style={styles.rowLabel}>ऐप से बाहर जाने के बाद</Text>
+                </View>
+                <View style={styles.lockChips}>
+                  {LOCK_CHOICES.map((c) => (
+                    <Pressable key={c.ms} onPress={() => void savePrefs({ lockAfterMs: c.ms })} style={[styles.miniSegBtn, styles.lockChip, prefs.lockAfterMs === c.ms && styles.miniSegOn]} testID={`lock-after-${c.ms}`}>
+                      <Text style={[styles.miniSegText, prefs.lockAfterMs === c.ms && styles.miniSegTextOn]}>{c.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
+            {lock.enabled && hasBio ? (
               <View style={[styles.settingRow, styles.rowBorder]}>
                 <View style={[styles.iconCircle, { backgroundColor: "#F0FDF4" }]}>
                   <MaterialIcon name="fingerprint" size={20} color={colors.success} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.rowValue}>बायोमेट्रिक / फिंगरप्रिंट</Text>
+                  <Text style={styles.rowValue}>फिंगरप्रिंट से खोलें</Text>
                   <Text style={styles.rowLabel}>उंगली लगाकर तुरंत ऐप अनलॉक करें</Text>
                 </View>
-                <Switch
-                  value={lock.biometric}
-                  onValueChange={toggleBio}
-                  trackColor={{ true: colors.brandPrimary }}
-                  testID="toggle-bio"
-                />
+                <Switch value={lock.biometric} onValueChange={toggleBio} trackColor={{ true: colors.brandPrimary }} testID="toggle-bio" />
               </View>
-            )}
+            ) : null}
 
-            {lock.enabled && (
-              <Pressable
-                style={[styles.settingRow, styles.rowBorder]}
-                onPress={() => setVerifyFor("change")}
-                testID="change-pin"
-              >
+            {lock.enabled ? (
+              <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => setVerifyFor("change")} testID="change-pin">
                 <View style={[styles.iconCircle, { backgroundColor: colors.brandTertiary }]}>
                   <MaterialIcon name="form-textbox-password" size={20} color={colors.brandPrimary} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.rowValue}>PIN बदलें</Text>
-                  <Text style={styles.rowLabel}>नया 4-अंकों का सुरक्षा कोड बनाएँ</Text>
+                  <Text style={styles.rowLabel}>नया 4-अंकों का PIN बनाएँ</Text>
                 </View>
                 <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
               </Pressable>
-            )}
+            ) : null}
           </>
-        )}
+        ) : null}
       </View>
 
-      {/* Category 3: डेटा वॉल्ट व रीसायकल बिन */}
-      <Text style={styles.groupHead}>डेटा वॉल्ट व बैकअप</Text>
+      <Text style={styles.groupHead}>बैकअप व डेटा</Text>
       <View style={styles.card}>
-        <Pressable
-          style={styles.settingRow}
-          onPress={() => setTrashOpen(true)}
-          testID="trash-btn"
-        >
+        <View style={[styles.backupStatus, backupDays === null || backupDays > 15 ? { backgroundColor: "#FEF3E2" } : null]} testID="backup-status">
+          <MaterialIcon
+            name={backupDays === null || backupDays > 15 ? "alert-circle-outline" : "check-circle-outline"}
+            size={18}
+            color={backupDays === null || backupDays > 15 ? colors.warning : colors.success}
+          />
+          <Text style={[styles.backupStatusText, { color: backupDays === null || backupDays > 15 ? colors.warning : colors.success }]}>
+            {backupDays === null
+              ? "इस फ़ोन से अभी तक कोई बैकअप नहीं बना"
+              : backupDays === 0
+                ? "आख़िरी बैकअप: आज"
+                : `आख़िरी बैकअप: ${backupDays} दिन पहले${backupDays > 15 ? " · नया बना लें" : ""}`}
+          </Text>
+        </View>
+
+        <View style={[styles.settingRow, styles.rowBorder, { flexWrap: "wrap" }]}>
+          <Pressable style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, flex: 1, minWidth: 200 }} onPress={backup} disabled={backingUp} testID="backup-btn">
+            <View style={[styles.iconCircle, { backgroundColor: "#F0FDF4" }]}>
+              <MaterialIcon name="file-excel-outline" size={20} color={colors.success} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowValue}>Excel फ़ाइल (.csv)</Text>
+              <Text style={styles.rowLabel}>खाते, एंट्री, AEPS, खर्च — पढ़ने व प्रिंट के लिए</Text>
+            </View>
+            {backingUp ? <ActivityIndicator color={colors.brandPrimary} /> : <MaterialIcon name="download" size={20} color={colors.muted} />}
+          </Pressable>
+          {hasShop ? (
+            <View style={[styles.miniSeg, { marginLeft: 48 }]}>
+              {(["mine", "all"] as const).map((s) => (
+                <Pressable key={s} onPress={() => setExportScope(s)} style={[styles.miniSegBtn, exportScope === s && styles.miniSegOn]} testID={`export-scope-${s}`}>
+                  <Text style={[styles.miniSegText, exportScope === s && styles.miniSegTextOn]}>{s === "mine" ? (isPersonal ? "सिर्फ़ निजी" : "सिर्फ़ दुकान") : "दोनों खाते"}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </View>
+
+        <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={jsonBackup} disabled={backingUp} testID="backup-json-btn">
+          <View style={[styles.iconCircle, { backgroundColor: "#EFF6FF" }]}>
+            <MaterialIcon name="cloud-download-outline" size={20} color="#1D4ED8" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowValue}>पूरा बैकअप (.json)</Text>
+            <Text style={styles.rowLabel}>दोनों खातों की पूरी कॉपी, ऐप में वापस लाने लायक</Text>
+          </View>
+          <MaterialIcon name="download" size={20} color={colors.muted} />
+        </Pressable>
+
+        {Platform.OS !== "web" ? (
+          <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={restoreBackup} testID="restore-json-btn">
+            <View style={[styles.iconCircle, { backgroundColor: "#F5F3FF" }]}>
+              <MaterialIcon name="backup-restore" size={20} color="#6D28D9" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowValue}>बैकअप से वापस लाएँ</Text>
+              <Text style={styles.rowLabel}>सिर्फ़ गायब रिकॉर्ड जुड़ेंगे, कुछ नहीं बदलेगा</Text>
+            </View>
+            <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
+          </Pressable>
+        ) : null}
+
+        <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => setTrashOpen(true)} testID="trash-btn">
           <View style={[styles.iconCircle, { backgroundColor: "#FFFBEB" }]}>
             <MaterialIcon name="delete-restore" size={20} color={colors.warning} />
           </View>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Text style={styles.rowValue}>कचरा पेटी (Recycle Bin)</Text>
+              <Text style={styles.rowValue}>हटाई गई एंट्री</Text>
               {trashCount > 0 ? (
                 <View style={styles.trashBadge}>
                   <Text style={styles.trashBadgeText}>{trashCount}</Text>
                 </View>
               ) : null}
             </View>
-            <Text style={styles.rowLabel}>हाल में हटाए गए आख़िरी 50 रिकॉर्ड</Text>
+            <Text style={styles.rowLabel}>गलती से हटी एंट्री वापस लाएँ (आख़िरी 50)</Text>
           </View>
           <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
         </Pressable>
-
-        <Pressable
-          style={[styles.settingRow, styles.rowBorder]}
-          onPress={backup}
-          disabled={backingUp}
-          testID="backup-btn"
-        >
-          <View style={[styles.iconCircle, { backgroundColor: "#F0FDF4" }]}>
-            <MaterialIcon name="file-excel-outline" size={20} color={colors.success} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.rowValue}>सम्पूर्ण खाता Excel बैकअप (.csv)</Text>
-            <Text style={styles.rowLabel}>सारा हिसाब एक फ़ाइल में</Text>
-          </View>
-          {backingUp ? (
-            <ActivityIndicator color={colors.brandPrimary} />
-          ) : (
-            <MaterialIcon name="download" size={20} color={colors.muted} />
-          )}
-        </Pressable>
-
-        <Pressable
-          style={[styles.settingRow, styles.rowBorder]}
-          onPress={jsonBackup}
-          disabled={backingUp}
-          testID="backup-json-btn"
-        >
-          <View style={[styles.iconCircle, { backgroundColor: "#EFF6FF" }]}>
-            <MaterialIcon name="cloud-download-outline" size={20} color="#1D4ED8" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.rowValue}>पूरा बैकअप फ़ाइल (.json)</Text>
-            <Text style={styles.rowLabel}>ऐप में वापस लाने लायक पूरी कॉपी</Text>
-          </View>
-          <MaterialIcon name="download" size={20} color={colors.muted} />
-        </Pressable>
-
-        {Platform.OS !== "web" ? (
-          <Pressable
-            style={[styles.settingRow, styles.rowBorder]}
-            onPress={restoreBackup}
-            testID="restore-json-btn"
-          >
-            <View style={[styles.iconCircle, { backgroundColor: "#F5F3FF" }]}>
-              <MaterialIcon name="backup-restore" size={20} color="#6D28D9" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowValue}>बैकअप से वापस लाएं</Text>
-              <Text style={styles.rowLabel}>सिर्फ़ गायब रिकॉर्ड जुड़ेंगे</Text>
-            </View>
-            <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
-          </Pressable>
-        ) : null}
       </View>
       {backupError ? <Text style={styles.errorText}>{backupError}</Text> : null}
 
-      {hasShop ? (
-        <Pressable style={styles.closeShopLink} onPress={() => setCloseShop(true)} testID="close-shop-btn">
-          <MaterialIcon name="store-remove-outline" size={18} color={colors.error} />
-          <Text style={styles.closeShopText}>दुकान खाता हटाएँ</Text>
+      <Text style={styles.groupHead}>मदद व जानकारी</Text>
+      <View style={styles.card}>
+        <Pressable style={styles.settingRow} onPress={() => setGuideOpen(true)} testID="profile-guide">
+          <View style={[styles.iconCircle, { backgroundColor: colors.brandTertiary }]}>
+            <MaterialIcon name="lightbulb-on-outline" size={20} color={colors.brandPrimary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowValue}>ऐप कैसे चलाएँ</Text>
+            <Text style={styles.rowLabel}>ज़रूरी काम, एक-एक लाइन में</Text>
+          </View>
+          <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
         </Pressable>
-      ) : null}
+        <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={checkUpdate} disabled={checkingUpdate} testID="profile-check-update">
+          <View style={[styles.iconCircle, { backgroundColor: colors.successSoft }]}>
+            <MaterialIcon name="cellphone-arrow-down" size={20} color={colors.success} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowValue}>नया अपडेट जाँचें</Text>
+            <Text style={styles.rowLabel} numberOfLines={1}>{versionText}</Text>
+          </View>
+          {checkingUpdate ? <ActivityIndicator color={colors.brandPrimary} /> : <MaterialIcon name="chevron-right" size={20} color={colors.muted} />}
+        </Pressable>
+      </View>
 
-      {/* Sign Out Danger Zone */}
       <Pressable style={styles.logoutBtn} onPress={handleSignOut} testID="logout-btn">
         <MaterialIcon name="logout-variant" size={18} color={colors.error} />
-        <Text style={styles.logoutText}>सुरक्षित साइन आउट</Text>
+        <Text style={styles.logoutText}>लॉग आउट</Text>
       </Pressable>
 
-      {/* App Branding & Version Footer */}
+      {hasShop ? (
+        <View style={styles.dangerZone}>
+          <Text style={styles.dangerHead}>खतरनाक</Text>
+          <Pressable style={styles.dangerRow} onPress={() => setCloseShop(true)} testID="close-shop-btn">
+            <MaterialIcon name="store-remove-outline" size={20} color={colors.error} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.closeShopText}>दुकान खाता हटाएँ</Text>
+              <Text style={styles.rowLabel}>पहले बैकअप बनाएँ — हटाने से पहले पुष्टि माँगी जाएगी</Text>
+            </View>
+            <MaterialIcon name="chevron-right" size={20} color={colors.error} />
+          </Pressable>
+        </View>
+      ) : null}
+
       <View style={styles.footerWrap}>
-        <Text style={styles.footerBrand}>
-          {accountName(user) || "बही खाता"} · प्रो संस्करण v1.2
-        </Text>
-        <Text style={styles.footerSub}>
-          Nain Photo State & Khata · 100% मेड इन इंडिया 🇮🇳
-        </Text>
+        <Text style={styles.footerBrand}>{accountName(user) || "बही खाता"}</Text>
+        <Text style={styles.footerSub}>{versionText}</Text>
       </View>
 
       {/* Modals */}
@@ -805,6 +780,9 @@ export default function Profile() {
         onVerified={onVerified}
       />
       <RecycleBinModal visible={trashOpen} onClose={() => setTrashOpen(false)} />
+      <ReceiptSettingsSheet visible={receiptSheet} onClose={() => setReceiptSheet(false)} hasGst={!!user?.shop_gst} />
+      <ReminderTextSheet visible={reminderSheet} onClose={() => setReminderSheet(false)} shopName={accountName(user)} />
+      <GuideSheet visible={guideOpen} onClose={() => setGuideOpen(false)} />
 
       {/* Payment QR Code Modal */}
       <QrCodeModal
@@ -849,11 +827,11 @@ function QrCodeModal({
     try {
       if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(upiId);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
       } else {
         await Share.share({ message: upiId });
       }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
     } catch {}
   };
 
@@ -883,12 +861,12 @@ function QrCodeModal({
                 <Text style={qrStyles.upiLabel}>UPI ID: </Text>
                 <Text style={qrStyles.upiVal} numberOfLines={1}>{upiId}</Text>
                 <Pressable style={qrStyles.copyPill} onPress={handleCopy} testID="qr-copy-btn">
-                  <Text style={qrStyles.copyPillText}>{copied ? "कॉपी ✓" : "कॉपी"}</Text>
+                  <Text style={qrStyles.copyPillText}>{Platform.OS === "web" ? (copied ? "कॉपी ✓" : "कॉपी") : "भेजें"}</Text>
                 </Pressable>
               </View>
 
               <Pressable style={qrStyles.doneBtn} onPress={onClose} testID="qr-done-btn">
-                <Text style={qrStyles.doneBtnText}>पूर्ण (Done)</Text>
+                <Text style={qrStyles.doneBtnText}>ठीक है</Text>
               </Pressable>
             </View>
           ) : (
@@ -1417,6 +1395,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
   },
+
+  syncLine: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.md, marginBottom: spacing.md, paddingHorizontal: spacing.md, paddingVertical: 10, borderRadius: radius.md, backgroundColor: colors.successSoft },
+  syncLineText: { flex: 1, fontSize: 12, fontWeight: "700" },
+  syncLineAction: { fontSize: 12, fontWeight: "800" },
+  meter: { marginTop: spacing.md, padding: spacing.sm, borderRadius: radius.sm, backgroundColor: "rgba(252, 211, 77, 0.12)" },
+  meterHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  meterText: { fontSize: 12, fontWeight: "700", color: "#FCD34D" },
+  meterAction: { fontSize: 12, fontWeight: "800", color: "#F8FAFC" },
+  meterTrack: { height: 5, borderRadius: 3, backgroundColor: "rgba(255, 255, 255, 0.15)", marginTop: 6, overflow: "hidden" },
+  meterFill: { height: 5, borderRadius: 3, backgroundColor: "#FCD34D" },
+  miniSeg: { flexDirection: "row", backgroundColor: colors.surface, borderRadius: radius.pill, padding: 2, borderWidth: 1, borderColor: colors.border },
+  miniSegBtn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill },
+  miniSegOn: { backgroundColor: colors.brandPrimary },
+  miniSegText: { fontSize: 12, fontWeight: "700", color: colors.muted },
+  miniSegTextOn: { color: colors.onBrandPrimary },
+  lockChips: { flexDirection: "row", flexWrap: "wrap", gap: 6, width: "100%", paddingLeft: 48 },
+  lockChip: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  backupStatus: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: 10, backgroundColor: colors.successSoft },
+  backupStatusText: { flex: 1, fontSize: 12, fontWeight: "700" },
+  dangerZone: { marginTop: spacing.xl, borderWidth: 1, borderColor: colors.error, borderRadius: radius.md, padding: spacing.md, backgroundColor: "#FFF7F6" },
+  dangerHead: { fontSize: 11, fontWeight: "800", color: colors.error, letterSpacing: 0.5, marginBottom: spacing.xs },
+  dangerRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingVertical: spacing.xs },
 
   // Footer
   footerWrap: {

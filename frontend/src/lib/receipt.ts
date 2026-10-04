@@ -9,6 +9,7 @@ import type { ShopProfile } from "@/src/context/AuthContext";
 import { AEPS_META, aepsBill, customerCharge, defaultVia, maskAccount, statusLabel, viaBill } from "@/src/lib/aeps";
 import { accountName } from "@/src/lib/persona";
 import { TERMS, docBalanceTerm } from "@/src/lib/terms";
+import { getPrefs } from "@/src/lib/prefs";
 import { qrSvg, upiLink } from "@/src/lib/qr";
 
 type Tone = "due" | "ok";
@@ -239,6 +240,11 @@ export function statementDoc(
   };
 }
 
+/** The owner's own reminder text with {नाम} {रकम} {दुकान} filled in. */
+export function fillReminder(template: string, name: string, amount: number, shopName: string): string {
+  return template.replaceAll("{नाम}", name).replaceAll("{रकम}", formatINR(amount)).replaceAll("{दुकान}", shopName);
+}
+
 export function reminderDoc(
   customer: Customer,
   balance: number,
@@ -251,14 +257,19 @@ export function reminderDoc(
     { label: `कुल ${TERMS.docDue}`, value: formatINR(balance), tone: "due" },
   ];
 
+  const custom = getPrefs().reminderText.trim();
   const message = [
-    `नमस्ते *${customer.name}* जी 🙏,`,
-    `आशा है आप सकुशल हैं।`,
-    "",
-    `*${shop.shop_name}* की तरफ से आपका हिसाब विवरण:`,
-    `💰 कुल बाकी रकम: *${formatINR(balance)}*`,
-    "",
-    `कृपया सुविधा अनुसार इसका भुगतान कर दें।`,
+    ...(custom
+      ? [fillReminder(custom, customer.name, balance, shop.shop_name)]
+      : [
+          `नमस्ते *${customer.name}* जी 🙏,`,
+          `आशा है आप सकुशल हैं।`,
+          "",
+          `*${shop.shop_name}* की तरफ से आपका हिसाब विवरण:`,
+          `💰 कुल ${TERMS.docDue}: *${formatINR(balance)}*`,
+          "",
+          `कृपया सुविधा अनुसार इसका भुगतान कर दें।`,
+        ]),
     ...(shop.shop_upi ? ["", `📱 ऑनलाइन भुगतान के लिए UPI ID:\n*${shop.shop_upi}*`, `🔗 तुरंत पेमेंट लिंक:\n${upiUrl}`] : []),
     "",
     `धन्यवाद 🙏`,
@@ -304,7 +315,9 @@ const accountBox = (l: Line) =>
 
 function page(shop: ShopProfile, heading: string, docMeta: string, customer: Customer, body: string, size: "A4" | "A5"): string {
   const personal = customer.persona === "personal";
-  const shopMeta = [shop.shop_address, shop.shop_phone ? `फ़ोन: ${formatPhone(shop.shop_phone)}` : "", shop.shop_gst && !personal ? `GSTIN: ${shop.shop_gst}` : ""]
+  const prefs = getPrefs();
+  const note = !personal && customer.id !== OWN_BOOK ? prefs.receiptNote.trim() : "";
+  const shopMeta = [shop.shop_address, shop.shop_phone ? `फ़ोन: ${formatPhone(shop.shop_phone)}` : "", shop.shop_gst && !personal && prefs.showGst ? `GSTIN: ${shop.shop_gst}` : ""]
     .filter(Boolean)
     .map((s) => `<div>${esc(s)}</div>`)
     .join("");
@@ -339,6 +352,7 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
   .sum tr:last-child td { font-weight: 800; font-size: 15px; }
   .account { margin-top: 14px; border: 1.5px dashed; border-radius: 8px; padding: 10px 12px; display: flex; justify-content: space-between; font-size: 14px; }
   .stamp { display: inline-block; margin-top: 16px; border: 2px solid; padding: 4px 14px; border-radius: 6px; font-weight: 800; transform: rotate(-4deg); }
+  .note { margin-top: 18px; padding: 8px 10px; background: #F7F7F7; border-radius: 6px; color: #444; font-size: 11px; white-space: pre-line; }
   .foot { margin-top: 24px; text-align: center; color: #777; font-size: 12px; border-top: 1px solid #EEE; padding-top: 10px; }
 </style></head><body>
   <div class="head">
@@ -347,6 +361,7 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
   </div>
   ${customer.id === OWN_BOOK ? `<div class="to"><div class="name">${esc(customer.name)}</div></div>` : `<div class="to"><div class="label">${customer.persona === "personal" ? "नाम" : "ग्राहक"}</div><div class="name">${esc(customer.name)}</div>${customer.phone ? `<div class="meta">${esc(formatPhone(customer.phone))}</div>` : ""}</div>`}
   ${body}
+  ${note ? `<div class="note">${esc(note)}</div>` : ""}
   <div class="foot">${customer.id === OWN_BOOK ? `बनाया: ${esc(formatDate(todayISO()))}` : personal ? "धन्यवाद 🙏" : "धन्यवाद, फिर पधारें 🙏"}</div>
 </body></html>`;
 }
@@ -407,6 +422,39 @@ export function registerDoc(
     message,
     html: page(shop, heading, esc(period), owner, body, "A4"),
     fileName: `${fileSafe(pocketTitle)}-${today}.pdf`,
+  };
+}
+
+export type ReportSection = { title: string; lines: Line[] };
+
+/** Monthly business / personal summary: headline numbers, the result, then supporting lists. */
+export function reportDoc(shopIn: Partial<ShopProfile>, heading: string, period: string, lines: Line[], account: Line, sections: ReportSection[]): ShareDoc {
+  const shop = fullShop(shopIn);
+  const today = todayISO();
+  const shown = sections.filter((s) => s.lines.length > 0);
+  const message = [
+    ...messageHead(shop),
+    `*${heading}* · ${period}`,
+    "",
+    ...lines.map(lineText),
+    `*${account.label}: ${account.value}*`,
+    ...shown.flatMap((s) => ["", `*${s.title}*`, ...s.lines.map(lineText)]),
+  ].join("\n");
+  const body = `
+  <table class="sum" style="width:100%;margin-left:0">${lines.map(sumRow).join("")}</table>
+  ${accountBox(account)}
+  ${shown.map((s) => `<h3 style="font-size:13px;margin:16px 0 6px">${esc(s.title)}</h3><table class="sum" style="width:100%;margin-left:0">${s.lines.map(sumRow).join("")}</table>`).join("")}`;
+  const owner: Customer = { id: OWN_BOOK, name: `${heading} · ${period}`, phone: "", address: "", notes: "", createdAt: today };
+  return {
+    heading,
+    title: heading,
+    sub: period,
+    phone: "",
+    lines,
+    account,
+    message,
+    html: page(shop, heading, esc(period), owner, body, "A4"),
+    fileName: `${fileSafe(heading)}-${fileSafe(period)}.pdf`,
   };
 }
 

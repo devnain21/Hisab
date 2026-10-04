@@ -22,6 +22,7 @@ import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
 import { useContactPicker } from "@/src/components/contact-picker-modal";
 import { usePersona } from "@/src/lib/persona";
+import { getPrefs } from "@/src/lib/prefs";
 import { useKeyboardOverlap } from "@/src/lib/keyboard-overlap";
 import { useRouter } from "expo-router";
 
@@ -864,7 +865,7 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
       items.reset();
       money.reset("", "0");
     }
-    setPayMode(initial?.mode ?? "cash");
+    setPayMode(initial?.mode ?? getPrefs().defaultMode);
     setDate(initial?.date ?? todayISO());
     setOpenedOn(todayISO());
     setNotes(initial?.notes ?? "");
@@ -1292,7 +1293,7 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
     if (!work) return;
     split.reset();
     setAmount(remaining > 0 ? String(remaining) : "");
-    setPayMode("cash");
+    setPayMode(getPrefs().defaultMode);
     setDate(todayISO());
     setOpenedOn(todayISO());
     setNotes("");
@@ -1391,7 +1392,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       setTitle("");
       items.reset();
       money.reset("");
-      setPayMode("cash");
+      setPayMode(getPrefs().defaultMode);
       setGovtFee("");
       setFeeMode("online");
       setDate(initialMode === "now" ? todayISO() : todayISO(1));
@@ -1624,7 +1625,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
       const est = job.estimatedAmount > 0 ? job.estimatedAmount : 0;
       // The advance for this job already sits in the drawer/bank; only the remainder is new money.
       money.reset(est ? String(est) : "", undefined, jobAdvance);
-      setPayMode("cash");
+      setPayMode(getPrefs().defaultMode);
       setFee("");
       setFeeMode("online");
       setWorkDate(todayISO());

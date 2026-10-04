@@ -9,6 +9,7 @@ import { AEPS_META, STATUS_META } from "@/src/lib/aeps";
 import { expensePersona, type Expense } from "@/src/lib/expenses";
 import { accountLabel, type Move } from "@/src/lib/wallet";
 import { balanceTerm } from "@/src/lib/terms";
+import type { Persona } from "@/src/lib/persona";
 
 function escapeCsv(val: any): string {
   if (val == null) return '""';
@@ -30,8 +31,17 @@ export async function exportFullLedgerCsv(params: {
   expenses: Expense[];
   moves: Move[];
   shop?: Partial<ShopProfile> | null;
+  /** Limit the file to one book; both books when left out. */
+  only?: Persona;
 }): Promise<void> {
-  const { customers, entries, aeps, expenses, moves, shop } = params;
+  const { shop, only } = params;
+  const inBook = (p: Persona) => !only || p === only;
+  const customers = params.customers.filter((c) => inBook(c.persona === "personal" ? "personal" : "business"));
+  const ids = new Set(customers.map((c) => c.id));
+  const entries = params.entries.filter((e) => ids.has(e.customerId));
+  const aeps = only === "personal" ? [] : params.aeps;
+  const expenses = params.expenses.filter((x) => inBook(expensePersona(x)));
+  const moves = params.moves.filter((m) => !only || m.from.startsWith(only) || m.to.startsWith(only));
   const bookOf = (c?: Customer) => (c?.persona === "personal" ? "निजी" : "दुकान");
   const shopName = shop?.shop_name || "हिसाब बही खाता";
   const dateStr = todayISO();
@@ -42,7 +52,7 @@ export async function exportFullLedgerCsv(params: {
   lines.push("\uFEFF");
 
   // Shop & Metadata Header
-  lines.push(`${escapeCsv(shopName)} - सम्पूर्ण बही खाता बैकअप`);
+  lines.push(`${escapeCsv(shopName)} - ${only === "personal" ? "निजी खाता" : only === "business" ? "दुकान खाता" : "सम्पूर्ण बही खाता"} बैकअप`);
   lines.push(`डाउनलोड तिथि: ${dateStr}`);
   if (shop?.shop_phone) lines.push(["फ़ोन", textNum(shop.shop_phone)].map(escapeCsv).join(","));
   lines.push("");
@@ -178,7 +188,7 @@ export async function exportFullLedgerCsv(params: {
   }
 
   const csvContent = lines.join("\r\n");
-  const fileName = `Hisab_${dateStr}.csv`;
+  const fileName = `Hisab_${only === "personal" ? "Niji_" : only === "business" ? "Dukan_" : ""}${dateStr}.csv`;
 
   if (Platform.OS === "web") {
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });

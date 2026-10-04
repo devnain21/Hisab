@@ -8,6 +8,7 @@ import { formatDate, formatDateShort, formatINR, formatPhone, todayISO } from "@
 import type { ShopProfile } from "@/src/context/AuthContext";
 import { AEPS_META, aepsBill, customerCharge, defaultVia, maskAccount, statusLabel, viaBill } from "@/src/lib/aeps";
 import { accountName } from "@/src/lib/persona";
+import { TERMS, docBalanceTerm } from "@/src/lib/terms";
 import { qrSvg, upiLink } from "@/src/lib/qr";
 
 type Tone = "due" | "ok";
@@ -36,9 +37,8 @@ const fullShop = (s: Partial<ShopProfile> & { name?: string }): ShopProfile => (
 
 /** Whole-account position, worded for a customer (advance) or a personal contact (we owe them). */
 function accountLine(balance: number, isCustomer: boolean): Line {
-  if (balance > 0) return { label: "कुल लेने हैं", value: formatINR(balance), tone: "due" };
-  if (balance < 0) return { label: isCustomer ? "एडवांस" : "देने हैं", value: formatINR(-balance), tone: "ok" };
-  return { label: "खाता", value: "पूरा क्लियर", tone: "ok" };
+  if (balance === 0) return { label: "खाता", value: TERMS.docSettled, tone: "ok" };
+  return { label: `कुल ${docBalanceTerm(balance, isCustomer)}`, value: formatINR(Math.abs(balance)), tone: balance > 0 ? "due" : "ok" };
 }
 
 const fileSafe = (s: string) => s.replace(/[\\/:*?"<>|\s]+/g, "-").slice(0, 30) || "customer";
@@ -86,8 +86,8 @@ export function receiptDoc(
     itemDue = status?.remaining ?? Math.max(0, entry.amount - received);
     lines.push({ label: given ? "पैसे दिए" : "कुल", value: formatINR(entry.amount) });
     lines.push({ label: given ? "वापस मिले" : purchase ? "चुकाए" : "जमा", value: formatINR(received), tone: received > 0 ? "ok" : undefined });
-    lines.push({ label: purchase ? "देने बाकी" : "बाकी", value: formatINR(itemDue), tone: itemDue > 0 ? "due" : "ok" });
-    stamp = itemDue > 0 ? { text: purchase ? "देने बाकी" : "बाकी", tone: "due" } : { text: given ? "वापस मिले" : purchase ? "चुकता" : "पूरा भुगतान", tone: "ok" };
+    lines.push({ label: TERMS.docDueShort, value: formatINR(itemDue), tone: itemDue > 0 ? "due" : "ok" });
+    stamp = itemDue > 0 ? { text: TERMS.docDueShort, tone: "due" } : { text: given ? "वापस मिले" : purchase ? "चुकता" : "पूरा भुगतान", tone: "ok" };
   }
   // The whole-account box only adds something when other rows change the picture.
   const itemBalance = purchase ? -itemDue : itemDue;
@@ -181,7 +181,7 @@ export function statementDoc(
       : "";
   const debitLabel = isCustomer ? "कुल काम / दिए" : "कुल दिए";
   const creditLabel = isCustomer ? "कुल जमा" : "कुल मिले / सामान";
-  const signed = (b: number) => (b > 0 ? `${formatINR(b)} लेने` : b < 0 ? `${formatINR(-b)} ${isCustomer ? "एडवांस" : "देने"}` : "₹0");
+  const signed = (b: number) => (b === 0 ? "₹0" : `${formatINR(Math.abs(b))} ${docBalanceTerm(b, isCustomer, true)}`);
 
   const lines: Line[] = [
     ...(range ? [{ label: "पिछला हिसाब", value: signed(opening) }] : []),
@@ -199,17 +199,17 @@ export function statementDoc(
     ...lines.map(lineText),
     `*${account.label}: ${account.value}*`,
     ...(open.length
-      ? ["", "जिन पर लेने हैं:", ...open.map((e) => `• ${formatDateShort(e.date)} ${e.description || "पैसे दिए"} — ${formatINR(ledger.work.get(e.id)!.remaining)}`)]
+      ? ["", "बकाया एंट्री:", ...open.map((e) => `• ${formatDateShort(e.date)} ${e.description || "पैसे दिए"} — ${formatINR(ledger.work.get(e.id)!.remaining)}`)]
       : []),
     ...(owed.length
-      ? ["", "जिनके देने हैं:", ...owed.map((e) => `• ${formatDateShort(e.date)} ${e.description || "सामान / सेवा"} — ${formatINR(ledger.work.get(e.id)!.remaining)}`)]
+      ? ["", "जिनके पैसे आपको मिलने हैं:", ...owed.map((e) => `• ${formatDateShort(e.date)} ${e.description || "सामान / सेवा"} — ${formatINR(ledger.work.get(e.id)!.remaining)}`)]
       : []),
     "",
     "धन्यवाद 🙏",
   ].join("\n");
 
   const balCell = (b: number) =>
-    b > 0 ? `<span style="color:${DUE}">${esc(formatINR(b))}</span>` : b < 0 ? `<span style="color:${OK}">${esc(formatINR(-b))} ${isCustomer ? "एडवांस" : "देने हैं"}</span>` : "—";
+    b > 0 ? `<span style="color:${DUE}">${esc(formatINR(b))}</span>` : b < 0 ? `<span style="color:${OK}">${esc(formatINR(-b))} ${esc(docBalanceTerm(b, isCustomer, true))}</span>` : "—";
   const body = `
   ${period ? `<div class="meta" style="margin-bottom:8px">अवधि: ${esc(period)}</div>` : ""}
   <table class="ledger">
@@ -248,7 +248,7 @@ export function reminderDoc(
   const upiUrl = shop.shop_upi ? upiLink(shop.shop_upi, shop.shop_name, balance, `Hisab ${customer.name}`) : "";
 
   const lines: Line[] = [
-    { label: "कुल बाकी रकम (लेने हैं)", value: formatINR(balance), tone: "due" },
+    { label: `कुल ${TERMS.docDue}`, value: formatINR(balance), tone: "due" },
   ];
 
   const message = [
@@ -268,7 +268,7 @@ export function reminderDoc(
   const today = todayISO();
   const body = `
   <div style="margin:20px 0;padding:16px;background:#FDECEA;border:1.5px solid ${DUE};border-radius:8px;text-align:center;">
-    <div style="font-size:13px;color:#777;">कुल बाकी रकम (लेने हैं)</div>
+    <div style="font-size:13px;color:#777;">कुल ${TERMS.docDue}</div>
     <div style="font-size:26px;font-weight:800;color:${DUE};margin:6px 0;">${esc(formatINR(balance))}</div>
     <div style="font-size:12px;color:#555;">कृपया सुविधा अनुसार भुगतान करने का कष्ट करें।</div>
   </div>
@@ -277,11 +277,11 @@ export function reminderDoc(
 
   return {
     heading: "भुगतान रिमाइंडर",
-    title: customer.persona === "personal" ? "पैसे की याद" : "उधारी तगादा",
+    title: customer.persona === "personal" ? "पैसे की याद" : "भुगतान रिमाइंडर",
     sub: `${customer.name} · ${formatDate(today)}`,
     phone: customer.phone,
     lines,
-    account: { label: "कुल लेने हैं", value: formatINR(balance), tone: "due" },
+    account: { label: `कुल ${TERMS.docDue}`, value: formatINR(balance), tone: "due" },
     message,
     html: page(shop, "भुगतान रिमाइंडर", esc(formatDate(today)), customer, body, "A5"),
     fileName: `Reminder-${fileSafe(customer.name)}-${today}.pdf`,

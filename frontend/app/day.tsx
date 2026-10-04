@@ -618,8 +618,8 @@ export default function DayScreen() {
                       {(e.paid ?? 0) >= e.amount
                         ? "पूरे मिले"
                         : (e.paid ?? 0) > 0
-                        ? `${formatINR(e.paid ?? 0)} मिले · ${formatINR(e.amount - (e.paid ?? 0))} लेने हैं`
-                        : "लेने हैं"}
+                        ? `${formatINR(e.paid ?? 0)} मिले · ${formatINR(e.amount - (e.paid ?? 0))} बाकी`
+                        : "पैसे बाकी"}
                     </Text>
                     {e.fee && e.fee > 0 ? (
                       <Text style={styles.feeInfoText}>

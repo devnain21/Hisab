@@ -30,6 +30,7 @@ import { flush, usePendingCount } from "@/src/lib/store";
 import { confirmAction, showNotice } from "@/src/lib/confirm";
 import { applyRestore, exportBackupJson, pickBackup } from "@/src/lib/backup";
 import { accountName, usePersona } from "@/src/lib/persona";
+import { TERMS, balanceTerm } from "@/src/lib/terms";
 import { RecycleBinModal } from "@/src/components/recycle-bin-sheet";
 import { getTrashList, subscribeTrash } from "@/src/lib/trash";
 import { shareMessage } from "@/src/lib/share-text";
@@ -508,7 +509,7 @@ export default function Profile() {
 
           <View style={styles.analyticsCard}>
             <View style={styles.analyticsCardTop}>
-              <Text style={styles.analyticsLabel}>{isPersonal ? "लेने हैं" : "बाज़ार में उधारी"}</Text>
+              <Text style={styles.analyticsLabel}>{TERMS.get}</Text>
               <MaterialIcon name="arrow-bottom-left" size={17} color={colors.error} />
             </View>
             <Text style={[styles.analyticsVal, { color: colors.error }]}>{formatINR(totalDue)}</Text>
@@ -516,7 +517,7 @@ export default function Profile() {
 
           <View style={styles.analyticsCard}>
             <View style={styles.analyticsCardTop}>
-              <Text style={styles.analyticsLabel}>{isPersonal ? "देने हैं" : "एडवांस जमा"}</Text>
+              <Text style={styles.analyticsLabel}>{balanceTerm(-1, isPersonal)}</Text>
               <MaterialIcon name="arrow-top-right" size={17} color={colors.warning} />
             </View>
             <Text style={[styles.analyticsVal, { color: colors.warning }]}>{formatINR(totalWeOwe)}</Text>

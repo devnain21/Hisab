@@ -20,6 +20,7 @@ import { clearRejected, flush, rejectedChanges, store, usePendingCount, useRejec
 import { computeFlows, pocketNet, useMoneyBook } from "@/src/lib/wallet";
 import { useCounterMode } from "@/src/lib/counter";
 import { accountName, usePersona } from "@/src/lib/persona";
+import { TERMS, balanceTerm } from "@/src/lib/terms";
 import { useRecentCustomerIds } from "@/src/lib/recent";
 import { TaskSheet } from "@/src/components/task-sheet";
 import { TaskRow } from "@/src/components/task-row";
@@ -268,8 +269,8 @@ export default function Home() {
                       <Text style={styles.resultTitle}>{c.name}</Text>
                       {c.phone ? <Text style={styles.resultSub}>{formatPhone(c.phone)}</Text> : null}
                     </View>
-                    <Text style={[styles.resultDue, { color: b > 0 ? colors.error : colors.success }]}>
-                      {b === 0 ? "क्लियर" : b > 0 ? `${formatINR(b)} लेने` : `${formatINR(-b)} ${labels.advance}`}
+                    <Text style={[styles.resultDue, { color: b > 0 ? colors.error : b < 0 && c.persona === "personal" ? colors.warning : colors.success }]}>
+                      {b === 0 ? TERMS.settled : `${formatINR(Math.abs(b))} ${balanceTerm(b, c.persona === "personal", true)}`}
                     </Text>
                   </Pressable>
                 ))}
@@ -352,7 +353,7 @@ export default function Home() {
               {isPersonal ? (
                 <>
                   <StatCard
-                    label="कुल लेने हैं"
+                    label={TERMS.get}
                     value={formatINR(Math.max(stats.totalDue, 0))}
                     hint={`${stats.dueCustomers} लोग`}
                     icon="account-arrow-left-outline"
@@ -361,7 +362,7 @@ export default function Home() {
                     testID="stat-total-due"
                   />
                   <StatCard
-                    label="कुल देने हैं"
+                    label={TERMS.give}
                     value={formatINR(Math.max(stats.totalWeOwe, 0))}
                     hint={`${stats.weOweCount} लोग`}
                     icon="account-arrow-right-outline"
@@ -383,7 +384,7 @@ export default function Home() {
               ) : (
                 <>
                   <StatCard
-                    label="कुल लेने हैं"
+                    label={TERMS.get}
                     value={formatINR(Math.max(stats.totalDue, 0))}
                     hint={`${stats.dueCustomers} ग्राहक`}
                     icon="account-cash-outline"

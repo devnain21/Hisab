@@ -10,6 +10,7 @@ import { entryDelta, useCustomers, useEntries } from "@/src/lib/data";
 import { buildAllLedgers } from "@/src/lib/records";
 import { formatDateShort, formatINR, formatPhone, initials, roundMoney, todayISO } from "@/src/lib/format";
 import { usePersona } from "@/src/lib/persona";
+import { TERMS, balanceTerm, totalTerm } from "@/src/lib/terms";
 
 type Filter = "due" | "owe" | "all";
 const FILTERS: Filter[] = ["due", "owe", "all"];
@@ -71,7 +72,7 @@ export default function CustomersScreen() {
   );
   const totalDue = useMemo(() => all.reduce((s, r) => s + (r.due > 0 ? r.due : 0), 0), [all]);
   const totalOwe = useMemo(() => all.reduce((s, r) => s + (r.due < 0 ? -r.due : 0), 0), [all]);
-  const filterLabel: Record<Filter, string> = { due: isPersonal ? "लेने हैं" : "उधारी", owe: isPersonal ? "देने हैं" : "एडवांस", all: "सभी" };
+  const filterLabel: Record<Filter, string> = { due: balanceTerm(1, isPersonal, true), owe: balanceTerm(-1, isPersonal, true), all: "सभी" };
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -131,7 +132,7 @@ export default function CustomersScreen() {
         </ScrollView>
         {!loading && filter !== "all" && (filter === "due" ? totalDue : totalOwe) > 0 ? (
           <Text style={styles.summary} testID="customers-summary">
-            {filter === "due" ? (isPersonal ? "कुल लेने हैं" : "कुल उधारी") : isPersonal ? "कुल देने हैं" : "कुल एडवांस"}{" "}
+            {totalTerm(filter === "due", isPersonal)}{" "}
             <Text style={{ color: filter === "due" ? colors.error : isPersonal ? colors.warning : colors.success, fontWeight: "800" }}>
               {formatINR(filter === "due" ? totalDue : totalOwe)}
             </Text>{" "}
@@ -164,7 +165,7 @@ export default function CustomersScreen() {
             <View style={styles.empty} testID="customers-empty">
               <MaterialIcon name="account-group-outline" size={32} color={colors.muted} />
               <Text style={styles.emptyTitle}>
-                {q ? "कोई नहीं मिला" : customers.length === 0 ? (isPersonal ? "अभी कोई नहीं" : "अभी कोई ग्राहक नहीं") : filter === "due" ? (isPersonal ? "किसी से लेने नहीं हैं" : "किसी पर उधारी नहीं") : filter === "owe" ? (isPersonal ? "किसी को देने नहीं हैं" : "किसी का एडवांस नहीं") : "इस सूची में कोई नहीं"}
+                {q ? "कोई नहीं मिला" : customers.length === 0 ? (isPersonal ? "अभी कोई नहीं" : "अभी कोई ग्राहक नहीं") : filter === "due" ? "किसी से पैसे नहीं मिलने हैं" : filter === "owe" ? (isPersonal ? "किसी को देने नहीं हैं" : "किसी का एडवांस नहीं") : "इस सूची में कोई नहीं"}
               </Text>
               {!q && customers.length === 0 && <Text style={styles.emptySub}>होम से एंट्री लिखते ही यहाँ दिखेंगे</Text>}
             </View>
@@ -195,11 +196,9 @@ export default function CustomersScreen() {
               </View>
               <View style={{ alignItems: "flex-end" }}>
                 <Text style={[styles.dueAmt, { color: item.due > 0 ? colors.error : item.due < 0 ? (isPersonal ? colors.warning : colors.success) : colors.muted }]}>
-                  {item.due === 0 ? "क्लियर" : formatINR(Math.abs(item.due))}
+                  {item.due === 0 ? TERMS.settled : formatINR(Math.abs(item.due))}
                 </Text>
-                {item.due !== 0 ? (
-                  <Text style={styles.dueTag}>{item.due > 0 ? (isPersonal ? "लेने हैं" : "उधारी") : isPersonal ? "देने हैं" : "एडवांस"}</Text>
-                ) : null}
+                {item.due !== 0 ? <Text style={styles.dueTag}>{balanceTerm(item.due, isPersonal, true)}</Text> : null}
               </View>
             </Pressable>
           )}

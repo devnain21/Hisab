@@ -15,7 +15,7 @@ import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint
 import { usePersona } from "@/src/lib/persona";
 type Filter = "open" | "late" | "unpaid" | "all";
 const FILTERS: Filter[] = ["open", "late", "unpaid", "all"];
-const FILTER_LABEL: Record<Filter, string> = { open: "काम बाकी", late: "देर", unpaid: "लेने हैं", all: "सभी" };
+const FILTER_LABEL: Record<Filter, string> = { open: "काम बाकी", late: "देर", unpaid: "पैसे बाकी", all: "सभी" };
 
 function matches(j: Job, f: Filter, today: string, pay?: WorkStatus) {
   if (f === "open") return j.status !== "done";
@@ -392,7 +392,7 @@ function PayPill({ pay }: { pay: WorkStatus }) {
     cash: { bg: colors.successSoft, fg: colors.success, label: "नकद" },
     settled: { bg: colors.successSoft, fg: colors.success, label: "✔ चुकता" },
     partial: { bg: "#FEF3E2", fg: colors.warning, label: "कुछ बाकी" },
-    pending: { bg: colors.errorSoft, fg: colors.error, label: "लेने हैं" },
+    pending: { bg: colors.errorSoft, fg: colors.error, label: "पैसे बाकी" },
   } as const;
   const s = map[pay.state];
   return (

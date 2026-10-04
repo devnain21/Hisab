@@ -8,6 +8,7 @@ import { todayISO } from "@/src/lib/format";
 import { AEPS_META, STATUS_META } from "@/src/lib/aeps";
 import { expensePersona, type Expense } from "@/src/lib/expenses";
 import { accountLabel, type Move } from "@/src/lib/wallet";
+import { balanceTerm } from "@/src/lib/terms";
 
 function escapeCsv(val: any): string {
   if (val == null) return '""';
@@ -53,7 +54,7 @@ export async function exportFullLedgerCsv(params: {
   [...customers].sort((a, b) => bookOf(a).localeCompare(bookOf(b)) || a.name.localeCompare(b.name)).forEach((c, i) => {
     const bal = computeBalance(entries, c.id);
     const personal = c.persona === "personal";
-    const status = bal > 0 ? "आपको मिलेंगे" : bal < 0 ? (personal ? "आपको देने हैं" : "एडवांस जमा") : "चुकता";
+    const status = balanceTerm(bal, personal);
     lines.push(
       [
         i + 1,

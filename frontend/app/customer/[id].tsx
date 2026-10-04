@@ -20,6 +20,7 @@ import { UpiQrModal } from "@/src/components/upi-qr-sheet";
 import { addRecentCustomer } from "@/src/lib/recent";
 import { aepsJamaEntry, jamaKindOf } from "@/src/lib/aeps-due";
 import { accountName } from "@/src/lib/persona";
+import { TERMS, balanceTerm } from "@/src/lib/terms";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -101,7 +102,7 @@ export default function CustomerDetail() {
   }, [entries]);
   // Money left with us by a customer is an advance; with a personal contact it's money we owe back.
   const isCustomer = customer?.persona !== "personal";
-  const balanceLabel = due > 0 ? "लेने हैं" : due < 0 ? (isCustomer ? "एडवांस" : "देने हैं") : "हिसाब";
+  const balanceLabel = due === 0 ? "हिसाब" : balanceTerm(due, !isCustomer);
   const openJobs = jobs.filter((j) => j.status !== "done");
   const showMoreFilters = rows.length > 8;
 
@@ -178,7 +179,7 @@ export default function CustomerDetail() {
         <View style={styles.balanceCard}>
           <Text style={styles.balanceLabel}>{balanceLabel}</Text>
           <Text style={[styles.balanceValue, { color: due > 0 ? colors.error : due < 0 ? (isCustomer ? colors.success : colors.warning) : colors.onSurface }]}>
-            {due === 0 ? "क्लियर" : formatINR(Math.abs(due))}
+            {due === 0 ? TERMS.settled : formatINR(Math.abs(due))}
           </Text>
           {totals.any ? (
             <Text style={styles.breakdown}>
@@ -402,8 +403,8 @@ const LEDGER_FILTER_LABEL: Record<LedgerFilter, string> = { all: "सभी", du
 // Money handed over (personal loan): same settle flow as udhaar work, different wording.
 const GIVEN_UI: Record<WorkState, { label: string; icon: string; fg: string; bg: string }> = {
   cash: { label: "वापस मिले", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
-  pending: { label: "वापस लेने हैं", icon: "arrow-top-right", fg: colors.error, bg: colors.errorSoft },
-  partial: { label: "कुछ लेने हैं", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
+  pending: { label: "वापस मिलने हैं", icon: "arrow-top-right", fg: colors.error, bg: colors.errorSoft },
+  partial: { label: "कुछ बाकी", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
   settled: { label: "वापस मिले", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
 };
 
@@ -417,8 +418,8 @@ const PURCHASE_UI: Record<WorkState, { label: string; icon: string; fg: string; 
 
 const STATE_UI: Record<WorkState, { label: string; icon: string; fg: string; bg: string }> = {
   cash: { label: "नकद", icon: "cash", fg: colors.success, bg: colors.successSoft },
-  pending: { label: "लेने हैं", icon: "clock-alert-outline", fg: colors.error, bg: colors.errorSoft },
-  partial: { label: "कुछ लेने हैं", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
+  pending: { label: "बाकी", icon: "clock-alert-outline", fg: colors.error, bg: colors.errorSoft },
+  partial: { label: "कुछ बाकी", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
   settled: { label: "चुकता", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
 };
 
@@ -477,7 +478,7 @@ function WorkCard({ entry, status, onPress, onSettle, onReceipt }: { entry: Entr
   const lines = entry.items && entry.items.length > 1 ? itemsOf(entry) : [];
   const word = purchase
     ? { got: "चुकाए", left: "देने हैं", settle: "पैसे चुकाए", fromPool: " (हिसाब में कटे)" }
-    : { got: "मिले", left: "लेने हैं", settle: given ? "पैसे वापस मिले" : "पैसे मिले", fromPool: given ? " (हिसाब में कटे)" : " (पहले के एडवांस से)" };
+    : { got: "मिले", left: "बाकी", settle: given ? "पैसे वापस मिले" : "पैसे मिले", fromPool: given ? " (हिसाब में कटे)" : " (पहले के एडवांस से)" };
   return (
     <Pressable
       style={[styles.card, open && { borderLeftWidth: 4, borderLeftColor: ui.fg, backgroundColor: status.state === "pending" ? "#FFF7F6" : colors.surfaceSecondary }]}

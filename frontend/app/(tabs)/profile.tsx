@@ -146,7 +146,7 @@ export default function Profile() {
 
   // Share digital visiting card
   const handleShareVisitingCard = async () => {
-    const shopName = accountName(user) || "मेरी दुकान";
+    const shopName = accountName(user) || user?.name || (isPersonal ? "मेरा नाम" : "मेरी दुकान");
     const ownerLine = !isPersonal && ownerName ? `\n👤 प्रोपराइटर: ${ownerName}` : "";
     const phone = user?.shop_phone ? `\n📞 फ़ोन / संपर्क: ${formatPhone(user.shop_phone)}` : "";
     const addr = user?.shop_address ? `\n📍 पता: ${user.shop_address}` : "";
@@ -256,7 +256,7 @@ export default function Profile() {
       c.jobs && `${c.jobs} काम`,
       c.aeps && `${c.aeps} काउंटर`,
       c.expenses && `${c.expenses} खर्च`,
-      c.moves && `${c.moves} गल्ला / बैंक बदलाव`,
+      c.moves && `${c.moves} पैसे जोड़े / निकाले`,
     ].filter(Boolean);
     confirmAction("बैकअप से वापस लाएं?", `${parts.join(", ")} जो ऐप में नहीं हैं, वापस जोड़े जाएँगे। अभी का कोई रिकॉर्ड नहीं बदलेगा।`, "वापस लाएं", () => {
       void applyRestore(restorePlan);
@@ -809,7 +809,8 @@ export default function Profile() {
       <QrCodeModal
         visible={qrModalOpen}
         onClose={() => setQrModalOpen(false)}
-        shopName={accountName(user) || user?.name || "दुकान"}
+        shopName={accountName(user) || user?.name || (isPersonal ? "मेरा नाम" : "दुकान")}
+        title={isPersonal ? "मेरा पेमेंट QR कोड" : "दुकान का पेमेंट QR कोड"}
         upiId={user?.shop_upi || ""}
         onSetupUpi={() => {
           setQrModalOpen(false);
@@ -827,12 +828,14 @@ function QrCodeModal({
   visible,
   onClose,
   shopName,
+  title,
   upiId,
   onSetupUpi,
 }: {
   visible: boolean;
   onClose: () => void;
   shopName: string;
+  title: string;
   upiId: string;
   onSetupUpi: () => void;
 }) {
@@ -858,7 +861,7 @@ function QrCodeModal({
       <View style={qrStyles.overlay}>
         <View style={qrStyles.card}>
           <View style={qrStyles.header}>
-            <Text style={qrStyles.title}>दुकान का पेमेंट QR कोड</Text>
+            <Text style={qrStyles.title}>{title}</Text>
             <Pressable onPress={onClose} hitSlop={12} testID="qr-close-btn">
               <MaterialIcon name="close" size={22} color={colors.onSurface} />
             </Pressable>

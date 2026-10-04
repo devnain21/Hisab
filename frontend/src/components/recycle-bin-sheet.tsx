@@ -87,7 +87,7 @@ export function RecycleBinModal({
                     : item.coll === "expenses"
                     ? { label: "खर्च", color: "#B91C1C" }
                     : item.coll === "moves"
-                    ? { label: "गल्ला / बैंक", color: "#0E7490" }
+                    ? { label: "जोड़े / निकाले", color: "#0E7490" }
                     : { label: "काउंटर", color: "#6D28D9" };
 
                 return (

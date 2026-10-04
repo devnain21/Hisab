@@ -7,7 +7,7 @@ import { useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { cashIn, onlineIn, useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, type Entry, type Job } from "@/src/lib/data";
+import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, type Entry, type Job } from "@/src/lib/data";
 import { buildAllLedgers, workForJob } from "@/src/lib/records";
 import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
@@ -25,8 +25,6 @@ import { TaskSheet } from "@/src/components/task-sheet";
 import { TaskRow } from "@/src/components/task-row";
 import { compareTasks, taskGroup, usePersonalTasks } from "@/src/lib/tasks";
 import { AddExpenseSheet } from "@/src/components/expense-sheet";
-import { useExpenses } from "@/src/lib/expenses";
-
 export default function Home() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -57,7 +55,6 @@ export default function Home() {
   const recentIds = useRecentCustomerIds();
 
   const today = todayISO();
-  const todayExpenses = useExpenses(today, isPersonal ? "personal" : "business");
   const allCustomers = customersQ.data ?? [];
   const entries = entriesQ.data ?? [];
   const customers = useMemo(() => {
@@ -113,37 +110,44 @@ export default function Home() {
     const weOwe = balances.filter((d) => d < 0).map((d) => -d);
     const totalDue = dues.reduce((s, d) => s + d, 0);
     const totalWeOwe = weOwe.reduce((s, d) => s + d, 0);
-    // The personal book has no work; its day is everything given and received.
-    // Personal: money handed out today (given / goods), the same rows as the day screen's first tab.
-    const todayWork = entries.filter(
-      (e) => e.date === today && (isPersonal ? e.type === "given" || e.type === "purchase" : e.type === "work") && personaCustIds.has(e.customerId),
-    );
-    const got = (e: (typeof entries)[0]) => cashIn(e) + onlineIn(e);
-    const todayPay = entries.filter((e) => e.date === today && got(e) > 0 && (!e.customerId || personaCustIds.has(e.customerId)));
+    const todayWork = entries.filter((e) => e.date === today && e.type === "work" && personaCustIds.has(e.customerId));
     const open = jobs.filter((j) => j.status !== "done");
     return {
       totalDue,
       dueCustomers: dues.length,
       totalWeOwe,
       weOweCount: weOwe.length,
-      // An unpaid purchase is a debt, not money handed over today.
-      todayWork: todayWork.reduce((n, e) => n + (e.type === "purchase" ? e.paid ?? 0 : e.amount), 0),
+      todayWork: todayWork.reduce((n, e) => n + e.amount, 0),
       todayWorkCount: todayWork.length,
-      todayPay: todayPay.reduce((n, e) => n + got(e), 0),
-      todayPayCount: todayPay.length,
       openJobs: open.length,
       overdue: open.filter((j) => j.dueDate < today).length,
     };
-  }, [customers, entries, jobs, today, personaCustIds, isPersonal]);
+  }, [customers, entries, jobs, today, personaCustIds]);
 
   const persona = isPersonal ? "personal" : "business";
   const pockets = useMemo(() => computeFlows(book, persona, (d) => d <= today), [book, persona, today]);
   const cashBal = pocketNet(pockets.cash);
   const bankBal = pocketNet(pockets.bank);
+  const todayFlows = useMemo(() => computeFlows(book, persona, (d) => d === today), [book, persona, today]);
+  const todayCash = pocketNet(todayFlows.cash);
+  const todayBank = pocketNet(todayFlows.bank);
+  const todayNet = todayCash + todayBank;
 
   const aepsToday = useMemo(() => aepsTotals(aeps, (d) => d === today), [aeps, today]);
   const aepsDue = useMemo(() => aeps.filter((t) => t.status === "pending" && (t.dueDate || t.date) <= today).length, [aeps, today]);
   const signedINR = (n: number) => `${n < 0 ? "−" : "+"}${formatINR(Math.abs(n))}`;
+  // Today's change of cash + bank together; the day screen breaks it down.
+  const todayMoneyCard = (
+    <StatCard
+      label="आज का हिसाब"
+      value={signedINR(todayNet)}
+      hint={`${labels.cash} ${signedINR(todayCash)} · बैंक ${signedINR(todayBank)}`}
+      icon="scale-balance"
+      tone={todayNet < 0 ? "due" : "ok"}
+      onPress={() => router.push({ pathname: "/day", params: { type: "drawer" } })}
+      testID="stat-today-money"
+    />
+  );
 
   const upcoming = useMemo(
     () => jobs.filter((j) => j.status !== "done").sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 8),
@@ -359,15 +363,7 @@ export default function Home() {
                     onPress={() => router.navigate("/(tabs)/tasks" as never)}
                     testID="stat-pending-tasks"
                   />
-                  <StatCard
-                    label="आज का खर्च"
-                    value={formatINR(todayExpenses.totalAll)}
-                    hint={`${todayExpenses.expenses.length} एंट्री`}
-                    icon="coffee-outline"
-                    tone="ok"
-                    onPress={() => router.push({ pathname: "/day", params: { type: "expense" } })}
-                    testID="stat-today-expense"
-                  />
+                  {todayMoneyCard}
                 </>
               ) : (
                 <>
@@ -398,33 +394,28 @@ export default function Home() {
                     onPress={() => router.push({ pathname: "/day", params: { type: "work" } })}
                     testID="stat-today-work"
                   />
-                  <StatCard
-                    label="आज मिले"
-                    value={formatINR(stats.todayPay)}
-                    hint={`${stats.todayPayCount} एंट्री`}
-                    icon="cash-check"
-                    tone="ok"
-                    onPress={() => router.push({ pathname: "/day", params: { type: "payment" } })}
-                    testID="stat-today-pay"
-                  />
+                  {todayMoneyCard}
                 </>
               )}
             </View>
 
-            <Pressable style={styles.walletLine} onPress={() => router.push("/balance" as never)} testID="home-wallet">
-              <View style={styles.walletCell}>
+            <View style={styles.walletLine}>
+              <Pressable style={styles.walletCell} onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "cash" } })} testID="home-wallet-cash">
                 <MaterialIcon name="cash" size={16} color={colors.success} />
                 <Text style={styles.walletLabel}>{labels.cash}</Text>
                 <Text style={[styles.walletValue, cashBal < 0 && { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{formatINR(cashBal)}</Text>
-              </View>
+              </Pressable>
               <View style={styles.walletDivider} />
-              <View style={styles.walletCell}>
+              <Pressable style={styles.walletCell} onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "bank" } })} testID="home-wallet-bank">
                 <MaterialIcon name="bank-outline" size={16} color={colors.info} />
                 <Text style={styles.walletLabel}>बैंक</Text>
                 <Text style={[styles.walletValue, bankBal < 0 && { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{formatINR(bankBal)}</Text>
-              </View>
-              <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
-            </Pressable>
+              </Pressable>
+              <Pressable onPress={() => router.push("/balance" as never)} hitSlop={10} style={styles.walletMore} testID="home-wallet">
+                <Text style={styles.walletMoreText}>कुल</Text>
+                <MaterialIcon name="chevron-right" size={18} color={colors.brandPrimary} />
+              </Pressable>
+            </View>
 
             <View style={styles.actionRow}>
               <Pressable style={styles.primaryAction} onPress={() => (isPersonal ? setMoneySheet(true) : setJobSheet(true))} testID="quick-work">
@@ -643,6 +634,8 @@ const styles = StyleSheet.create({
   walletLabel: { fontSize: 13, color: colors.muted, fontWeight: "600" },
   walletValue: { fontSize: 16, fontWeight: "800", color: colors.onSurface, flexShrink: 1 },
   walletDivider: { width: 1, alignSelf: "stretch", backgroundColor: colors.border },
+  walletMore: { flexDirection: "row", alignItems: "center", paddingLeft: 4 },
+  walletMoreText: { fontSize: 12, fontWeight: "700", color: colors.brandPrimary },
   primaryAction: { flex: 3, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
   primaryActionText: { color: colors.onBrandPrimary, fontSize: 15, fontWeight: "700" },
   secondaryAction: { flex: 2.5, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.surface },

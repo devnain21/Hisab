@@ -23,7 +23,19 @@ function readMove(m: Move, persona: Persona): { kind: MoveKind; pocket: Pocket; 
   return to[0] === persona ? { kind: "in", pocket: to[1], other: true } : { kind: "out", pocket: from[1], other: true };
 }
 
-export function MoneyMoveSheet({ kind: newKind, onClose, initialDate, initial }: { kind: MoveKind | null; onClose: () => void; initialDate?: string; initial?: Move | null }) {
+export function MoneyMoveSheet({
+  kind: newKind,
+  onClose,
+  initialDate,
+  initial,
+  initialPocket = "cash",
+}: {
+  kind: MoveKind | null;
+  onClose: () => void;
+  initialDate?: string;
+  initial?: Move | null;
+  initialPocket?: Pocket;
+}) {
   const { persona, hasShop } = usePersona();
   const book = useMoneyBook();
   const kind = initial ? readMove(initial, persona).kind : newKind;
@@ -49,7 +61,7 @@ export function MoneyMoveSheet({ kind: newKind, onClose, initialDate, initial }:
       return;
     }
     if (!newKind) return;
-    setPocket("cash");
+    setPocket(initialPocket);
     setOther(false);
     setAmount("");
     setNote("");

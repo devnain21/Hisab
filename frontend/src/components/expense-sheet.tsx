@@ -15,12 +15,14 @@ export function AddExpenseSheet({
   onClose,
   initialDate,
   initial,
+  initialMode = "cash",
 }: {
   visible: boolean;
   onClose: () => void;
   initialDate?: string;
   /** Opens the sheet on an existing expense to change or delete it. */
   initial?: Expense | null;
+  initialMode?: ExpenseMode;
 }) {
   const { persona, isPersonal, labels } = usePersona();
   const base = isPersonal ? PERSONAL_EXPENSE_CATEGORIES : EXPENSE_CATEGORIES;
@@ -47,7 +49,7 @@ export function AddExpenseSheet({
     setTitle(base[0]);
     setAmount("");
     setNotes("");
-    setMode("cash");
+    setMode(initialMode);
     setDate(initialDate || todayISO());
     setOpenedOn(todayISO());
     const t = setTimeout(() => amountRef.current?.focus(), 350);
@@ -185,7 +187,7 @@ export function AddExpenseSheet({
           </View>
 
           <DateField label="तारीख" value={date} onChange={setDate} money={!initial} testID="expense-date" />
-          {nowOld ? <Text style={styles.oldNote}>पुरानी तारीख — अब गल्ला / बैंक में नहीं गिना जाएगा</Text> : null}
+          {nowOld ? <Text style={styles.oldNote}>पुरानी तारीख — अब {labels.cash} / बैंक में नहीं गिना जाएगा</Text> : null}
 
           {/* Save Button */}
           <Pressable

@@ -5,7 +5,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { colors, spacing, radius } from "@/src/theme";
-import { useCustomers, type Entry } from "@/src/lib/data";
+import { isRepayment, useCustomers, type Entry } from "@/src/lib/data";
 import { cleanAmountInput, formatDateShort, formatINR, formatMonth, formatWeekdayDate, monthRange, parseAmount, roundMoney, shiftISO, todayISO, weekRange } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { EditRecordSheet } from "@/src/components/sheets";
@@ -22,7 +22,8 @@ import { usePersona } from "@/src/lib/persona";
 import { accountKey, accountLabel, addMove, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
 import type { DaySummaryData } from "@/src/lib/day-close";
 
-type Kind = "work" | "payment" | "expense" | "drawer";
+// drawer: the day's summary (cash + bank) · work / payment: shop only · txns: every personal entry of the day.
+type Kind = "drawer" | "work" | "payment" | "txns" | "expense";
 type Period = "day" | "week" | "month";
 const PERIOD_LABEL: Record<Period, string> = { day: "दिन", week: "हफ़्ता", month: "महीना" };
 const SHORT_DAY = ["रवि", "सोम", "मंगल", "बुध", "गुरु", "शुक्र", "शनि"];
@@ -36,7 +37,11 @@ export default function DayScreen() {
   const customers = useCustomers().data ?? [];
   const book = useMoneyBook();
   const today = todayISO();
-  const [kind, setKind] = useState<Kind>(params.type || "work");
+  const [pickedKind, setKind] = useState<Kind>(params.type || "drawer");
+  // A link meant for the other book lands on the nearest tab of this one.
+  const kind: Kind = isPersonal
+    ? pickedKind === "work" || pickedKind === "payment" ? "txns" : pickedKind
+    : pickedKind === "txns" ? "work" : pickedKind;
   const [date, setDate] = useState(params.date || today);
   const [editing, setEditing] = useState<Entry | null>(null);
 
@@ -72,18 +77,32 @@ export default function DayScreen() {
   );
   const dayEntries = useMemo(() => book.entries.filter((e) => e.date === date && mineIds.has(e.customerId)), [book.entries, date, mineIds]);
 
-  // In the personal book the first tab is money handed out; in the shop it is work done.
-  const inKind = (e: Entry, k: "work" | "payment") =>
-    k === "work"
-      ? isPersonal ? e.type === "given" || e.type === "purchase" : e.type === "work"
-      : e.type === "payment" || (e.type === "work" && (e.paid ?? 0) > 0);
-  const amountFor = (e: Entry, k: "work" | "payment") => (k === "work" || e.type === "payment" ? e.amount : e.paid ?? 0);
+  type ListKind = "work" | "payment" | "txns";
+  const inKind = (e: Entry, k: ListKind) =>
+    k === "txns" ? e.type !== "aeps" : k === "work" ? e.type === "work" : e.type === "payment" || (e.type === "work" && (e.paid ?? 0) > 0);
+  const amountFor = (e: Entry, k: ListKind) => (k === "payment" && e.type === "work" ? e.paid ?? 0 : e.amount);
   const rows = useMemo(
     () => (kind === "drawer" || kind === "expense" ? [] : dayEntries.filter((e) => inKind(e, kind)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dayEntries, kind, isPersonal]
+    [dayEntries, kind]
   );
-  const sum = (k: "work" | "payment") => dayEntries.filter((e) => inKind(e, k)).reduce((s, e) => s + amountFor(e, k), 0);
+  const sum = (k: ListKind) => dayEntries.filter((e) => inKind(e, k)).reduce((s, e) => s + amountFor(e, k), 0);
+
+  // Personal day, by what actually happened.
+  const personalDay = useMemo(() => {
+    const t = { given: 0, got: 0, goods: 0, goodsPaid: 0, repaid: 0, count: 0 };
+    for (const e of dayEntries) {
+      if (e.type === "aeps") continue;
+      t.count++;
+      if (e.type === "payment") t.got += e.amount;
+      else if (e.type === "purchase") {
+        t.goods += e.amount;
+        t.goodsPaid += e.paid ?? 0;
+      } else if (isRepayment(e)) t.repaid += e.amount;
+      else if (e.type === "given") t.given += e.amount;
+    }
+    return t;
+  }, [dayEntries]);
 
   const flows = useMemo(() => computeFlows(book, persona, (d) => d === date), [book, persona, date]);
   const before = useMemo(() => computeFlows(book, persona, (d) => d < date), [book, persona, date]);
@@ -127,6 +146,22 @@ export default function DayScreen() {
   const diff = countedNum !== null ? roundMoney(countedNum - expectedCash) : null;
 
   const dateLabel = date === today ? "आज" : date === todayISO(-1) ? "कल" : formatWeekdayDate(date);
+  const signedINR = (n: number) => `${n < 0 ? "−" : "+"}${formatINR(Math.abs(n))}`;
+  const dayNet = pocketNet(flows.cash) + pocketNet(flows.bank);
+
+  const segments: { id: Kind; label: string; value?: string }[] = isPersonal
+    ? [
+        { id: "drawer", label: "सारांश", value: signedINR(dayNet) },
+        { id: "txns", label: "लेन-देन", value: String(personalDay.count) },
+        { id: "expense", label: "खर्च", value: formatINR(expenseTotal) },
+      ]
+    : [
+        { id: "drawer", label: "सारांश", value: signedINR(dayNet) },
+        { id: "work", label: "काम", value: formatINR(sum("work")) },
+        { id: "payment", label: "मिले", value: formatINR(sum("payment")) },
+        { id: "expense", label: "खर्च", value: formatINR(expenseTotal) },
+      ];
+  const openPocket = (p: "cash" | "bank") => router.push({ pathname: "/pocket" as never, params: { p, date } });
 
   const cashKey = accountKey(persona, "cash");
   const bankKey = accountKey(persona, "bank");
@@ -140,7 +175,7 @@ export default function DayScreen() {
       `${labels.cash} ${formatINR(countedNum ?? 0)} कर दें?`,
       diff > 0 ? `हिसाब में ${formatINR(diff)} "बाहर से जोड़े" लिखे जाएँगे।` : `हिसाब में ${formatINR(-diff)} "बाहर निकाले" लिखे जाएँगे।`,
       "हाँ, बराबर करें",
-      () => void addMove(diff > 0 ? { date, from: "", to: cashKey, amount: diff, note: "गल्ला मिलान" } : { date, from: cashKey, to: "", amount: -diff, note: "गल्ला मिलान" }),
+      () => void addMove(diff > 0 ? { date, from: "", to: cashKey, amount: diff, note: `${labels.cash} मिलान` } : { date, from: cashKey, to: "", amount: -diff, note: `${labels.cash} मिलान` }),
     );
   };
   const daySummary: DaySummaryData = {
@@ -213,59 +248,37 @@ export default function DayScreen() {
         {period === "day" ? (
         <>
         <View style={styles.segment}>
-          <Pressable
-            onPress={() => setKind("work")}
-            style={[styles.segmentBtn, kind === "work" && styles.segmentActive]}
-            testID="day-kind-work"
-          >
-            <Text style={[styles.segmentText, kind === "work" && { color: colors.onBrandPrimary }]} numberOfLines={1} adjustsFontSizeToFit>
-              {isPersonal ? "दिए" : "काम"} · {formatINR(sum("work"))}
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setKind("payment")}
-            style={[styles.segmentBtn, kind === "payment" && styles.segmentActive]}
-            testID="day-kind-payment"
-          >
-            <Text style={[styles.segmentText, kind === "payment" && { color: colors.onBrandPrimary }]} numberOfLines={1} adjustsFontSizeToFit>
-              मिले · {formatINR(sum("payment"))}
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setKind("expense")}
-            style={[styles.segmentBtn, kind === "expense" && styles.segmentActive]}
-            testID="day-kind-expense"
-          >
-            <Text style={[styles.segmentText, kind === "expense" && { color: colors.onBrandPrimary }]} numberOfLines={1} adjustsFontSizeToFit>
-              खर्च · {formatINR(expenseTotal)}
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setKind("drawer")}
-            style={[styles.segmentBtn, kind === "drawer" && styles.segmentActive]}
-            testID="day-kind-drawer"
-          >
-            <Text style={[styles.segmentText, kind === "drawer" && { color: colors.onBrandPrimary }]} numberOfLines={1} adjustsFontSizeToFit>
-              {labels.cash} व बैंक
-            </Text>
-          </Pressable>
+          {segments.map((s) => (
+            <Pressable key={s.id} onPress={() => setKind(s.id)} style={[styles.segmentBtn, kind === s.id && styles.segmentActive]} testID={`day-kind-${s.id}`}>
+              <Text style={[styles.segmentText, kind === s.id && { color: colors.onBrandPrimary }]} numberOfLines={1} adjustsFontSizeToFit>
+                {s.label}
+              </Text>
+              {s.value ? (
+                <Text style={[styles.segmentValue, kind === s.id && { color: colors.onBrandPrimary }]} numberOfLines={1} adjustsFontSizeToFit>
+                  {s.value}
+                </Text>
+              ) : null}
+            </Pressable>
+          ))}
         </View>
 
-        {kind === "work" && isPersonal ? (
-          <View style={styles.totalCard}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", width: "100%" }}>
-              <Text style={styles.totalLabel}>दिए व सामान ({rows.length})</Text>
-              <Text style={[styles.totalValue, { color: colors.error, fontSize: 24, marginTop: 0 }]}>{formatINR(sum("work"))}</Text>
+        {kind === "txns" ? (
+          <View style={styles.workSummaryCard}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
+              <Text style={styles.totalLabel}>{dateLabel} के लेन-देन</Text>
+              <Text style={[styles.totalValue, { fontSize: 20, marginTop: 0 }]}>{personalDay.count}</Text>
             </View>
             <View style={styles.workPillsRow}>
-              <View style={[styles.miniPill, { backgroundColor: colors.successSoft }]}>
-                <Text style={[styles.miniPillText, { color: colors.success }]}>कैश: {formatINR(flows.cash.given + flows.cash.purchase)}</Text>
-              </View>
-              {flows.bank.given + flows.bank.purchase > 0 ? (
-                <View style={[styles.miniPill, { backgroundColor: colors.infoSoft }]}>
-                  <Text style={[styles.miniPillText, { color: colors.info }]}>बैंक: {formatINR(flows.bank.given + flows.bank.purchase)}</Text>
-                </View>
+              {personalDay.got > 0 ? <Pill color={colors.success} soft={colors.successSoft} text={`मिले ${formatINR(personalDay.got)}`} /> : null}
+              {personalDay.given > 0 ? <Pill color={colors.error} soft={colors.errorSoft} text={`दिए ${formatINR(personalDay.given)}`} /> : null}
+              {personalDay.goods > 0 ? (
+                <Pill
+                  color={colors.warning}
+                  soft="#FFFBEB"
+                  text={`सामान लिया ${formatINR(personalDay.goods)}${personalDay.goodsPaid > 0 ? ` (${formatINR(personalDay.goodsPaid)} चुकाए)` : ""}`}
+                />
               ) : null}
+              {personalDay.repaid > 0 ? <Pill color={colors.error} soft={colors.errorSoft} text={`बकाया चुकाया ${formatINR(personalDay.repaid)}`} /> : null}
             </View>
           </View>
         ) : kind === "work" ? (
@@ -408,6 +421,21 @@ export default function DayScreen() {
         </ScrollView>
       ) : kind === "drawer" ? (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}>
+          <View style={styles.dayHero}>
+            <Text style={styles.dayHeroLabel}>{dateLabel} {labels.cash} + बैंक में बदलाव</Text>
+            <Text style={styles.dayHeroValue}>{signedINR(dayNet)}</Text>
+            <View style={styles.dayHeroRow}>
+              <View style={styles.dayHeroCell}>
+                <Text style={styles.dayHeroCellLabel}>दिन की शुरुआत</Text>
+                <Text style={styles.dayHeroCellValue}>{formatINR(openingCash + openingBank)}</Text>
+              </View>
+              <View style={styles.dayHeroCell}>
+                <Text style={styles.dayHeroCellLabel}>{date === today ? "अब" : "दिन के अंत में"}</Text>
+                <Text style={styles.dayHeroCellValue}>{formatINR(expectedCash + expectedBank)}</Text>
+              </View>
+            </View>
+          </View>
+
           <View style={styles.quickGallaRow}>
             <Pressable style={styles.gallaActionBtn} onPress={() => setExpenseSheet(true)} testID="open-expense-btn">
               <MaterialIcon name="coffee-outline" size={18} color={colors.warning} />
@@ -427,7 +455,7 @@ export default function DayScreen() {
             </Pressable>
           </View>
 
-          <PocketCard persona={persona} pocket="cash" opening={openingCash} flow={flows.cash} dayLabel={dateLabel}>
+          <PocketCard persona={persona} pocket="cash" opening={openingCash} flow={flows.cash} dayLabel={dateLabel} onOpen={() => openPocket("cash")}>
             <View style={[styles.drawerRow, { marginTop: spacing.md }]}>
               <Text style={styles.drawerLabel}>गिने हुए</Text>
               <View style={[styles.inputWrap, { borderColor: colors.brandPrimary, borderWidth: 1.5 }]}>
@@ -470,7 +498,7 @@ export default function DayScreen() {
             ) : null}
           </PocketCard>
 
-          <PocketCard persona={persona} pocket="bank" opening={openingBank} flow={flows.bank} dayLabel={dateLabel} />
+          <PocketCard persona={persona} pocket="bank" opening={openingBank} flow={flows.bank} dayLabel={dateLabel} onOpen={() => openPocket("bank")} />
 
           {isPersonal ? null : (
             <Pressable style={[styles.gallaActionBtn, { backgroundColor: "#128C7E", borderColor: "#128C7E", marginBottom: spacing.lg }]} onPress={() => setDayCloseOpen(true)} testID="open-day-close-btn">
@@ -545,7 +573,7 @@ export default function DayScreen() {
             <View style={styles.empty}>
               <MaterialIcon name="calendar-blank-outline" size={32} color={colors.muted} />
               <Text style={styles.emptyTitle}>
-                {kind === "work" ? (isPersonal ? "इस दिन कुछ नहीं दिया" : "इस दिन कोई काम नहीं") : "इस दिन कुछ नहीं मिला"}
+                {kind === "txns" ? "इस दिन कोई लेन-देन नहीं" : kind === "work" ? "इस दिन कोई काम नहीं" : "इस दिन कुछ नहीं मिला"}
               </Text>
             </View>
           }
@@ -568,7 +596,12 @@ export default function DayScreen() {
                     </View>
                   )}
                 </View>
-                <Text style={styles.desc} numberOfLines={2}>{e.description || (e.type === "work" ? "काम" : e.type === "given" ? "दिए" : e.type === "purchase" ? "सामान / सेवा" : "मिले")}</Text>
+                {kind === "txns" ? (
+                  <Text style={[styles.kindTag, { color: personalKind(e).color }]}>{personalKind(e).label}</Text>
+                ) : null}
+                {e.description || kind !== "txns" ? (
+                  <Text style={styles.desc} numberOfLines={2}>{e.description || (e.type === "work" ? "काम" : "मिले")}</Text>
+                ) : null}
                 {e.type === "purchase" ? (
                   <Text style={[styles.notes, { color: (e.paid ?? 0) >= e.amount ? colors.success : colors.warning }]}>
                     {(e.paid ?? 0) >= e.amount
@@ -596,8 +629,8 @@ export default function DayScreen() {
                 ) : null}
                 {e.notes ? <Text style={styles.notes} numberOfLines={1}>{e.notes}</Text> : null}
               </View>
-              <Text style={[styles.amount, { color: kind === "payment" ? colors.success : isPersonal ? colors.error : colors.onSurface }]}>
-                {formatINR(amountFor(e, kind))}
+              <Text style={[styles.amount, { color: kind === "txns" ? personalKind(e).color : kind === "payment" ? colors.success : colors.onSurface }]}>
+                {kind === "txns" ? personalKind(e).sign : ""}{formatINR(amountFor(e, kind))}
               </Text>
               <MaterialIcon name="pencil-outline" size={16} color={colors.muted} />
             </Pressable>
@@ -640,14 +673,15 @@ function RangeView({
     const flows = computeFlows(book, persona, inRange);
     const entries = book.entries.filter((e) => inRange(e.date) && mineIds.has(e.customerId));
     const expenses = book.expenses.filter((x) => inRange(x.date) && expensePersona(x) === persona);
-    const out = (e: Entry) => (isPersonal ? (e.type === "given" || e.type === "purchase" ? e.amount : 0) : e.type === "work" ? e.amount : 0);
+    // Personal: money lent out (not paying back goods); shop: work done.
+    const out = (e: Entry) => (isPersonal ? (e.type === "given" && !isRepayment(e) ? e.amount : 0) : e.type === "work" ? e.amount : 0);
     const got = (e: Entry) => (e.type === "payment" ? e.amount : e.type === "work" ? e.paid ?? 0 : 0);
     const days: { d: string; work: number; got: number; exp: number }[] = [];
     for (let d = to; d >= from; d = shiftISO(d, -1)) {
       const de = entries.filter((e) => e.date === d);
       const dx = expenses.filter((x) => x.date === d);
       const row = { d, work: de.reduce((s, e) => s + out(e), 0), got: de.reduce((s, e) => s + got(e), 0), exp: dx.reduce((s, x) => s + x.amount, 0) };
-      if (row.work || row.got || row.exp) days.push(row);
+      if (row.work || row.got || row.exp || de.length) days.push(row);
     }
     const byTitle = new Map<string, number>();
     expenses.forEach((x) => byTitle.set(x.title, (byTitle.get(x.title) ?? 0) + x.amount));
@@ -658,6 +692,7 @@ function RangeView({
     return {
       days,
       work,
+      goods: entries.reduce((s, e) => s + (e.type === "purchase" ? e.amount : 0), 0),
       got: entries.reduce((s, e) => s + got(e), 0),
       exp,
       commission,
@@ -672,8 +707,9 @@ function RangeView({
   return (
     <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}>
       <View style={styles.rangeGrid}>
-        <RangeCell label={isPersonal ? "दिए व सामान" : "काम"} value={formatINR(data.work)} color={isPersonal ? colors.error : colors.onSurface} />
+        <RangeCell label={isPersonal ? "दिए" : "काम"} value={formatINR(data.work)} color={isPersonal ? colors.error : colors.onSurface} />
         <RangeCell label="मिले" value={formatINR(data.got)} color={colors.success} />
+        {isPersonal ? <RangeCell label="सामान / सेवा ली" value={formatINR(data.goods)} color={colors.warning} /> : null}
         <RangeCell label="खर्च" value={formatINR(data.exp)} color={colors.error} />
         {isPersonal ? null : <RangeCell label="कमीशन" value={formatINR(data.commission)} color={colors.brandPrimary} />}
         {isPersonal ? null : <RangeCell label="अनुमानित बचत" value={formatINR(data.profit)} color={data.profit < 0 ? colors.error : colors.brandPrimary} />}
@@ -719,6 +755,22 @@ function RangeView({
   );
 }
 
+/** What a personal entry was, in one word, with the way it moved the person's balance. */
+function personalKind(e: Entry): { label: string; color: string; sign: string } {
+  if (e.type === "payment") return { label: "मिले", color: colors.success, sign: "+" };
+  if (e.type === "purchase") return { label: "सामान / सेवा ली", color: colors.warning, sign: "" };
+  if (isRepayment(e)) return { label: "बकाया चुकाया", color: colors.error, sign: "−" };
+  return { label: "दिए", color: colors.error, sign: "−" };
+}
+
+function Pill({ text, color, soft }: { text: string; color: string; soft: string }) {
+  return (
+    <View style={[styles.miniPill, { backgroundColor: soft }]}>
+      <Text style={[styles.miniPillText, { color }]}>{text}</Text>
+    </View>
+  );
+}
+
 function RangeCell({ label, value, color, small }: { label: string; value: string; color: string; small?: boolean }) {
   return (
     <View style={styles.rangeCell}>
@@ -750,6 +802,14 @@ const styles = StyleSheet.create({
   segmentBtn: { flex: 1, alignItems: "center", paddingVertical: 10, borderRadius: radius.sm },
   segmentActive: { backgroundColor: colors.brandPrimary },
   segmentText: { fontSize: 12, fontWeight: "700", color: colors.onSurface, paddingHorizontal: 2 },
+  segmentValue: { fontSize: 11, fontWeight: "600", color: colors.muted, marginTop: 1, paddingHorizontal: 2 },
+  dayHero: { padding: spacing.lg, borderRadius: radius.md, backgroundColor: colors.brandPrimary, marginBottom: spacing.md },
+  dayHeroLabel: { fontSize: 13, fontWeight: "600", color: colors.onBrandPrimary, opacity: 0.85 },
+  dayHeroValue: { fontSize: 28, fontWeight: "800", color: colors.onBrandPrimary, marginTop: 2 },
+  dayHeroRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md },
+  dayHeroCell: { flex: 1, padding: spacing.sm, borderRadius: radius.sm, backgroundColor: "rgba(255,255,255,0.15)" },
+  dayHeroCellLabel: { fontSize: 11, color: colors.onBrandPrimary, opacity: 0.85 },
+  dayHeroCellValue: { fontSize: 15, fontWeight: "800", color: colors.onBrandPrimary, marginTop: 2 },
   breakdown: { marginBottom: spacing.lg, padding: spacing.md, gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   breakdownRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   breakdownLabel: { width: 92, fontSize: 12, fontWeight: "600", color: colors.onSurface },
@@ -821,6 +881,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   name: { fontSize: 15, fontWeight: "700", color: colors.onSurface },
   desc: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: 2 },
+  kindTag: { fontSize: 12, fontWeight: "800", marginTop: 2 },
   notes: { fontSize: 12, color: colors.muted, marginTop: 2 },
   amount: { fontSize: 16, fontWeight: "800" },
   empty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },

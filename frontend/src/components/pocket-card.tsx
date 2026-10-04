@@ -2,27 +2,32 @@ import { View, Text, StyleSheet } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
 import { formatINR } from "@/src/lib/format";
+import { Pressable } from "@/src/components/tap";
 import type { Persona } from "@/src/lib/persona";
-import { pocketIn, pocketNet, pocketOut, type PocketFlow, type Pocket } from "@/src/lib/wallet";
+import { pocketIn, pocketNet, pocketOut, type FlowKey, type PocketFlow, type Pocket } from "@/src/lib/wallet";
 
-type Row = { key: keyof PocketFlow; label: (p: Persona, pocket: Pocket) => string };
+type Row = { key: FlowKey; label: (p: Persona, pocket: Pocket) => string };
 
-const IN_ROWS: Row[] = [
-  { key: "work", label: (p, k) => (p === "personal" ? "काम से मिले" : k === "cash" ? "नगद (काम)" : "ऑनलाइन (काम)") },
-  { key: "received", label: (p) => (p === "business" ? "उधार / एडवांस मिले" : "मिले") },
+export const IN_ROWS: Row[] = [
+  { key: "work", label: () => "काम के पैसे मिले" },
+  { key: "received", label: (p) => (p === "business" ? "उधारी / एडवांस मिले" : "लोगों से मिले") },
   { key: "counterIn", label: () => "AEPS आए" },
   { key: "commission", label: () => "AEPS कमीशन" },
   { key: "moveIn", label: () => "जोड़े / ट्रांसफर आए" },
 ];
 
-const OUT_ROWS: Row[] = [
+export const OUT_ROWS: Row[] = [
   { key: "counterOut", label: () => "AEPS गए" },
-  { key: "given", label: (p) => (p === "business" ? "उधार दिए" : "दिए") },
-  { key: "purchase", label: () => "सामान / सेवा" },
+  { key: "given", label: (p) => (p === "business" ? "उधार दिए" : "लोगों को दिए") },
+  { key: "purchase", label: () => "सामान / सेवा के चुकाए" },
   { key: "expense", label: () => "खर्च" },
   { key: "fee", label: () => "फीस" },
   { key: "moveOut", label: () => "निकाले / ट्रांसफर गए" },
 ];
+
+export function flowLabel(key: FlowKey, persona: Persona, pocket: Pocket): string {
+  return [...IN_ROWS, ...OUT_ROWS].find((r) => r.key === key)?.label(persona, pocket) ?? "";
+}
 
 export function pocketTitle(persona: Persona, pocket: Pocket) {
   if (pocket === "bank") return "बैंक";
@@ -42,6 +47,7 @@ export function PocketCard({
   flow,
   dayLabel = "आज",
   showBalance,
+  onOpen,
   children,
 }: {
   persona: Persona;
@@ -50,6 +56,8 @@ export function PocketCard({
   flow: PocketFlow;
   dayLabel?: string;
   showBalance?: boolean;
+  /** Opens this pocket's full register. */
+  onOpen?: () => void;
   children?: React.ReactNode;
 }) {
   const net = pocketNet(flow);
@@ -60,11 +68,17 @@ export function PocketCard({
 
   return (
     <View style={styles.card}>
-      <View style={styles.header}>
+      <Pressable style={styles.header} onPress={onOpen} disabled={!onOpen} testID={`pocket-card-${pocket}`}>
         <MaterialIcon name={cash ? "cash-multiple" : "bank-outline"} size={20} color={cash ? colors.success : colors.info} />
         <Text style={styles.heading}>{pocketTitle(persona, pocket)}</Text>
         {showBalance ? <Text style={[styles.balance, closing < 0 && { color: colors.error }]}>{formatINR(closing)}</Text> : null}
-      </View>
+        {onOpen ? (
+          <View style={styles.openPill}>
+            <Text style={styles.openText}>पूरा हिसाब</Text>
+            <MaterialIcon name="chevron-right" size={16} color={colors.brandPrimary} />
+          </View>
+        ) : null}
+      </Pressable>
 
       <Text style={styles.group}>{dayLabel} आए</Text>
       {ins.length === 0 ? <Text style={styles.none}>कुछ नहीं</Text> : null}
@@ -107,6 +121,8 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: spacing.sm },
   heading: { flex: 1, fontSize: 16, fontWeight: "800", color: colors.onSurface },
   balance: { fontSize: 20, fontWeight: "800", color: colors.onSurface },
+  openPill: { flexDirection: "row", alignItems: "center", paddingLeft: 8, paddingVertical: 2 },
+  openText: { fontSize: 12, fontWeight: "700", color: colors.brandPrimary },
   group: { fontSize: 12, fontWeight: "800", color: colors.muted, marginTop: spacing.sm, marginBottom: 2 },
   none: { fontSize: 13, color: colors.muted, paddingVertical: 3 },
   row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, paddingVertical: 4 },

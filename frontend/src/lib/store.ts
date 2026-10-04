@@ -134,7 +134,7 @@ AsyncStorage.getItem(REJECTED_KEY)
     notify();
   });
 
-const COLL_LABEL: Record<Coll, string> = { customers: "खाता", entries: "एंट्री", jobs: "काम", aeps: "काउंटर एंट्री", expenses: "खर्च", moves: "गल्ला / बैंक बदलाव" };
+const COLL_LABEL: Record<Coll, string> = { customers: "खाता", entries: "एंट्री", jobs: "काम", aeps: "काउंटर एंट्री", expenses: "खर्च", moves: "पैसे जोड़े / निकाले" };
 const KIND_LABEL: Record<Op["kind"], string> = { create: "नई", update: "बदली गई", delete: "हटाई गई" };
 
 function describe(op: Op): string {

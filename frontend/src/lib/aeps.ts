@@ -287,33 +287,47 @@ export function statusLabel(t: Pick<AepsTxn, "status" | "dueDate">) {
 
 export type AepsMoney = { cashIn: number; cashOut: number; bankIn: number; bankOut: number; commissionCash: number; commissionBank: number; count: number };
 
+export type AepsLeg = { pocket: "cash" | "bank"; dir: "in" | "out"; commission: boolean; amount: number; date: string };
+
+/** Every galla / bank movement of one counter row, each on its own day. Backdated legs never touch the pockets. */
+export function aepsLegs(t: AepsTxn): AepsLeg[] {
+  const { cash: cd, bank: bd, commission: kd } = aepsLiveDays(t);
+  const legs: AepsLeg[] = [];
+  if (cd) {
+    const dir = cashOf(t);
+    if (dir === "in") legs.push({ pocket: customerPocket(t), dir: "in", commission: false, amount: collectedOf(t), date: cd });
+    else if (dir === "out") legs.push({ pocket: "cash", dir: "out", commission: false, amount: t.amount, date: cd });
+  }
+  if (bd) {
+    const dir = bankOf(t);
+    if (dir !== "none") legs.push({ pocket: "bank", dir, commission: false, amount: t.amount, date: bd });
+  }
+  if (kd) legs.push({ pocket: commissionPocket(t), dir: "in", commission: true, amount: t.commission, date: kd });
+  return legs;
+}
+
+function aepsLiveDays(t: AepsTxn) {
+  const live = (d: string | null) => (d && !isBackdated(d, t.createdAt) ? d : null);
+  const kd = live(commissionDate(t));
+  return { cash: live(cashLegDate(t)), bank: live(bankLegDate(t)), commission: kd && t.commission > 0 ? kd : null };
+}
+
 /** Galla and bank movement of counter rows on the days `keep` accepts. */
 export function aepsTotals(list: AepsTxn[], keep: (date: string) => boolean = () => true): AepsMoney & { cashNet: number; bankNet: number; commission: number } {
   const m: AepsMoney = { cashIn: 0, cashOut: 0, bankIn: 0, bankOut: 0, commissionCash: 0, commissionBank: 0, count: 0 };
   for (const t of list) {
-    const live = (d: string | null) => (d && !isBackdated(d, t.createdAt) ? d : null);
-    const cd = live(cashLegDate(t));
-    const bd = live(bankLegDate(t));
-    const kd = live(commissionDate(t));
-    let touched = false;
-    if (cd && keep(cd)) {
-      const dir = cashOf(t);
-      if (dir === "in") {
-        if (customerPocket(t) === "bank") m.bankIn += collectedOf(t);
-        else m.cashIn += collectedOf(t);
-      } else if (dir === "out") m.cashOut += t.amount;
-      touched = true;
-    }
-    if (bd && keep(bd)) {
-      const dir = bankOf(t);
-      if (dir === "in") m.bankIn += t.amount;
-      else if (dir === "out") m.bankOut += t.amount;
-      touched = true;
-    }
-    if (kd && keep(kd) && t.commission > 0) {
-      if (commissionPocket(t) === "cash") m.commissionCash += t.commission;
-      else m.commissionBank += t.commission;
-      touched = true;
+    const days = aepsLiveDays(t);
+    const touched = [days.cash, days.bank, days.commission].some((d) => d && keep(d));
+    for (const l of aepsLegs(t)) {
+      if (!keep(l.date)) continue;
+      if (l.commission) {
+        if (l.pocket === "cash") m.commissionCash += l.amount;
+        else m.commissionBank += l.amount;
+      } else if (l.pocket === "cash") {
+        if (l.dir === "in") m.cashIn += l.amount;
+        else m.cashOut += l.amount;
+      } else if (l.dir === "in") m.bankIn += l.amount;
+      else m.bankOut += l.amount;
     }
     if (touched) m.count += 1;
   }

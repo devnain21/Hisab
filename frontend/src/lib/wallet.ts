@@ -7,7 +7,7 @@ import { store, withPending } from "./store";
 import { isBackdated, todayISO } from "./format";
 import { isRepayment, useAeps, useCustomers, useEntries, type AepsTxn, type Customer, type Entry } from "./data";
 import { useExpenses, expensePersona, type Expense } from "./expenses";
-import { aepsTotals } from "./aeps";
+import { aepsLegs } from "./aeps";
 import type { Persona } from "./persona";
 
 export type Pocket = "cash" | "bank";
@@ -118,53 +118,81 @@ export function personaOfEntry(e: Entry, byId: Map<string, Customer>): Persona {
   return byId.get(e.customerId)?.persona === "personal" ? "personal" : "business";
 }
 
-/** Every rupee that moved through this persona's cash and bank on the dates `keep` accepts. */
-export function computeFlows(book: Book, persona: Persona, keep: (date: string) => boolean): Flows {
-  const f: Flows = { cash: emptyPocket(), bank: emptyPocket() };
+export type FlowKey = keyof PocketFlow;
+export const IN_KEYS: FlowKey[] = ["work", "received", "counterIn", "commission", "moveIn"];
+
+export type WalletSource =
+  | { kind: "entry"; entry: Entry }
+  | { kind: "expense"; expense: Expense }
+  | { kind: "move"; move: Move }
+  | { kind: "aeps"; txn: AepsTxn };
+
+/** One rupee movement of one pocket. `amount` is always positive; `key` says which way and why. */
+export type WalletTxn = {
+  id: string;
+  pocket: Pocket;
+  key: FlowKey;
+  amount: number;
+  date: string;
+  createdAt: string;
+  src: WalletSource;
+};
+
+export const isInflow = (key: FlowKey) => IN_KEYS.includes(key);
+
+/** Every rupee that moved through this persona's cash and bank on the dates `keep` accepts, one row per movement. */
+export function walletTxns(book: Book, persona: Persona, keep: (date: string) => boolean): WalletTxn[] {
+  const out: WalletTxn[] = [];
   const byId = new Map(book.customers.map((c) => [c.id, c]));
   const pocketOf = (mode?: string): Pocket => (mode === "online" ? "bank" : "cash");
+  const push = (id: string, pocket: Pocket, key: FlowKey, amount: number, date: string, createdAt: string, src: WalletSource) => {
+    if (amount > 0) out.push({ id, pocket, key, amount, date, createdAt, src });
+  };
 
   for (const e of book.entries) {
     if (!keep(e.date) || isBackdated(e.date, e.createdAt) || personaOfEntry(e, byId) !== persona) continue;
+    const src: WalletSource = { kind: "entry", entry: e };
+    const p = pocketOf(e.mode);
     if (e.type === "work") {
-      f[pocketOf(e.mode)].work += e.paid ?? 0;
-      if ((e.fee ?? 0) > 0) f[e.feeMode === "cash" ? "cash" : "bank"].fee += e.fee ?? 0;
-    } else if (e.type === "payment") {
-      f[pocketOf(e.mode)].received += e.amount;
-    } else if (e.type === "aeps") {
-      continue;
-    } else if (e.type === "purchase") {
-      f[pocketOf(e.mode)].purchase += e.paid ?? 0;
-    } else if (isRepayment(e)) {
-      f[pocketOf(e.mode)].purchase += e.amount;
-    } else {
-      f[pocketOf(e.mode)].given += e.amount;
-    }
+      push(e.id, p, "work", e.paid ?? 0, e.date, e.createdAt, src);
+      push(`${e.id}:fee`, e.feeMode === "cash" ? "cash" : "bank", "fee", e.fee ?? 0, e.date, e.createdAt, src);
+    } else if (e.type === "payment") push(e.id, p, "received", e.amount, e.date, e.createdAt, src);
+    else if (e.type === "aeps") continue;
+    else if (e.type === "purchase") push(e.id, p, "purchase", e.paid ?? 0, e.date, e.createdAt, src);
+    else if (isRepayment(e)) push(e.id, p, "purchase", e.amount, e.date, e.createdAt, src);
+    else push(e.id, p, "given", e.amount, e.date, e.createdAt, src);
   }
 
   if (persona === "business") {
-    const t = aepsTotals(book.aeps, keep);
-    f.cash.counterIn += t.cashIn;
-    f.cash.counterOut += t.cashOut;
-    f.cash.commission += t.commissionCash;
-    f.bank.counterIn += t.bankIn;
-    f.bank.counterOut += t.bankOut;
-    f.bank.commission += t.commissionBank;
+    for (const t of book.aeps) {
+      aepsLegs(t).forEach((l, i) => {
+        if (!keep(l.date)) return;
+        const key: FlowKey = l.commission ? "commission" : l.dir === "in" ? "counterIn" : "counterOut";
+        push(`${t.id}:${i}`, l.pocket, key, l.amount, l.date, t.createdAt, { kind: "aeps", txn: t });
+      });
+    }
   }
 
   for (const x of book.expenses) {
     if (!keep(x.date) || isBackdated(x.date, x.createdAt) || expensePersona(x) !== persona) continue;
-    f[x.mode === "online" ? "bank" : "cash"].expense += x.amount;
+    push(x.id, x.mode === "online" ? "bank" : "cash", "expense", x.amount, x.date, x.createdAt, { kind: "expense", expense: x });
   }
 
   for (const m of book.moves) {
     if (!keep(m.date)) continue;
     for (const pocket of ["cash", "bank"] as Pocket[]) {
       const key = accountKey(persona, pocket);
-      if (m.from === key) f[pocket].moveOut += m.amount;
-      if (m.to === key) f[pocket].moveIn += m.amount;
+      if (m.from === key) push(`${m.id}:out`, pocket, "moveOut", m.amount, m.date, m.createdAt, { kind: "move", move: m });
+      if (m.to === key) push(`${m.id}:in`, pocket, "moveIn", m.amount, m.date, m.createdAt, { kind: "move", move: m });
     }
   }
+  return out;
+}
+
+/** Totals of `walletTxns` by pocket and reason, so every screen adds up the same rows. */
+export function computeFlows(book: Book, persona: Persona, keep: (date: string) => boolean): Flows {
+  const f: Flows = { cash: emptyPocket(), bank: emptyPocket() };
+  for (const t of walletTxns(book, persona, keep)) f[t.pocket][t.key] += t.amount;
   return f;
 }
 

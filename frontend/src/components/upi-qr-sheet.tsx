@@ -57,7 +57,7 @@ export function UpiQrModal({
           <View style={styles.header}>
             <View>
               <Text style={styles.title}>📱 UPI QR कोड</Text>
-              <Text style={styles.subtitle}>{shopName || "दुकान खाता"}</Text>
+              <Text style={styles.subtitle}>{shopName}</Text>
             </View>
             <Pressable onPress={onClose} hitSlop={12} testID="qr-close">
               <MaterialIcon name="close" size={24} color={colors.onSurface} />
@@ -69,7 +69,7 @@ export function UpiQrModal({
               <MaterialIcon name="alert-circle-outline" size={40} color={colors.warning} />
               <Text style={styles.noUpiText}>UPI ID सेट नहीं है</Text>
               <Text style={styles.noUpiSub}>
-                प्रोफ़ाइल टैब में जाकर अपनी UPI ID (उदा. 9876543210@paytm) दर्ज करें ताकि ग्राहक सीधे स्कैन कर सकें।
+                प्रोफ़ाइल टैब में जाकर अपनी UPI ID (उदा. 9876543210@paytm) दर्ज करें ताकि पैसे भेजने वाला सीधे स्कैन कर सके।
               </Text>
             </View>
           ) : (

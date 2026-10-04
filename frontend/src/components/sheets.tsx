@@ -128,6 +128,7 @@ export function Chip({ label, active, onPress, icon, testID, tone }: { label: st
 export function DateField({ label, value, onChange, future, money, testID }: { label: string; value: string; onChange: (v: string) => void; future?: boolean; money?: boolean; testID?: string }) {
   const [text, setText] = useState(value);
   const [calendar, setCalendar] = useState(false);
+  const cashLabel = usePersona().labels.cash;
   useEffect(() => setText(value), [value]);
   const today = todayISO();
   const typedOk = isValidISO(text);
@@ -167,7 +168,7 @@ export function DateField({ label, value, onChange, future, money, testID }: { l
       ) : ahead ? (
         <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>आगे की तारीख है — {formatDate(value)}</Text>
       ) : old ? (
-        <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>पुरानी तारीख — खाते में जुड़ेगा, गल्ला / बैंक नहीं बदलेगा</Text>
+        <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>पुरानी तारीख — खाते में जुड़ेगा, {cashLabel} / बैंक नहीं बदलेगा</Text>
       ) : null}
       <CalendarModal visible={calendar} value={value} onPick={pick} onClose={() => setCalendar(false)} max={future ? undefined : today} />
     </Field>
@@ -728,7 +729,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
         <DangerLink
           label="यह खाता हटाएँ"
           testID="delete-customer-link"
-          onPress={() => confirmAction(`${name || "यह खाता"} हटाएँ?`, "इनकी सारी एंट्री और काम भी हटेंगे, और पुराने दिनों का गल्ला / बैंक हिसाब बदल जाएगा। गलती से हटाया तो प्रोफ़ाइल › कचरा पेटी से पूरा खाता वापस ला सकते हैं।", "हटा दें", () => { onDelete(); onClose(); })}
+          onPress={() => confirmAction(`${name || "यह खाता"} हटाएँ?`, `इनकी सारी एंट्री${targetPersona === "personal" ? "" : " और काम"} भी हटेंगे, और पुराने दिनों का ${targetPersona === "personal" ? "कैश" : "गल्ला"} / बैंक हिसाब बदल जाएगा। गलती से हटाया तो प्रोफ़ाइल › कचरा पेटी से पूरा खाता वापस ला सकते हैं।`, "हटा दें", () => { onDelete(); onClose(); })}
         />
       ) : null}
       {contacts.modal}
@@ -744,7 +745,7 @@ const ENTRY_UI: Record<EntryType, { title: string; short: string; icon: string; 
   aeps: { title: "काउंटर सेवा बाकी", short: "AEPS", icon: "fingerprint", color: colors.error, placeholder: "" },
 };
 
-const PICKER_LABEL: Record<EntryType, string> = { work: "ग्राहक", payment: "किससे मिले", given: "किसको दिए", purchase: "किससे ली (दुकान / व्यक्ति)", aeps: "ग्राहक" };
+const PICKER_LABEL: Record<EntryType, string> = { work: "ग्राहक", payment: "किससे मिले", given: "किसको दिए", purchase: "किससे ली", aeps: "ग्राहक" };
 
 /** Plain khata row. With `kinds`, the sheet lets you switch between them (e.g. मिले / दिए / सामान). */
 export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixedCustomerId, initial }: { visible: boolean; type: EntryType; kinds?: EntryType[]; onClose: () => void; customerId?: string; initial?: Entry }) {

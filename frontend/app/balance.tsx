@@ -21,6 +21,7 @@ export default function BalanceScreen() {
   const [expense, setExpense] = useState(false);
   const [editMove, setEditMove] = useState<Move | null>(null);
   const [shown, setShown] = useState(PAGE);
+  const openPocket = (p: "cash" | "bank") => router.push({ pathname: "/pocket" as never, params: { p } });
 
   const before = useMemo(() => computeFlows(book, persona, (d) => d < today), [book, persona, today]);
   const todayFlows = useMemo(() => computeFlows(book, persona, (d) => d === today), [book, persona, today]);
@@ -56,14 +57,19 @@ export default function BalanceScreen() {
           <Text style={styles.summaryLabel}>कुल</Text>
           <Text style={[styles.summaryValue, cash + bank < 0 && { color: colors.error }]}>{formatINR(cash + bank)}</Text>
           <View style={styles.splitRow}>
-            <View style={styles.split}>
-              <Text style={styles.splitLabel}>{pocketTitle(persona, "cash")}</Text>
-              <Text style={[styles.splitValue, cash < 0 && { color: colors.error }]}>{formatINR(cash)}</Text>
-            </View>
-            <View style={styles.split}>
-              <Text style={styles.splitLabel}>बैंक</Text>
-              <Text style={[styles.splitValue, bank < 0 && { color: colors.error }]}>{formatINR(bank)}</Text>
-            </View>
+            {(["cash", "bank"] as const).map((p) => {
+              const v = p === "cash" ? cash : bank;
+              return (
+                <Pressable key={p} style={styles.split} onPress={() => openPocket(p)} testID={`balance-open-${p}`}>
+                  <View style={styles.splitTop}>
+                    <Text style={styles.splitLabel}>{pocketTitle(persona, p)}</Text>
+                    <MaterialIcon name="chevron-right" size={16} color={colors.onBrandPrimary} />
+                  </View>
+                  <Text style={[styles.splitValue, v < 0 && { color: "#FFD7D7" }]}>{formatINR(v)}</Text>
+                  <Text style={styles.splitHint}>पूरा हिसाब देखें</Text>
+                </Pressable>
+              );
+            })}
           </View>
         </View>
 
@@ -76,8 +82,8 @@ export default function BalanceScreen() {
           ))}
         </View>
 
-        <PocketCard persona={persona} pocket="cash" opening={pocketNet(before.cash)} flow={todayFlows.cash} showBalance />
-        <PocketCard persona={persona} pocket="bank" opening={pocketNet(before.bank)} flow={todayFlows.bank} showBalance />
+        <PocketCard persona={persona} pocket="cash" opening={pocketNet(before.cash)} flow={todayFlows.cash} showBalance onOpen={() => openPocket("cash")} />
+        <PocketCard persona={persona} pocket="bank" opening={pocketNet(before.bank)} flow={todayFlows.bank} showBalance onOpen={() => openPocket("bank")} />
 
         {mine.length > 0 ? (
           <>
@@ -128,8 +134,10 @@ const styles = StyleSheet.create({
   summaryValue: { fontSize: 32, fontWeight: "800", color: colors.onBrandPrimary, marginTop: 2 },
   splitRow: { flexDirection: "row", gap: spacing.md, marginTop: spacing.md },
   split: { flex: 1, padding: spacing.md, borderRadius: radius.md, backgroundColor: "rgba(255,255,255,0.15)" },
+  splitTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   splitLabel: { fontSize: 12, fontWeight: "600", color: colors.onBrandPrimary, opacity: 0.85 },
   splitValue: { fontSize: 18, fontWeight: "800", color: colors.onBrandPrimary, marginTop: 2 },
+  splitHint: { fontSize: 11, color: colors.onBrandPrimary, opacity: 0.8, marginTop: 4 },
   actions: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.lg },
   action: { flex: 1, alignItems: "center", gap: 4, paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   actionText: { fontSize: 12, fontWeight: "700", color: colors.onSurface },

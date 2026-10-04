@@ -544,19 +544,65 @@ function MoneyResult({ total, received, advance, freeAllowed }: { total: number;
 
 type PayMode = "cash" | "online";
 
-function PayModeField({ label, value, onChange, cashLabel = "नकद", onlineLabel = "ऑनलाइन" }: { label: string; value: PayMode; onChange: (m: PayMode) => void; cashLabel?: string; onlineLabel?: string }) {
+/** Part cash, part online in one go. `cash` is typed; online is the rest of the total. */
+export function useSplitPay() {
+  const [on, setOn] = useState(false);
+  const [cash, setCash] = useState("");
+  const parts = (total: number) => {
+    const c = Math.min(Math.max(parseAmount(cash), 0), total);
+    return { cash: roundMoney(c), online: roundMoney(total - c) };
+  };
+  return { on, setOn, cash, setCash, parts, reset: () => { setOn(false); setCash(""); } };
+}
+type SplitPay = ReturnType<typeof useSplitPay>;
+/** Splits are only real when both parts are above zero. */
+const splitOf = (s: SplitPay, total: number) => {
+  if (!s.on) return null;
+  const p = s.parts(total);
+  return p.cash > 0 && p.online > 0 ? p : null;
+};
+
+function PayModeField({ label, value, onChange, cashLabel = "नकद", onlineLabel = "ऑनलाइन", split, total = 0 }: { label: string; value: PayMode; onChange: (m: PayMode) => void; cashLabel?: string; onlineLabel?: string; split?: SplitPay; total?: number }) {
+  const both = !!split?.on;
+  const pick = (m: PayMode) => {
+    split?.setOn(false);
+    onChange(m);
+  };
+  const p = split && both ? split.parts(total) : null;
   return (
     <Field label={label}>
       <View style={[styles.segment, { marginBottom: 0 }]}>
-        <Pressable onPress={() => onChange("cash")} style={[styles.segmentBtn, value === "cash" && { backgroundColor: colors.success }]} testID="paymode-cash">
-          <MaterialIcon name="cash" size={16} color={value === "cash" ? "#fff" : colors.onSurface} />
-          <Text style={[styles.segmentText, value === "cash" && { color: "#fff" }]}>{cashLabel}</Text>
+        <Pressable onPress={() => pick("cash")} style={[styles.segmentBtn, !both && value === "cash" && { backgroundColor: colors.success }]} testID="paymode-cash">
+          <MaterialIcon name="cash" size={16} color={!both && value === "cash" ? "#fff" : colors.onSurface} />
+          <Text style={[styles.segmentText, !both && value === "cash" && { color: "#fff" }]}>{cashLabel}</Text>
         </Pressable>
-        <Pressable onPress={() => onChange("online")} style={[styles.segmentBtn, value === "online" && { backgroundColor: colors.info }]} testID="paymode-online">
-          <MaterialIcon name="cellphone" size={16} color={value === "online" ? "#fff" : colors.onSurface} />
-          <Text style={[styles.segmentText, value === "online" && { color: "#fff" }]}>{onlineLabel}</Text>
+        <Pressable onPress={() => pick("online")} style={[styles.segmentBtn, !both && value === "online" && { backgroundColor: colors.info }]} testID="paymode-online">
+          <MaterialIcon name="cellphone" size={16} color={!both && value === "online" ? "#fff" : colors.onSurface} />
+          <Text style={[styles.segmentText, !both && value === "online" && { color: "#fff" }]}>{onlineLabel}</Text>
         </Pressable>
+        {split && total > 0 ? (
+          <Pressable onPress={() => split.setOn(true)} style={[styles.segmentBtn, both && { backgroundColor: colors.brandPrimary }]} testID="paymode-both">
+            <MaterialIcon name="call-split" size={16} color={both ? "#fff" : colors.onSurface} />
+            <Text style={[styles.segmentText, both && { color: "#fff" }]}>दोनों</Text>
+          </Pressable>
+        ) : null}
       </View>
+      {p ? (
+        <View style={styles.splitBox}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.splitLabel}>नकद (₹)</Text>
+            <TextInput style={inputStyle} value={split!.cash} onChangeText={split!.setCash} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-split-cash" />
+          </View>
+          <MaterialIcon name="plus" size={18} color={colors.muted} style={{ marginTop: 26 }} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.splitLabel}>ऑनलाइन (₹)</Text>
+            <View style={[inputStyle, { justifyContent: "center", backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={{ fontSize: 16, fontWeight: "700", color: colors.info }}>{formatINR(p.online)}</Text>
+            </View>
+          </View>
+        </View>
+      ) : null}
+      {p && (p.cash <= 0 || p.online <= 0) ? <Text style={styles.hint}>नकद हिस्सा {formatINR(total)} से कम लिखें, बाकी ऑनलाइन माना जाएगा</Text> : null}
     </Field>
   );
 }
@@ -600,6 +646,7 @@ function recordWork({
   fee = 0,
   feeMode = "online",
   items = [],
+  split = null,
 }: {
   customerId: string;
   title: string;
@@ -611,24 +658,43 @@ function recordWork({
   fee?: number;
   feeMode?: "cash" | "online";
   items?: EntryItem[];
+  /** Paid partly cash, partly online (adds up to `received`). */
+  split?: { cash: number; online: number } | null;
 }): string {
   // Free work is still booked when the shop paid a fee for it, so the cost shows up.
   if (amount <= 0 && !(fee > 0 && customerId)) return "";
+  // Split: the cash part sits on the work row, the online part is a linked payment the same day.
+  const cashPart = split ? split.cash : received;
+  const rowMode = split ? "cash" : mode;
+  const paid = Math.min(cashPart, amount);
   const work = store.createEntry({
     customerId,
     type: "work",
     date,
     description: title,
     amount,
-    paid: Math.min(received, amount),
-    mode,
+    paid,
+    mode: rowMode,
     fee: Math.max(0, fee),
     feeMode,
     notes,
     items,
   });
-  bookAdvance(customerId, received - amount, date, title, work.id, mode);
+  bookAdvance(customerId, cashPart - paid, date, title, work.id, rowMode);
+  if (split) {
+    const onlinePaid = Math.min(split.online, amount - paid);
+    if (onlinePaid > 0) store.createEntry({ customerId, type: "payment", date, description: settleDescription(title), amount: onlinePaid, mode: "online", notes: "", linkId: work.id });
+    bookAdvance(customerId, split.online - onlinePaid, date, title, work.id, "online");
+  }
   return work.id;
+}
+
+/** One payment row, or two (cash + online) when it was split. */
+function createPaid(base: Omit<Entry, "id" | "createdAt" | "mode" | "amount">, amount: number, mode: PayMode, split: { cash: number; online: number } | null): string {
+  if (!split) return store.createEntry({ ...base, amount, mode }).id;
+  const first = store.createEntry({ ...base, amount: split.cash, mode: "cash" });
+  store.createEntry({ ...base, amount: split.online, mode: "online" });
+  return first.id;
 }
 
 export function PrimaryButton({ label, onPress, disabled, saving, color, testID }: { label: string; onPress: () => void; disabled?: boolean; saving?: boolean; color?: string; testID?: string }) {
@@ -774,13 +840,20 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
   const money = useMoneyInput();
   const items = useItems((sum) => money.setTotal(sum > 0 ? String(sum) : ""));
   const [payMode, setPayMode] = useState<"cash" | "online">("cash");
+  const split = useSplitPay();
   const [date, setDate] = useState(todayISO());
   const [openedOn, setOpenedOn] = useState(todayISO());
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [remind, setRemind] = useState(false);
+  const [returnDate, setReturnDate] = useState(todayISO(7));
+  const isPersonalBook = usePersona().isPersonal;
 
   useEffect(() => {
     if (!visible) return;
+    split.reset();
+    setRemind(false);
+    setReturnDate(todayISO(7));
     setKind(initial?.type ?? type);
     setDescription(initial?.description ?? "");
     setAmount(initial ? String(initial.amount) : "");
@@ -810,6 +883,8 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
   const fullChip = kind === "payment" && due > 0 ? due : kind === "given" && due < 0 ? -due : 0;
   const filled = isPurchase ? items.titled && paidNow <= amt : !needsDescription || !!description.trim();
   const valid = (initial ? true : choice.ready) && filled && isFinite(amt) && amt > 0;
+  // Personal: lent money, or goods still to be paid for, can carry a "by when" that lands in मेरे काम.
+  const canRemind = !initial && isPersonalBook && (kind === "given" || (isPurchase && amt - paidNow > 0));
 
   const save = async () => {
     if (!valid) return;
@@ -822,7 +897,19 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
       if (initial) await store.updateEntry(initial.id, body);
       else {
         const customerId = await choice.resolve();
-        await store.createEntry({ customerId, ...body });
+        const parts = splitOf(split, isPurchase ? paidNow : amt);
+        let rowId: string;
+        if (!parts) rowId = store.createEntry({ customerId, ...body }).id;
+        else if (isPurchase) {
+          // Paid for goods both ways: cash on the purchase row, the online part as a same-day payback.
+          rowId = store.createEntry({ customerId, ...body, paid: parts.cash, mode: "cash" }).id;
+          store.createEntry({ customerId, type: "given", date: day, description: settleDescription(items.description), amount: parts.online, mode: "online", notes: "", linkId: rowId });
+        } else rowId = createPaid({ customerId, type: kind, date: day, description: description.trim(), notes: notes.trim() }, amt, payMode, parts);
+        if (canRemind && remind && returnDate > day) {
+          const who = choice.recent.find((c) => c.id === customerId)?.name ?? choice.query.trim();
+          const title = kind === "given" ? `${who} से ${formatINR(amt)} वापस लेने हैं` : `${who} को ${formatINR(amt - paidNow)} चुकाने हैं`;
+          store.createJob({ customerId: "", title, dueDate: returnDate, status: "pending", estimatedAmount: 0, notes: description.trim() || items.description, entryId: rowId, persona: "personal" });
+        }
       }
       onClose();
     } finally { setSaving(false); }
@@ -845,7 +932,7 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
         <>
           <ItemsField items={items} label="क्या लिया" placeholder={ui.placeholder} addLabel="और जोड़ें" />
           <MoneyFields money={money} receivedLabel="अभी कितने दिए (₹)" hideTotal purchase />
-          {paidNow > 0 ? <PayModeField label="कैसे दिए" value={payMode} onChange={setPayMode} /> : null}
+          {paidNow > 0 ? <PayModeField label="कैसे दिए" value={payMode} onChange={setPayMode} split={initial ? undefined : split} total={paidNow} /> : null}
         </>
       ) : (
         <>
@@ -873,7 +960,7 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
             ) : null}
           </Field>
           {kind !== "work" ? (
-            <PayModeField label={kind === "payment" ? "कैसे मिले" : "कैसे दिए"} value={payMode} onChange={setPayMode} />
+            <PayModeField label={kind === "payment" ? "कैसे मिले" : "कैसे दिए"} value={payMode} onChange={setPayMode} split={initial ? undefined : split} total={amt} />
           ) : null}
           <Field label={needsDescription ? "विवरण" : "किस लिए (वैकल्पिक)"}>
             <TextInput style={inputStyle} value={description} onChangeText={setDescription} placeholder={ui.placeholder} placeholderTextColor={colors.muted} testID="input-entry-desc" />
@@ -898,6 +985,24 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
         </Field>
       ) : null}
       <DateField label="तारीख" value={date} onChange={setDate} money createdAt={initial?.createdAt} testID="input-entry-date" />
+      {canRemind ? (
+        <View style={{ marginBottom: spacing.md }}>
+          <Chip
+            label={kind === "given" ? "वापसी की तारीख याद दिलाएँ" : "चुकाने की तारीख याद दिलाएँ"}
+            icon="bell-ring-outline"
+            active={remind}
+            onPress={() => setRemind(!remind)}
+            tone={colors.info}
+            testID="entry-remind"
+          />
+          {remind ? (
+            <View style={{ marginTop: spacing.sm }}>
+              <DateField label={kind === "given" ? "कब तक वापस मिलेंगे" : "कब तक चुकाने हैं"} value={returnDate} onChange={setReturnDate} future testID="input-entry-return" />
+              <Text style={styles.hint}>उस दिन “मेरे काम” में याद दिलाएगा</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
       <Field label="नोट (वैकल्पिक)">
         <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-entry-notes" />
       </Field>
@@ -1182,8 +1287,10 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
   const payBack = work?.type === "purchase";
   const word = payBack ? { done: "चुकाए", left: "देने हैं", how: "कैसे दिए", when: "कब दिए", much: "कितने दिए (₹)" } : { done: "मिल चुके", left: "लेने हैं", how: "कैसे मिले", when: "कब मिले", much: "कितने मिले (₹)" };
 
+  const split = useSplitPay();
   useEffect(() => {
     if (!work) return;
+    split.reset();
     setAmount(remaining > 0 ? String(remaining) : "");
     setPayMode("cash");
     setDate(todayISO());
@@ -1200,16 +1307,19 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
     if (!work || !valid) return;
     setSaving(true);
     try {
-      store.createEntry({
-        customerId: work.customerId,
-        type: payBack ? "given" : "payment",
-        date: dateOnSave(date, openedOn),
-        description: settleDescription(work.description || ENTRY_UI[work.type].title),
-        amount: amt,
-        mode: payMode,
-        notes: notes.trim(),
-        linkId: work.id,
-      });
+      createPaid(
+        {
+          customerId: work.customerId,
+          type: payBack ? "given" : "payment",
+          date: dateOnSave(date, openedOn),
+          description: settleDescription(work.description || ENTRY_UI[work.type].title),
+          notes: notes.trim(),
+          linkId: work.id,
+        },
+        amt,
+        payMode,
+        splitOf(split, amt),
+      );
       onClose();
     } finally { setSaving(false); }
   };
@@ -1238,7 +1348,7 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
           <Text style={[styles.hint, payBack && { color: colors.error }]}>{payBack ? `${formatINR(remaining)} से ज़्यादा नहीं` : `${formatINR(amt - remaining)} ज़्यादा, एडवांस में जुड़ेगा`}</Text>
         ) : null}
       </Field>
-      <PayModeField label={word.how} value={payMode} onChange={setPayMode} />
+      <PayModeField label={word.how} value={payMode} onChange={setPayMode} split={split} total={amt} />
       <DateField label={word.when} value={date} onChange={setDate} money testID="input-settle-date" />
       <Field label="नोट (वैकल्पिक)">
         <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-settle-notes" />
@@ -1272,9 +1382,11 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   const [paidDate, setPaidDate] = useState(todayISO());
   const [openedOn, setOpenedOn] = useState(todayISO());
   const [saving, setSaving] = useState(false);
+  const split = useSplitPay();
 
   useEffect(() => {
     if (visible) {
+      split.reset();
       setMode(initialMode);
       setTitle("");
       items.reset();
@@ -1330,6 +1442,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
           fee: feeNum,
           feeMode,
           items: itemized ? items.saved() : [],
+          split: splitOf(split, money.receivedNum),
         });
         store.createJob({ customerId, title: t, dueDate: day, status: "done", estimatedAmount: amt, notes: remark.trim(), entryId });
         if (remark.trim()) {
@@ -1340,16 +1453,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
         const got = parseAmount(paidNow);
         // The advance lands in the drawer/bank on the day it was received, not on the delivery day.
         if (!self && got > 0) {
-          store.createEntry({
-            customerId,
-            type: "payment",
-            date: dateOnSave(paidDate, openedOn),
-            description: "एडवांस",
-            amount: got,
-            mode: payMode,
-            notes: `${t} के लिए`,
-            linkId: job.id,
-          });
+          createPaid({ customerId, type: "payment", date: dateOnSave(paidDate, openedOn), description: "एडवांस", notes: `${t} के लिए`, linkId: job.id }, got, payMode, splitOf(split, got));
         }
       }
       onClose();
@@ -1378,7 +1482,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       {self ? null : mode === "now" ? (
         <>
           <MoneyFields money={money} advance={advance} freeAllowed hideTotal />
-          {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
+          {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={money.receivedNum} /> : null}
           <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
         </>
       ) : (
@@ -1393,7 +1497,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
           </Field>
           {parseAmount(paidNow) > 0 ? (
             <>
-              <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} />
+              <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={parseAmount(paidNow)} />
               <DateField label="कब मिले" value={paidDate} onChange={setPaidDate} money testID="input-job-paid-date" />
             </>
           ) : null}
@@ -1512,9 +1616,11 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
   const [cashDay, setCashDate] = useState(todayISO());
   const [openedOn, setOpenedOn] = useState(todayISO());
   const [saving, setSaving] = useState(false);
+  const split = useSplitPay();
 
   useEffect(() => {
     if (job) {
+      split.reset();
       const est = job.estimatedAmount > 0 ? job.estimatedAmount : 0;
       // The advance for this job already sits in the drawer/bank; only the remainder is new money.
       money.reset(est ? String(est) : "", undefined, jobAdvance);
@@ -1539,6 +1645,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
       const workDate = dateOnSave(workDay, openedOn);
       const cashDate = dateOnSave(cashDay, openedOn);
       const sameDay = cashDate === workDate;
+      const parts = splitOf(split, got);
       const entryId = recordWork({
         customerId: job.customerId,
         title: job.title,
@@ -1549,14 +1656,15 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
         mode: payMode,
         fee: parseAmount(fee),
         feeMode,
+        split: sameDay ? parts : null,
       });
       if (entryId) {
         jobAdvances.forEach((p) => store.updateEntry(p.id, { linkId: entryId }));
         if (!sameDay && got > 0) {
-          store.createEntry({ customerId: job.customerId, type: "payment", date: cashDate, description: settleDescription(job.title), amount: got, mode: payMode, notes: "", linkId: entryId });
+          createPaid({ customerId: job.customerId, type: "payment", date: cashDate, description: settleDescription(job.title), notes: "", linkId: entryId }, got, payMode, parts);
         }
       } else if (got > 0 && job.customerId) {
-        store.createEntry({ customerId: job.customerId, type: "payment", date: cashDate, description: ADVANCE, amount: got, mode: payMode, notes: `${job.title} के लिए` });
+        createPaid({ customerId: job.customerId, type: "payment", date: cashDate, description: ADVANCE, notes: `${job.title} के लिए` }, got, payMode, parts);
       }
       store.updateJob(job.id, { status: "done", dueDate: workDate, estimatedAmount: amt, entryId });
       onClose();
@@ -1570,7 +1678,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
       {job?.customerId ? (
         <>
           <MoneyFields money={money} advance={advance} receivedLabel="आज मिले (₹)" freeAllowed />
-          {got > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
+          {got > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={got} /> : null}
           <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
         </>
       ) : null}
@@ -1589,6 +1697,8 @@ const styles = StyleSheet.create({
   title: { fontSize: 20, fontWeight: "700", color: colors.onSurface },
   label: { fontSize: 12, color: colors.muted, fontWeight: "600", marginBottom: spacing.xs, textTransform: "uppercase" },
   hint: { fontSize: 12, color: colors.muted, marginTop: spacing.xs },
+  splitBox: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
+  splitLabel: { fontSize: 12, fontWeight: "700", color: colors.onSurfaceSecondary, marginBottom: 4 },
   jobName: { fontSize: 16, fontWeight: "700", color: colors.onSurface, marginBottom: spacing.md },
   primaryBtn: { backgroundColor: colors.brandPrimary, borderRadius: radius.md, paddingVertical: 15, alignItems: "center", marginTop: spacing.md, minHeight: 52, justifyContent: "center" },
   primaryText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "700" },

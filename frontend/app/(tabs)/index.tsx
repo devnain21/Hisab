@@ -25,6 +25,7 @@ import { TaskSheet } from "@/src/components/task-sheet";
 import { TaskRow } from "@/src/components/task-row";
 import { compareTasks, taskGroup, usePersonalTasks } from "@/src/lib/tasks";
 import { AddExpenseSheet } from "@/src/components/expense-sheet";
+import { BudgetCard } from "@/src/components/budget-card";
 export default function Home() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -463,6 +464,7 @@ export default function Home() {
 
             {isPersonal ? (
               <>
+                <BudgetCard />
                 <View style={styles.sectionRow}>
                   <Text style={styles.sectionHead}>मेरे काम</Text>
                   {taskStats.open > 0 ? (

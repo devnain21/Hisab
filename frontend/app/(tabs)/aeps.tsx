@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
 import { useAeps, type AepsTxn, type AepsType } from "@/src/lib/data";
-import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, bankLegDate, cashLegDate, cashOf, commissionDate, isLater } from "@/src/lib/aeps";
+import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, bankLegDate, bankOf, cashLegDate, cashOf, commissionDate, isLater } from "@/src/lib/aeps";
 import { cleanAmountInput, formatDateShort, formatINR, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
@@ -25,6 +25,84 @@ const RANGES: { key: Range; label: string }[] = [
   { key: "custom", label: "तारीख" },
 ];
 const BANK_KEY = accountKey("business", "bank") as "business:bank";
+const CASH_KEY = accountKey("business", "cash") as "business:cash";
+
+/**
+ * Typed real balance (portal / bank app, or counted notes) against the app's balance for one pocket.
+ * The figure is kept for the day so it survives leaving the tab; a match is remembered with its time.
+ */
+function Reconcile({ label, pocketKey, app, hint, testID }: { label: string; pocketKey: "business:bank" | "business:cash"; app: number; hint?: string; testID: string }) {
+  const today = todayISO();
+  const valueKey = `hisab_reconcile_${pocketKey}_${today}`;
+  const lastKey = `hisab_reconcile_last_${pocketKey}`;
+  const [value, setValue] = useState("");
+  const [last, setLast] = useState("");
+  useEffect(() => {
+    AsyncStorage.getItem(valueKey).then((v) => setValue(v || "")).catch(() => {});
+    AsyncStorage.getItem(lastKey).then((v) => setLast(v || "")).catch(() => {});
+  }, [valueKey, lastKey]);
+  const save = (v: string) => {
+    const clean = cleanAmountInput(v);
+    setValue(clean);
+    AsyncStorage.setItem(valueKey, clean).catch(() => {});
+  };
+  const typed = value ? parseAmount(value) : null;
+  const diff = typed !== null ? roundMoney(typed - app) : null;
+  const stamp = () => {
+    const at = new Date().toISOString();
+    setLast(at);
+    AsyncStorage.setItem(lastKey, at).catch(() => {});
+  };
+  useEffect(() => {
+    if (diff === 0) stamp();
+    // Only when the figures come to match.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diff]);
+  const pocketName = pocketKey === "business:bank" ? "दुकान बैंक" : "गल्ला";
+  const match = () => {
+    if (!diff || typed === null) return;
+    confirmAction(
+      `${pocketName} ${formatINR(typed)} कर दें?`,
+      diff > 0 ? `हिसाब में ${formatINR(diff)} "बाहर से जोड़े" लिखे जाएँगे।` : `हिसाब में ${formatINR(-diff)} "बाहर निकाले" लिखे जाएँगे।`,
+      "हाँ, बराबर करें",
+      () => {
+        void addMove(
+          diff > 0
+            ? { date: today, from: "", to: pocketKey, amount: diff, note: `${pocketName} मिलान` }
+            : { date: today, from: pocketKey, to: "", amount: -diff, note: `${pocketName} मिलान` },
+        );
+        stamp();
+      },
+    );
+  };
+  const lastText = last ? `आख़िरी मिलान: ${formatDateShort(last.slice(0, 10))} ${new Date(last).toTimeString().slice(0, 5)}` : "अभी तक मिलान नहीं किया";
+  return (
+    <View style={styles.reconcileRow} testID={testID}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.statLabel}>{label}</Text>
+          <Text style={styles.meta}>हिसाब में: {formatINR(app)}</Text>
+        </View>
+        <TextInput style={styles.portalInput} value={value} onChangeText={save} keyboardType="decimal-pad" placeholder="₹ असल" placeholderTextColor={colors.muted} testID={`${testID}-input`} />
+      </View>
+      {diff === null ? (
+        <Text style={styles.meta}>{lastText}</Text>
+      ) : diff === 0 ? (
+        <Text style={[styles.portalResult, { color: colors.success }]}>✓ बिल्कुल मिल गया · {lastText}</Text>
+      ) : (
+        <>
+          <Text style={[styles.portalResult, { color: colors.error }]}>
+            {diff > 0 ? `असल में ${formatINR(diff)} ज़्यादा` : `असल में ${formatINR(-diff)} कम`} — कोई एंट्री छूटी या गलत है
+          </Text>
+          {hint ? <Text style={styles.meta}>{hint}</Text> : null}
+          <Pressable style={styles.portalBtn} onPress={match} testID={`${testID}-match`}>
+            <Text style={styles.portalBtnText}>हिसाब को असल के बराबर करें</Text>
+          </Pressable>
+        </>
+      )}
+    </View>
+  );
+}
 
 /** "HH:MM" for ordering within a day; rows saved without a time fall back to when they were written. */
 function clockOf(t: AepsTxn): string {
@@ -49,37 +127,11 @@ export default function AepsScreen() {
   const [picking, setPicking] = useState<"from" | "to" | null>(null);
   const book = useMoneyBook();
   const appBank = useMemo(() => balanceOf(book, BANK_KEY), [book]);
-  const [portal, setPortal] = useState("");
-  const portalKey = `hisab_portal_bank_${today}`;
+  const appCash = useMemo(() => balanceOf(book, CASH_KEY), [book]);
 
   useEffect(() => {
     if (params.range) setRange(params.range);
   }, [params.range, params.t]);
-
-  useEffect(() => {
-    AsyncStorage.getItem(portalKey).then((v) => setPortal(v || "")).catch(() => {});
-  }, [portalKey]);
-  const savePortal = (v: string) => {
-    const clean = cleanAmountInput(v);
-    setPortal(clean);
-    AsyncStorage.setItem(portalKey, clean).catch(() => {});
-  };
-  const portalNum = portal ? parseAmount(portal) : null;
-  const portalDiff = portalNum !== null ? roundMoney(portalNum - appBank) : null;
-  const matchPortal = () => {
-    if (!portalDiff) return;
-    confirmAction(
-      `दुकान बैंक ${formatINR(portalNum ?? 0)} कर दें?`,
-      portalDiff > 0 ? `हिसाब में ${formatINR(portalDiff)} "बाहर से जोड़े" लिखे जाएँगे।` : `हिसाब में ${formatINR(-portalDiff)} "बाहर निकाले" लिखे जाएँगे।`,
-      "हाँ, बराबर करें",
-      () =>
-        void addMove(
-          portalDiff > 0
-            ? { date: today, from: "", to: BANK_KEY, amount: portalDiff, note: "बैंक मिलान" }
-            : { date: today, from: BANK_KEY, to: "", amount: -portalDiff, note: "बैंक मिलान" },
-        ),
-    );
-  };
 
   const yesterday = todayISO(-1);
   const monthPrefix = today.slice(0, 7);
@@ -116,6 +168,15 @@ export default function AepsScreen() {
     () => txns.filter((t) => t.status === "pending").sort((a, b) => (a.dueDate || a.date).localeCompare(b.dueDate || b.date)),
     [txns],
   );
+  // Likely reasons the real money and the app differ: rows still waiting on one side.
+  const bankWaiting = pending.filter((t) => bankOf(t) !== "none" && !bankLegDate(t));
+  const cashWaiting = pending.filter((t) => cashOf(t) !== "none" && !cashLegDate(t));
+  const bankHint = bankWaiting.length
+    ? `${bankWaiting.length} पेंडिंग एंट्री (${formatINR(bankWaiting.reduce((s, t) => s + t.amount, 0))}) हिसाब के बैंक में अभी नहीं जुड़ीं — पोर्टल में हो चुकी हों तो उन्हें “हो गया” करें।`
+    : "आज की एंट्री, ऐप कमीशन और खर्च देख लें।";
+  const cashHint = cashWaiting.length
+    ? `${cashWaiting.length} पेंडिंग एंट्री में कैश अभी लेन-देन में नहीं गिना गया।`
+    : "आज के खर्च, गल्ला ↔ बैंक और उधारी में मिले पैसे देख लें।";
   const completeNow = (t: AepsTxn) =>
     confirmAction("ट्रांज़ैक्शन हो गया?", `${t.customerName || AEPS_META[t.type].short} · ${formatINR(t.amount)}`, "हाँ, हो गया", () => completeAeps(t));
 
@@ -183,35 +244,9 @@ export default function AepsScreen() {
         </View>
 
         <View style={styles.portalBox} testID="aeps-portal">
-          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.statLabel}>पोर्टल / बैंक में अभी</Text>
-              <Text style={styles.meta}>हिसाब में दुकान बैंक: {formatINR(appBank)}</Text>
-            </View>
-            <TextInput
-              style={styles.portalInput}
-              value={portal}
-              onChangeText={savePortal}
-              keyboardType="decimal-pad"
-              placeholder="₹"
-              placeholderTextColor={colors.muted}
-              testID="aeps-portal-input"
-            />
-          </View>
-          {portalDiff !== null ? (
-            portalDiff === 0 ? (
-              <Text style={[styles.portalResult, { color: colors.success }]}>✓ मिल गया</Text>
-            ) : (
-              <>
-                <Text style={[styles.portalResult, { color: colors.error }]}>
-                  {portalDiff > 0 ? `पोर्टल में ${formatINR(portalDiff)} ज़्यादा` : `पोर्टल में ${formatINR(-portalDiff)} कम`} — कोई एंट्री छूटी या गलत है
-                </Text>
-                <Pressable style={styles.portalBtn} onPress={matchPortal} testID="aeps-portal-match">
-                  <Text style={styles.portalBtnText}>हिसाब को पोर्टल के बराबर करें</Text>
-                </Pressable>
-              </>
-            )
-          ) : null}
+          <Text style={styles.reconcileTitle}>⚖️ मिलान — असल पैसा बनाम हिसाब</Text>
+          <Reconcile label="पोर्टल / बैंक ऐप में" pocketKey={BANK_KEY} app={appBank} hint={bankHint} testID="aeps-portal" />
+          <Reconcile label="गल्ले में गिने नोट" pocketKey={CASH_KEY} app={appCash} hint={cashHint} testID="aeps-galla" />
         </View>
 
         {pending.length > 0 ? (
@@ -363,6 +398,8 @@ const styles = StyleSheet.create({
   portalBox: { marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, gap: spacing.sm },
   portalInput: { width: 120, height: 40, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: spacing.sm, fontSize: 16, fontWeight: "700", color: colors.onSurface, textAlign: "right" },
   portalResult: { fontSize: 12, fontWeight: "700" },
+  reconcileTitle: { fontSize: 13, fontWeight: "800", color: colors.onSurface },
+  reconcileRow: { gap: 6, paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   portalBtn: { alignSelf: "flex-start", paddingHorizontal: spacing.md, paddingVertical: 7, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandPrimary },
   portalBtnText: { fontSize: 12, fontWeight: "700", color: colors.brandPrimary },
   pendingBox: { marginTop: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: "#F5D7A1", backgroundColor: "#FFFBF2", padding: spacing.md, gap: spacing.sm },

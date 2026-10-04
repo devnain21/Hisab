@@ -48,12 +48,12 @@ export async function exportFullLedgerCsv(params: {
 
   // SECTION 1: CUSTOMER BALANCES
   lines.push("=== 1. खातों का हिसाब (CUSTOMER BALANCES) ===");
-  lines.push(["क्र.", "खाता", "नाम", "मोबाइल नंबर", "पता", "बाकी रकम (लेने हैं / एडवांस)", "स्थिति"].map(escapeCsv).join(","));
+  lines.push(["क्र.", "खाता", "नाम", "मोबाइल नंबर", "पता", "बकाया (₹)", "स्थिति"].map(escapeCsv).join(","));
 
-  customers.forEach((c, i) => {
+  [...customers].sort((a, b) => bookOf(a).localeCompare(bookOf(b)) || a.name.localeCompare(b.name)).forEach((c, i) => {
     const bal = computeBalance(entries, c.id);
     const personal = c.persona === "personal";
-    const status = bal > 0 ? "लेने हैं" : bal < 0 ? (personal ? "देने हैं" : "एडवांस") : "हिसाब बराबर";
+    const status = bal > 0 ? "आपको मिलेंगे" : bal < 0 ? (personal ? "आपको देने हैं" : "एडवांस जमा") : "चुकता";
     lines.push(
       [
         i + 1,
@@ -72,16 +72,34 @@ export async function exportFullLedgerCsv(params: {
 
   // SECTION 2: ALL ENTRIES
   lines.push("=== 2. लेन-देन बही खाता (ALL ENTRIES) ===");
-  lines.push(["क्र.", "तारीख", "खाता", "नाम", "प्रकार", "विवरण", "कुल रकम (₹)", "मिले (₹)", "कैसे मिले", "उधारी/बाकी (₹)", "नोट्स"].map(escapeCsv).join(","));
+  lines.push(["क्र.", "तारीख", "खाता", "नाम", "प्रकार", "विवरण", "कुल रकम (₹)", "मिले (₹)", "दिए (₹)", "नकद / ऑनलाइन", "बाकी पर असर (₹)", "नोट्स"].map(escapeCsv).join(","));
 
   const custMap = new Map(customers.map((c) => [c.id, c]));
+  const entryIds = new Set(entries.map((e) => e.id));
   const sortedEntries = [...entries].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
 
   sortedEntries.forEach((e, i) => {
     const cust = custMap.get(e.customerId);
-    const typeLabel = e.type === "work" ? "काम" : e.type === "payment" ? "पैसे मिले" : e.type === "purchase" ? "सामान / सेवा ली" : e.type === "aeps" ? "काउंटर बाकी" : "पैसे दिए";
+    const personal = cust?.persona === "personal";
+    const typeLabel =
+      e.type === "work"
+        ? "काम / बिक्री"
+        : e.type === "payment"
+          ? e.linkId && !entryIds.has(e.linkId)
+            ? "AEPS जमा"
+            : "भुगतान मिला"
+          : e.type === "purchase"
+            ? personal
+              ? "उधार लिया / सामान लिया"
+              : "माल / सेवा ली"
+            : e.type === "aeps"
+              ? "काउंटर बाकी"
+              : personal
+                ? "उधार दिया / पैसे दिए"
+                : "भुगतान दिया";
     const received = e.type === "work" ? (e.paid || 0) : e.type === "payment" ? e.amount : 0;
-    const due = entryDelta(e);
+    const given = e.type === "given" ? e.amount : e.type === "purchase" ? (e.paid || 0) : 0;
+    const moved = received + given > 0;
 
     lines.push(
       [
@@ -92,13 +110,15 @@ export async function exportFullLedgerCsv(params: {
         typeLabel,
         itemsText(e) || "-",
         e.amount,
-        received,
-        received > 0 ? (e.mode === "online" ? "ऑनलाइन" : "नकद") : "-",
-        due,
+        received || "-",
+        given || "-",
+        moved ? (e.mode === "online" ? "ऑनलाइन" : "नकद") : "-",
+        entryDelta(e),
         e.notes || "-",
       ].map(escapeCsv).join(",")
     );
   });
+  lines.push(escapeCsv("बाकी पर असर: + मतलब आपको मिलेंगे, − मतलब आपको देने हैं / एडवांस"));
 
   lines.push("");
   lines.push("");
@@ -136,7 +156,7 @@ export async function exportFullLedgerCsv(params: {
       .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt))
       .forEach((x, i) => {
         lines.push(
-          [i + 1, x.date, expensePersona(x) === "personal" ? "निजी" : "दुकान", x.title, x.amount, x.mode === "online" ? "बैंक / UPI" : "नकद", x.notes || "-"]
+          [i + 1, x.date, expensePersona(x) === "personal" ? "निजी" : "दुकान", x.title, x.amount, x.mode === "online" ? "ऑनलाइन" : "नकद", x.notes || "-"]
             .map(escapeCsv)
             .join(","),
         );
@@ -147,7 +167,7 @@ export async function exportFullLedgerCsv(params: {
 
   // SECTION 5: MONEY MOVES (cash ↔ bank, added / taken out)
   if (moves.length > 0) {
-    lines.push("=== 5. पैसे इधर-उधर (MONEY MOVES) ===");
+    lines.push("=== 5. कैश / बैंक ट्रांसफर (MONEY MOVES) ===");
     lines.push(["क्र.", "तारीख", "कहाँ से", "कहाँ", "रकम (₹)", "नोट"].map(escapeCsv).join(","));
     [...moves]
       .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt))

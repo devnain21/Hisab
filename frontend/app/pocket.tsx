@@ -1,5 +1,8 @@
 import { useMemo, useState } from "react";
-import { View, Text, StyleSheet, FlatList } from "react-native";
+import { View, Text, StyleSheet, FlatList, TextInput, ActivityIndicator, Alert } from "react-native";
+import { useAuth } from "@/src/context/AuthContext";
+import { pdfSupported, registerDoc, sharePdf, type RegisterRow } from "@/src/lib/receipt";
+import { shareMessage } from "@/src/lib/share-text";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -49,6 +52,11 @@ export default function PocketScreen() {
   const [editMove, setEditMove] = useState<Move | null>(null);
   const [move, setMove] = useState<MoveKind | null>(null);
   const [expense, setExpense] = useState(false);
+  const [dir, setDir] = useState<"all" | "in" | "out">("all");
+  const [keyFilter, setKeyFilter] = useState<FlowKey | null>(null);
+  const [query, setQuery] = useState("");
+  const [sharing, setSharing] = useState(false);
+  const { user } = useAuth();
 
   const range =
     period === "all" ? { from: "", to: today } : period === "week" ? weekRange(date) : period === "month" ? monthRange(date) : { from: date, to: date };
@@ -79,26 +87,47 @@ export default function PocketScreen() {
       byKey.set(t.key, (byKey.get(t.key) ?? 0) + t.amount);
       withBal.push({ t, after: bal });
     }
+    return { nowBal, opening, ins: roundMoney(ins), outs: roundMoney(outs), closing: roundMoney(opening + ins - outs), byKey, withBal, count: list.length };
+  }, [book, persona, pocket, range.from, to, today]);
 
+  const nameOf = (id: string) => customers.find((c) => c.id === id)?.name ?? labels.customer;
+  const needle = query.trim().toLowerCase();
+  const filtering = dir !== "all" || !!keyFilter || !!needle;
+  // The running balance stays the pocket's real balance; filters only hide rows.
+  const shownRows = useMemo(
+    () =>
+      data.withBal.filter((r) => {
+        const inflow = isInflow(r.t.key);
+        if (dir === "in" && !inflow) return false;
+        if (dir === "out" && inflow) return false;
+        if (keyFilter && r.t.key !== keyFilter) return false;
+        if (needle) {
+          const d = describe(r.t, persona, pocket, nameOf);
+          if (!`${d.title} ${d.sub} ${r.t.amount}`.toLowerCase().includes(needle)) return false;
+        }
+        return true;
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data.withBal, dir, keyFilter, needle, persona, pocket, customers],
+  );
+  const items = useMemo(() => {
     // Newest day first, each day headed by its own change and closing balance.
-    const items: Item[] = [];
-    for (let i = withBal.length - 1; i >= 0; ) {
-      const d = withBal[i].t.date;
+    const out: Item[] = [];
+    for (let i = shownRows.length - 1; i >= 0; ) {
+      const d = shownRows[i].t.date;
       const day: Item[] = [];
       let net = 0;
-      const close = withBal[i].after;
-      while (i >= 0 && withBal[i].t.date === d) {
-        const r = withBal[i];
+      const close = shownRows[i].after;
+      while (i >= 0 && shownRows[i].t.date === d) {
+        const r = shownRows[i];
         net += isInflow(r.t.key) ? r.t.amount : -r.t.amount;
         day.push({ type: "txn", t: r.t, after: r.after });
         i--;
       }
-      items.push({ type: "day", date: d, net: roundMoney(net), close }, ...day);
+      out.push({ type: "day", date: d, net: roundMoney(net), close }, ...day);
     }
-    return { nowBal, opening, ins: roundMoney(ins), outs: roundMoney(outs), closing: roundMoney(opening + ins - outs), byKey, items, count: list.length };
-  }, [book, persona, pocket, range.from, to, today]);
-
-  const nameOf = (id: string) => customers.find((c) => c.id === id)?.name ?? labels.customer;
+    return out;
+  }, [shownRows]);
   const title = pocketTitle(persona, pocket);
   const periodText =
     period === "all"
@@ -186,17 +215,73 @@ export default function PocketScreen() {
         <View style={styles.card}>
           <Text style={styles.cardHead}>कहाँ से आए, कहाँ गए</Text>
           {inRows.map((r) => (
-            <Line key={r.key} label={r.label(persona, pocket)} value={`+${formatINR(data.byKey.get(r.key) ?? 0)}`} color={colors.success} />
+            <Line key={r.key} label={r.label(persona, pocket)} value={`+${formatINR(data.byKey.get(r.key) ?? 0)}`} color={colors.success} active={keyFilter === r.key} onPress={() => setKeyFilter(keyFilter === r.key ? null : r.key)} />
           ))}
           {outRows.map((r) => (
-            <Line key={r.key} label={r.label(persona, pocket)} value={`−${formatINR(data.byKey.get(r.key) ?? 0)}`} color={colors.error} />
+            <Line key={r.key} label={r.label(persona, pocket)} value={`−${formatINR(data.byKey.get(r.key) ?? 0)}`} color={colors.error} active={keyFilter === r.key} onPress={() => setKeyFilter(keyFilter === r.key ? null : r.key)} />
           ))}
+          <Text style={styles.formula}>किसी लाइन पर दबाएँ — सिर्फ़ वही लेन-देन दिखेंगे</Text>
         </View>
       ) : null}
 
-      <Text style={styles.sectionHead}>सभी लेन-देन ({data.count})</Text>
+      <View style={styles.searchWrap}>
+        <MaterialIcon name="magnify" size={18} color={colors.muted} />
+        <TextInput style={styles.search} value={query} onChangeText={setQuery} placeholder="नाम, विवरण या रकम खोजें" placeholderTextColor={colors.muted} testID="pocket-search" />
+        {query ? (
+          <Pressable onPress={() => setQuery("")} hitSlop={8}>
+            <MaterialIcon name="close-circle" size={18} color={colors.muted} />
+          </Pressable>
+        ) : null}
+      </View>
+      <View style={[styles.periodRow, { marginTop: spacing.sm }]}>
+        {(
+          [
+            { id: "all", label: "सब" },
+            { id: "in", label: "सिर्फ़ आए" },
+            { id: "out", label: "सिर्फ़ गए" },
+          ] as const
+        ).map((f) => (
+          <Pressable key={f.id} onPress={() => setDir(f.id)} style={[styles.periodChip, dir === f.id && styles.periodOn]} testID={`pocket-dir-${f.id}`}>
+            <Text style={[styles.periodText, dir === f.id && { color: colors.onBrandPrimary }]}>{f.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={styles.listHead}>
+        <Text style={[styles.sectionHead, { flex: 1, marginTop: 0, marginBottom: 0 }]}>
+          {filtering ? `मिले ${shownRows.length} / ${data.count}` : `सभी लेन-देन (${data.count})`}
+        </Text>
+        {filtering ? (
+          <Pressable onPress={() => { setDir("all"); setKeyFilter(null); setQuery(""); }} hitSlop={8} testID="pocket-clear-filter">
+            <Text style={styles.link}>फ़िल्टर हटाएँ</Text>
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
+
+  const sharePdfDoc = async () => {
+    if (sharing) return;
+    setSharing(true);
+    try {
+      const breakdownLines = [...inRows, ...outRows].map((r) => ({
+        label: r.label(persona, pocket),
+        value: `${isInflow(r.key) ? "+" : "−"}${formatINR(data.byKey.get(r.key) ?? 0)}`,
+        tone: isInflow(r.key) ? ("ok" as const) : ("due" as const),
+      }));
+      const rows: RegisterRow[] = shownRows.map((r) => {
+        const d = describe(r.t, persona, pocket, nameOf);
+        return { date: r.t.date, title: d.title, sub: d.sub, amount: r.t.amount, inflow: isInflow(r.t.key), after: r.after };
+      });
+      const doc = registerDoc(user || {}, title, periodText, data, breakdownLines, rows);
+      if (pdfSupported) await sharePdf(doc);
+      else await shareMessage(doc.message);
+    } catch {
+      Alert.alert("PDF नहीं बन पाई", "दोबारा कोशिश करें।");
+    } finally {
+      setSharing(false);
+    }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
@@ -205,6 +290,9 @@ export default function PocketScreen() {
           <MaterialIcon name="arrow-left" size={26} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.topTitle}>{title} का हिसाब</Text>
+        <Pressable onPress={sharePdfDoc} hitSlop={8} disabled={sharing} testID="pocket-pdf">
+          {sharing ? <ActivityIndicator size="small" color={colors.brandPrimary} /> : <MaterialIcon name="file-pdf-box" size={24} color={colors.brandPrimary} />}
+        </Pressable>
         <Pressable
           onPress={() => router.push({ pathname: "/pocket" as never, params: { p: pocket === "cash" ? "bank" : "cash", ...(period === "day" ? { date } : {}) } })}
           hitSlop={8}
@@ -215,7 +303,7 @@ export default function PocketScreen() {
       </View>
 
       <FlatList
-        data={data.items.slice(0, shown)}
+        data={items.slice(0, shown)}
         keyExtractor={(it) => (it.type === "day" ? `d-${it.date}` : it.t.id)}
         ListHeaderComponent={header}
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}
@@ -226,7 +314,7 @@ export default function PocketScreen() {
           </View>
         }
         ListFooterComponent={
-          data.items.length > shown ? (
+          items.length > shown ? (
             <Pressable style={styles.moreBtn} onPress={() => setShown((n) => n + PAGE)} testID="pocket-more">
               <Text style={styles.link}>और दिखाएँ</Text>
             </Pressable>
@@ -255,12 +343,19 @@ export default function PocketScreen() {
   );
 }
 
-function Line({ label, value, color, negative }: { label: string; value: string; color?: string; negative?: boolean }) {
-  return (
-    <View style={styles.line}>
-      <Text style={styles.lineLabel}>{label}</Text>
+function Line({ label, value, color, negative, active, onPress }: { label: string; value: string; color?: string; negative?: boolean; active?: boolean; onPress?: () => void }) {
+  const body = (
+    <>
+      {onPress ? <MaterialIcon name={active ? "filter" : "filter-outline"} size={14} color={active ? colors.brandPrimary : colors.muted} /> : null}
+      <Text style={[styles.lineLabel, active && { color: colors.brandPrimary, fontWeight: "800" }]}>{label}</Text>
       <Text style={[styles.lineValue, color ? { color } : null, negative && { color: colors.error }]}>{value}</Text>
-    </View>
+    </>
+  );
+  if (!onPress) return <View style={styles.line}>{body}</View>;
+  return (
+    <Pressable style={[styles.line, active && styles.lineActive]} onPress={onPress}>
+      {body}
+    </Pressable>
   );
 }
 
@@ -354,5 +449,9 @@ const styles = StyleSheet.create({
   rowBal: { fontSize: 11, color: colors.muted, marginTop: 2 },
   empty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },
   emptyText: { fontSize: 14, color: colors.muted, textAlign: "center" },
+  lineActive: { backgroundColor: colors.brandTertiary, borderRadius: radius.sm, paddingHorizontal: 6 },
+  searchWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surface, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44, borderWidth: 1, borderColor: colors.border, marginTop: spacing.lg },
+  search: { flex: 1, color: colors.onSurface, fontSize: 15 },
+  listHead: { flexDirection: "row", alignItems: "center", marginTop: spacing.lg, marginBottom: spacing.xs },
   moreBtn: { alignSelf: "center", paddingVertical: spacing.md, paddingHorizontal: spacing.xl },
 });

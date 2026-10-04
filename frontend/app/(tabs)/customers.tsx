@@ -13,9 +13,10 @@ import { usePersona } from "@/src/lib/persona";
 
 type Filter = "due" | "owe" | "all";
 const FILTERS: Filter[] = ["due", "owe", "all"];
-type Sort = "recent" | "amount" | "oldest";
-const SORTS: Sort[] = ["recent", "amount", "oldest"];
-const SORT_LABEL: Record<Sort, string> = { recent: "नई एंट्री", amount: "ज़्यादा रकम", oldest: "सबसे पुराना बाकी" };
+type Sort = "recent" | "amount" | "oldest" | "name";
+const SORTS: Sort[] = ["recent", "amount", "oldest", "name"];
+const SORT_LABEL: Record<Sort, string> = { recent: "नई एंट्री", amount: "ज़्यादा रकम", oldest: "पुराना बाकी", name: "नाम A-Z" };
+const phoneKey = (p: string) => p.replace(/\D/g, "").slice(-10);
 
 export default function CustomersScreen() {
   const insets = useSafeAreaInsets();
@@ -79,12 +80,21 @@ export default function CustomersScreen() {
       // A search looks through everyone; the chips only narrow the browsing list.
       .filter(({ due }) => !!needle || (filter === "due" ? due > 0 : filter === "owe" ? due < 0 : true))
       .sort((a, b) => {
-        if (filter === "all") return a.c.name.localeCompare(b.c.name, "hi");
+        if (sort === "name") return a.c.name.localeCompare(b.c.name, "hi");
         if (sort === "amount") return Math.abs(b.due) - Math.abs(a.due);
         if (sort === "oldest") return (a.since || a.last || "9").localeCompare(b.since || b.last || "9");
         return b.latest.localeCompare(a.latest);
       });
   }, [all, q, filter, sort]);
+
+  const dupePhones = useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const c of customers) {
+      const k = phoneKey(c.phone || "");
+      if (k.length === 10) seen.set(k, (seen.get(k) ?? 0) + 1);
+    }
+    return new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));
+  }, [customers]);
 
   const loading = customersQ.isLoading || entriesQ.isLoading;
   const loadFailed = !loading && (customersQ.isError || entriesQ.isError) && (customersQ.data == null || entriesQ.data == null);
@@ -112,7 +122,7 @@ export default function CustomersScreen() {
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.md }}>
           {FILTERS.map((f) => (
-            <Pressable key={f} onPress={() => setFilter(f)} style={[styles.chip, filter === f && styles.chipActive]} testID={`filter-${f}`}>
+            <Pressable key={f} onPress={() => { setFilter(f); if (f === "all") setSort("name"); }} style={[styles.chip, filter === f && styles.chipActive]} testID={`filter-${f}`}>
               <Text style={[styles.chipText, filter === f && { color: colors.onBrandPrimary }]}>
                 {filterLabel[f]} ({counts[f]})
               </Text>
@@ -128,7 +138,7 @@ export default function CustomersScreen() {
             · {counts[filter]} {labels.customers}
           </Text>
         ) : null}
-        {!loading && filter !== "all" && counts[filter] > 1 ? (
+        {!loading && counts[filter] > 1 ? (
           <View style={styles.sortRow}>
             <MaterialIcon name="sort" size={16} color={colors.muted} />
             {SORTS.map((s) => (
@@ -171,6 +181,9 @@ export default function CustomersScreen() {
                 <Text style={styles.sub} numberOfLines={1}>
                   {item.c.phone ? formatPhone(item.c.phone) : "फ़ोन नहीं"}{item.c.address ? ` · ${item.c.address}` : ""}
                 </Text>
+                {dupePhones.has(phoneKey(item.c.phone || "")) ? (
+                  <Text style={styles.dupe} numberOfLines={1}>⚠ यही नंबर किसी और खाते में भी है</Text>
+                ) : null}
                 {item.last ? (
                   <Text style={styles.last} numberOfLines={1}>
                     आख़िरी एंट्री: {item.last === today ? "आज" : formatDateShort(item.last)}
@@ -217,6 +230,7 @@ const styles = StyleSheet.create({
   name: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   sub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   last: { fontSize: 11, color: colors.muted, marginTop: 2 },
+  dupe: { fontSize: 11, color: colors.warning, fontWeight: "700", marginTop: 2 },
   dueAmt: { fontSize: 15, fontWeight: "700" },
   dueTag: { fontSize: 11, color: colors.muted, marginTop: 2 },
   empty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },

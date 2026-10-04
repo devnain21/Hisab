@@ -242,6 +242,17 @@ export default function CustomerDetail() {
               </Pressable>
             </View>
           ) : null}
+          {due < 0 ? (
+            <Pressable
+              style={[styles.statementBtn, { backgroundColor: colors.infoSoft, borderColor: colors.info, marginTop: spacing.sm }]}
+              onPress={() => setEntrySheet("given")}
+              testID="return-jama-btn"
+            >
+              <MaterialIcon name="cash-refund" size={18} color={colors.info} />
+              <Text style={[styles.statementText, { color: colors.info }]}>{isCustomer ? "जमा लौटाएँ" : "पैसे चुकाएँ"} {formatINR(-due)}</Text>
+              <Text style={styles.statementHint}>{isCustomer ? "ग्राहक का पैसा आपके पास है" : "आपको देने हैं"}</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {openJobs.length > 0 && (
@@ -282,7 +293,7 @@ export default function CustomerDetail() {
             </View>
             <View style={{ gap: spacing.sm }}>
               {(allAeps ? aepsList : aepsList.slice(0, 4)).map((t) => (
-                <AepsRow key={t.id} t={t} onPress={() => router.push(`/aeps/${t.id}`)} />
+                <AepsRow key={t.id} t={t} kept={aepsJamaEntry(t.id, entries)?.amount ?? 0} onPress={() => router.push(`/aeps/${t.id}`)} />
               ))}
             </View>
           </>
@@ -411,7 +422,7 @@ const STATE_UI: Record<WorkState, { label: string; icon: string; fg: string; bg:
   settled: { label: "चुकता", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
 };
 
-function AepsRow({ t, onPress }: { t: AepsTxn; onPress: () => void }) {
+function AepsRow({ t, kept, onPress }: { t: AepsTxn; kept: number; onPress: () => void }) {
   const m = AEPS_META[t.type] ?? AEPS_META.other;
   const via = viaBill(t.via || defaultVia(t.type));
   const bill = aepsBill(t);
@@ -432,6 +443,11 @@ function AepsRow({ t, onPress }: { t: AepsTxn; onPress: () => void }) {
         {due > 0 ? (
           <View style={[styles.statePill, { backgroundColor: colors.errorSoft }]}>
             <Text style={[styles.stateText, { color: colors.error }]}>बाकी {formatINR(due)}</Text>
+          </View>
+        ) : kept > 0 ? (
+          <View style={[styles.statePill, { backgroundColor: colors.infoSoft }]}>
+            <MaterialIcon name="piggy-bank-outline" size={12} color={colors.info} />
+            <Text style={[styles.stateText, { color: colors.info }]}>जमा {formatINR(kept)}</Text>
           </View>
         ) : (
           <View style={[styles.statePill, { backgroundColor: st.soft }]}>

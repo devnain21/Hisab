@@ -345,10 +345,69 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
     <div><div class="shop">${esc(shop.shop_name)}</div><div class="meta">${shopMeta}</div></div>
     <div class="doc"><div class="title">${esc(heading)}</div><div class="meta">${docMeta}</div></div>
   </div>
-  <div class="to"><div class="label">${customer.persona === "personal" ? "नाम" : "ग्राहक"}</div><div class="name">${esc(customer.name)}</div>${customer.phone ? `<div class="meta">${esc(formatPhone(customer.phone))}</div>` : ""}</div>
+  ${customer.id === OWN_BOOK ? `<div class="to"><div class="name">${esc(customer.name)}</div></div>` : `<div class="to"><div class="label">${customer.persona === "personal" ? "नाम" : "ग्राहक"}</div><div class="name">${esc(customer.name)}</div>${customer.phone ? `<div class="meta">${esc(formatPhone(customer.phone))}</div>` : ""}</div>`}
   ${body}
-  <div class="foot">${personal ? "धन्यवाद 🙏" : "धन्यवाद, फिर पधारें 🙏"}</div>
+  <div class="foot">${customer.id === OWN_BOOK ? `बनाया: ${esc(formatDate(todayISO()))}` : personal ? "धन्यवाद 🙏" : "धन्यवाद, फिर पधारें 🙏"}</div>
 </body></html>`;
+}
+
+/** Marks a document about the owner's own books (no customer block, no thank-you line). */
+const OWN_BOOK = "__own_book__";
+
+export type RegisterRow = { date: string; title: string; sub: string; amount: number; inflow: boolean; after: number };
+
+/** Galla / bank register for a period: opening, every movement with the running balance, closing. */
+export function registerDoc(
+  shopIn: Partial<ShopProfile>,
+  pocketTitle: string,
+  period: string,
+  sums: { opening: number; ins: number; outs: number; closing: number },
+  breakdown: Line[],
+  rows: RegisterRow[],
+): ShareDoc {
+  const shop = fullShop(shopIn);
+  const today = todayISO();
+  const heading = `${pocketTitle} रजिस्टर`;
+  const lines: Line[] = [
+    { label: "शुरू में", value: formatINR(sums.opening) },
+    { label: "आए (+)", value: formatINR(sums.ins), tone: "ok" },
+    { label: "गए (−)", value: formatINR(sums.outs), tone: "due" },
+  ];
+  const account: Line = { label: "आख़िर में बचा", value: formatINR(sums.closing), tone: sums.closing < 0 ? "due" : "ok" };
+  const message = [
+    ...messageHead(shop),
+    `*${heading}* · ${period}`,
+    "",
+    ...lines.map(lineText),
+    `*${account.label}: ${account.value}*`,
+    ...(breakdown.length ? ["", ...breakdown.map(lineText)] : []),
+  ].join("\n");
+  const body = `
+  <table class="sum" style="width:100%;margin-left:0">${lines.map(sumRow).join("")}</table>
+  ${accountBox(account)}
+  ${breakdown.length ? `<h3 style="font-size:13px;margin:16px 0 6px">कहाँ से आए, कहाँ गए</h3><table class="sum" style="width:100%;margin-left:0">${breakdown.map(sumRow).join("")}</table>` : ""}
+  <h3 style="font-size:13px;margin:16px 0 6px">सभी लेन-देन (${rows.length})</h3>
+  <table class="ledger">
+    <tr><th>तारीख</th><th>विवरण</th><th class="amt">आए</th><th class="amt">गए</th><th class="amt">बचा</th></tr>
+    ${rows
+      .map(
+        (r) =>
+          `<tr><td class="nowrap">${esc(formatDateShort(r.date))}</td><td>${esc(r.title)}${r.sub ? `<div class="sub">${esc(r.sub)}</div>` : ""}</td><td class="amt" style="color:${OK}">${r.inflow ? esc(formatINR(r.amount)) : ""}</td><td class="amt" style="color:${DUE}">${r.inflow ? "" : esc(formatINR(r.amount))}</td><td class="amt">${esc(formatINR(r.after))}</td></tr>`,
+      )
+      .join("")}
+  </table>`;
+  const owner: Customer = { id: OWN_BOOK, name: `${pocketTitle} · ${period}`, phone: "", address: "", notes: "", createdAt: today };
+  return {
+    heading,
+    title: pocketTitle,
+    sub: period,
+    phone: "",
+    lines,
+    account,
+    message,
+    html: page(shop, heading, esc(period), owner, body, "A4"),
+    fileName: `${fileSafe(pocketTitle)}-${today}.pdf`,
+  };
 }
 
 /** Counter service receipt: what was done, through which channel, and where the money stands. */

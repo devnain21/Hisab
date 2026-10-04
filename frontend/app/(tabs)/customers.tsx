@@ -8,7 +8,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
 import { entryDelta, useCustomers, useEntries } from "@/src/lib/data";
 import { buildAllLedgers } from "@/src/lib/records";
-import { formatDateShort, formatINR, formatPhone, initials, todayISO } from "@/src/lib/format";
+import { formatDateShort, formatINR, formatPhone, initials, roundMoney, todayISO } from "@/src/lib/format";
 import { usePersona } from "@/src/lib/persona";
 
 type Filter = "due" | "owe" | "all";
@@ -60,7 +60,7 @@ export default function CustomersScreen() {
     }
     return customers.map((c) => {
       const s = stats.get(c.id);
-      return { c, due: s?.due ?? 0, last: s?.last ?? "", latest: s?.latest ?? "", since: s?.since ?? "" };
+      return { c, due: roundMoney(s?.due ?? 0), last: s?.last ?? "", latest: s?.latest ?? "", since: s?.since ?? "" };
     });
   }, [customers, entries]);
 

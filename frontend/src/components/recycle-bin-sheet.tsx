@@ -4,9 +4,10 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { clearAllTrash, describeTrash, getTrashList, restoreTrashItem, subscribeTrash, type TrashItem } from "@/src/lib/trash";
+import { clearTrashItems, describeTrash, getTrashList, restoreTrashItem, subscribeTrash, trashPersona, type TrashItem } from "@/src/lib/trash";
 import { formatDateShort } from "@/src/lib/format";
 import { confirmAction, showNotice } from "@/src/lib/confirm";
+import { usePersona } from "@/src/lib/persona";
 
 export function RecycleBinModal({
   visible,
@@ -17,9 +18,10 @@ export function RecycleBinModal({
 }) {
   const [items, setItems] = useState<TrashItem[]>([]);
   const insets = useSafeAreaInsets();
+  const { persona } = usePersona();
 
   const load = () => {
-    getTrashList().then(setItems);
+    getTrashList().then((list) => setItems(list.filter((t) => (trashPersona(t, list) ?? persona) === persona)));
   };
 
   useEffect(() => {
@@ -27,7 +29,7 @@ export function RecycleBinModal({
       load();
       return subscribeTrash(load);
     }
-  }, [visible]);
+  }, [visible, persona]);
 
   const handleRestore = async (id: string) => {
     const result = await restoreTrashItem(id);
@@ -37,7 +39,7 @@ export function RecycleBinModal({
 
   const handleClear = () =>
     confirmAction("कचरा पेटी खाली करें?", `${items.length} रिकॉर्ड हमेशा के लिए मिट जाएँगे।`, "खाली करें", async () => {
-      await clearAllTrash();
+      await clearTrashItems(items.map((t) => t.id));
       load();
     });
 

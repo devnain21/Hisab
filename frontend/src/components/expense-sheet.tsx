@@ -5,7 +5,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { addExpense, deleteExpense, expensePersona, EXPENSE_CATEGORIES, PERSONAL_EXPENSE_CATEGORIES, type Expense, type ExpenseMode } from "@/src/lib/expenses";
 import { usePersona } from "@/src/lib/persona";
-import { dateOnSave, formatDateShort, formatINR, isBackdated, isValidISO, parseAmount, todayISO } from "@/src/lib/format";
+import { OLD_ENTRY_DAYS, dateOnSave, formatDateShort, formatINR, isBackdated, isValidISO, parseAmount, todayISO } from "@/src/lib/format";
 import { DangerLink, DateField, SheetShell } from "@/src/components/sheets";
 import { store } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
@@ -59,7 +59,7 @@ export function AddExpenseSheet({
 
   const amtNum = parseAmount(amount);
   const valid = amtNum > 0 && isValidISO(date);
-  // An edit that moves the row before the day it was typed takes it out of galla / bank.
+  // An edit that moves the row too far before the day it was typed takes it out of galla / bank.
   const nowOld = initial ? isBackdated(date, initial.createdAt) && !isBackdated(initial.date, initial.createdAt) : false;
 
   const handleSave = async () => {
@@ -187,7 +187,7 @@ export function AddExpenseSheet({
           </View>
 
           <DateField label="तारीख" value={date} onChange={setDate} money={!initial} testID="expense-date" />
-          {nowOld ? <Text style={styles.oldNote}>पुरानी तारीख — अब {labels.cash} / बैंक में नहीं गिना जाएगा</Text> : null}
+          {nowOld ? <Text style={styles.oldNote}>{OLD_ENTRY_DAYS} दिन से पुरानी तारीख — अब {labels.cash} / बैंक में नहीं गिना जाएगा</Text> : null}
 
           {/* Save Button */}
           <Pressable

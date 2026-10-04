@@ -253,7 +253,9 @@ function PersonalTxns() {
     return c;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries, ledger]);
-  const monthGiven = entries.filter((e) => e.date.startsWith(month) && e.type === "given").reduce((s, e) => s + e.amount, 0);
+  // Paying back goods is not money lent out; shown on its own.
+  const monthGiven = entries.filter((e) => e.date.startsWith(month) && e.type === "given" && !e.linkId).reduce((s, e) => s + e.amount, 0);
+  const monthRepaid = entries.filter((e) => e.date.startsWith(month) && e.type === "given" && !!e.linkId).reduce((s, e) => s + e.amount, 0);
   const monthGot = entries.filter((e) => e.date.startsWith(month) && e.type === "payment").reduce((s, e) => s + e.amount, 0);
   const monthGoods = entries.filter((e) => e.date.startsWith(month) && e.type === "purchase").reduce((s, e) => s + e.amount, 0);
 
@@ -288,11 +290,12 @@ function PersonalTxns() {
             );
           })}
         </ScrollView>
-        {!loading && monthGiven + monthGot + monthGoods > 0 ? (
+        {!loading && monthGiven + monthGot + monthGoods + monthRepaid > 0 ? (
           <Text style={styles.summary} testID="txn-month">
             इस महीने: दिए <Text style={{ color: colors.error, fontWeight: "800" }}>{formatINR(monthGiven)}</Text>
             {" · "}मिले <Text style={{ color: colors.success, fontWeight: "800" }}>{formatINR(monthGot)}</Text>
-            {monthGoods > 0 ? <Text> · सामान <Text style={{ color: colors.warning, fontWeight: "800" }}>{formatINR(monthGoods)}</Text></Text> : null}
+            {monthGoods > 0 ? <Text> · सामान लिया <Text style={{ color: colors.warning, fontWeight: "800" }}>{formatINR(monthGoods)}</Text></Text> : null}
+            {monthRepaid > 0 ? <Text> · बकाया चुकाया <Text style={{ color: colors.info, fontWeight: "800" }}>{formatINR(monthRepaid)}</Text></Text> : null}
           </Text>
         ) : null}
       </View>

@@ -194,7 +194,7 @@ export function MoneyMoveSheet({
         </Text>
       ) : null}
 
-      <DateField label="तारीख" value={date} onChange={setDate} testID="move-date" />
+      <DateField label="तारीख" value={date} onChange={setDate} money createdAt={initial?.createdAt} testID="move-date" />
 
       {error ? <Text style={[styles.hint, { color: colors.error, marginBottom: spacing.sm }]}>{error}</Text> : null}
       <PrimaryButton label={initial ? "बदलाव सेव करें" : "सेव करें"} onPress={save} disabled={!valid} saving={saving} testID="move-save" />

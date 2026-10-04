@@ -4,6 +4,7 @@ import { syncAepsDue } from "./aeps-due";
 import { fileStore } from "./file-store";
 import { accountLabel, type Move } from "./wallet";
 import { queryClient } from "@/src/query-client";
+import type { Persona } from "./persona";
 import type { AepsTxn, Customer, Entry, Job } from "./data";
 
 export type TrashColl = "customers" | "entries" | "jobs" | "aeps" | "expenses" | "moves";
@@ -132,6 +133,38 @@ export async function clearAllTrash(): Promise<void> {
   trashMemory = [];
   await fileStore.removeItem(TRASH_KEY).catch(() => {});
   notify();
+}
+
+/** Permanently drop just these items (the bin shows one account at a time). */
+export async function clearTrashItems(ids: string[]): Promise<void> {
+  const drop = new Set(ids);
+  const list = await getTrashList();
+  await save(list.filter((t) => !drop.has(t.id)));
+}
+
+/** Which account a binned row belongs to; null when it can't be told (shown in both). */
+export function trashPersona(item: TrashItem, list: TrashItem[]): Persona | null {
+  const d = item.data ?? {};
+  const asPersona = (p?: string): Persona => (p === "personal" ? "personal" : "business");
+  switch (item.coll) {
+    case "customers":
+      return asPersona(d.persona);
+    case "aeps":
+      return "business";
+    case "expenses":
+      return asPersona(d.persona);
+    case "moves": {
+      const key = (d.from || d.to || "") as string;
+      return key ? asPersona(key.split(":")[0]) : null;
+    }
+    default: {
+      if (!d.customerId) return item.coll === "jobs" ? asPersona(d.persona) : null;
+      const owner =
+        cached<Customer>("customers").find((c) => c.id === d.customerId) ??
+        (list.find((t) => t.coll === "customers" && t.data?.id === d.customerId)?.data as Customer | undefined);
+      return owner ? asPersona(owner.persona) : null;
+    }
+  }
 }
 
 function restoreCustomer(item: TrashItem) {

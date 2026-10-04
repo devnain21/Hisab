@@ -30,6 +30,7 @@ export default function TabsLayout() {
     <>
     <LedgerMaintenance />
     <Tabs
+      backBehavior="firstRoute"
       screenListeners={{
         tabPress: () => {
           if (Platform.OS !== "web") Haptics.selectionAsync().catch(() => {});
@@ -72,7 +73,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="tasks"
         options={{
-          title: "काम",
+          title: "मेरे काम",
           href: isPersonal ? undefined : null,
           tabBarIcon: ({ color, size }) => <MaterialIcon name="clipboard-check-outline" size={size} color={color} />,
         }}

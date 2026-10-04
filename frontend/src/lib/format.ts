@@ -8,10 +8,16 @@ export function localDay(iso?: string | null): string | null {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** A row dated before the day it was typed is old history: it stays in the khata but never touches galla / bank. */
+/** Rows dated up to this many days before the day they were typed still count in galla / bank on their date. */
+export const OLD_ENTRY_DAYS = 7;
+
+/**
+ * A row dated more than OLD_ENTRY_DAYS before the day it was typed is old history: it stays in the khata,
+ * but the money that changed hands on that old day never touches galla / bank. Later payments against it do.
+ */
 export function isBackdated(date: string, createdAt?: string | null): boolean {
   const typed = localDay(createdAt);
-  return !!typed && date < typed;
+  return !!typed && date < shiftISO(typed, -OLD_ENTRY_DAYS);
 }
 
 export function todayISO(offsetDays = 0): string {

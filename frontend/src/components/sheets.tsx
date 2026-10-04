@@ -16,7 +16,7 @@ import { advanceOf, computeBalance, itemsOf, useCustomers, useEntries, useJobs, 
 import { ADVANCE, advancesForJob, buildLedger, jobForWork, linkedPayment, olderAdvances, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
-import { dateOnSave, formatDate, formatINR, isValidISO, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
+import { OLD_ENTRY_DAYS, dateOnSave, formatDate, formatINR, isBackdated, isValidISO, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
 import { CalendarModal } from "@/src/components/calendar-modal";
 import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
@@ -125,14 +125,31 @@ export function Chip({ label, active, onPress, icon, testID, tone }: { label: st
  * Day chips, a calendar and a typed date. Only a real calendar day reaches `onChange`, so a
  * half-typed or impossible date can never be saved; the box shows what is wrong instead.
  */
-export function DateField({ label, value, onChange, future, money, testID }: { label: string; value: string; onChange: (v: string) => void; future?: boolean; money?: boolean; testID?: string }) {
+export function DateField({
+  label,
+  value,
+  onChange,
+  future,
+  money,
+  createdAt,
+  testID,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  future?: boolean;
+  money?: boolean;
+  /** When the row was first typed; a new row counts from now. */
+  createdAt?: string;
+  testID?: string;
+}) {
   const [text, setText] = useState(value);
   const [calendar, setCalendar] = useState(false);
   const cashLabel = usePersona().labels.cash;
   useEffect(() => setText(value), [value]);
   const today = todayISO();
   const typedOk = isValidISO(text);
-  const old = money && isValidISO(value) && value < today;
+  const old = money && isValidISO(value) && isBackdated(value, createdAt ?? new Date().toISOString());
   const ahead = !future && isValidISO(value) && value > today;
   const presets = future
     ? [{ label: "आज", d: today }, { label: "कल", d: todayISO(1) }, { label: "परसों", d: todayISO(2) }, { label: "1 हफ़्ता", d: todayISO(7) }]
@@ -168,7 +185,7 @@ export function DateField({ label, value, onChange, future, money, testID }: { l
       ) : ahead ? (
         <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>आगे की तारीख है — {formatDate(value)}</Text>
       ) : old ? (
-        <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>पुरानी तारीख — खाते में जुड़ेगा, {cashLabel} / बैंक नहीं बदलेगा</Text>
+        <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>{OLD_ENTRY_DAYS} दिन से पुरानी तारीख — खाते में जुड़ेगा, पर उस दिन का लेन-देन {cashLabel} / बैंक में नहीं गिना जाएगा</Text>
       ) : null}
       <CalendarModal visible={calendar} value={value} onPick={pick} onClose={() => setCalendar(false)} max={future ? undefined : today} />
     </Field>
@@ -547,6 +564,7 @@ function PayModeField({ label, value, onChange, cashLabel = "नकद", onlineL
 /** Portal fee / cost paid by the shop for this work. Never printed on the customer's bill. */
 function FeeField({ fee, setFee, feeMode, setFeeMode, amount }: { fee: string; setFee: (v: string) => void; feeMode: PayMode; setFeeMode: (m: PayMode) => void; amount: number }) {
   const n = parseAmount(fee);
+  const cashFrom = usePersona().isPersonal ? "कैश से" : "गल्ले से";
   return (
     <>
       <Field label="फीस / लागत (₹)">
@@ -557,7 +575,7 @@ function FeeField({ fee, setFee, feeMode, setFeeMode, amount }: { fee: string; s
           </Text>
         ) : null}
       </Field>
-      {n > 0 ? <PayModeField label="फीस कहाँ से दी" value={feeMode} onChange={setFeeMode} cashLabel="गल्ले से" onlineLabel="बैंक से" /> : null}
+      {n > 0 ? <PayModeField label="फीस कहाँ से दी" value={feeMode} onChange={setFeeMode} cashLabel={cashFrom} onlineLabel="बैंक से" /> : null}
     </>
   );
 }
@@ -879,7 +897,7 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
           ))}
         </Field>
       ) : null}
-      <DateField label="तारीख" value={date} onChange={setDate} money testID="input-entry-date" />
+      <DateField label="तारीख" value={date} onChange={setDate} money createdAt={initial?.createdAt} testID="input-entry-date" />
       <Field label="नोट (वैकल्पिक)">
         <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-entry-notes" />
       </Field>
@@ -1026,7 +1044,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
           ))}
         </Field>
       ) : null}
-      <DateField label="तारीख" value={date} onChange={setDate} testID="input-edit-work-date" />
+      <DateField label="तारीख" value={date} onChange={setDate} money createdAt={entry?.createdAt} testID="input-edit-work-date" />
       <Field label="नोट (वैकल्पिक)">
         <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-edit-work-notes" />
       </Field>

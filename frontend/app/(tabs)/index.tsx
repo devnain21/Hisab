@@ -1,13 +1,13 @@
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TextInput, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TextInput, Alert, BackHandler, Platform } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { Pressable } from "@/src/components/tap";
 import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
-import { useState, useMemo } from "react";
-import { useRouter } from "expo-router";
+import { useState, useMemo, useCallback } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
-import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, type Entry, type Job } from "@/src/lib/data";
+import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, isRepayment, type Entry, type Job } from "@/src/lib/data";
 import { buildAllLedgers, workForJob } from "@/src/lib/records";
 import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
@@ -49,6 +49,20 @@ export default function Home() {
       `${rejectedChanges().map((r) => `• ${r.label}`).join("\n")}\n\nइन्हें दोबारा लिख दें।`,
       [{ text: "बाद में" }, { text: "ठीक है, हटाएँ", onPress: () => void clearRejected() }],
     );
+  // Back on Home would close the app; ask first instead of exiting straight away.
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== "android") return;
+      const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+        Alert.alert("ऐप बंद करें?", "क्या आप ऐप से बाहर निकलना चाहते हैं?", [
+          { text: "नहीं", style: "cancel" },
+          { text: "हाँ", style: "destructive", onPress: () => BackHandler.exitApp() },
+        ]);
+        return true;
+      });
+      return () => sub.remove();
+    }, []),
+  );
   const book = useMoneyBook();
   const counter = useCounterMode();
   const { isPersonal, labels } = usePersona();
@@ -72,7 +86,7 @@ export default function Home() {
     () =>
       isPersonal
         ? entries
-            .filter((e) => personaCustIds.has(e.customerId))
+            .filter((e) => personaCustIds.has(e.customerId) && (e.type === "payment" || e.type === "given" || e.type === "purchase"))
             .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : b.createdAt.localeCompare(a.createdAt)))
             .slice(0, 5)
         : [],
@@ -382,7 +396,7 @@ export default function Home() {
                     hint={stats.overdue > 0 ? `${stats.overdue} देर से` : "सब समय पर"}
                     icon="briefcase-clock-outline"
                     tone={stats.overdue > 0 ? "warn" : "neutral"}
-                    onPress={() => go("/(tabs)/work", { filter: stats.overdue > 0 ? "late" : "open" })}
+                    onPress={() => go("/(tabs)/work", { filter: "open" })}
                     testID="stat-pending-jobs"
                   />
                   <StatCard
@@ -496,16 +510,20 @@ export default function Home() {
                     {recentTxns.map((e) => {
                       const got = e.type === "payment";
                       const goods = e.type === "purchase";
+                      const repay = isRepayment(e);
+                      const label = got ? "मिले" : goods ? "सामान लिया" : repay ? "बकाया चुकाया" : "दिए";
+                      const icon = got ? "arrow-bottom-left" : goods ? "cart-outline" : repay ? "check-circle-outline" : "arrow-top-right";
+                      const tint = got ? colors.success : goods ? colors.warning : repay ? colors.info : colors.error;
                       return (
                         <Pressable key={e.id} style={styles.jobCard} onPress={() => router.push(`/customer/${e.customerId}`)} testID={`home-txn-${e.id}`}>
-                          <MaterialIcon name={got ? "arrow-bottom-left" : goods ? "cart-outline" : "arrow-top-right"} size={20} color={got ? colors.success : goods ? colors.warning : colors.error} />
+                          <MaterialIcon name={icon} size={20} color={tint} />
                           <View style={{ flex: 1, minWidth: 0 }}>
                             <Text style={styles.rowTitle} numberOfLines={1}>{nameOf(e.customerId)}</Text>
                             <Text style={styles.rowSub} numberOfLines={1}>
-                              {[got ? "मिले" : goods ? "सामान / सेवा" : "दिए", e.description, e.date === today ? "आज" : formatDateShort(e.date)].filter(Boolean).join(" · ")}
+                              {[label, e.description, e.date === today ? "आज" : formatDateShort(e.date)].filter(Boolean).join(" · ")}
                             </Text>
                           </View>
-                          <Text style={{ fontSize: 15, fontWeight: "800", color: got ? colors.success : goods ? colors.warning : colors.error }}>{formatINR(e.amount)}</Text>
+                          <Text style={{ fontSize: 15, fontWeight: "800", color: tint }}>{formatINR(e.amount)}</Text>
                         </Pressable>
                       );
                     })}
@@ -514,7 +532,7 @@ export default function Home() {
               </>
             ) : null}
 
-            {isPersonal && upcoming.length === 0 ? null : (
+            {isPersonal ? null : (
             <>
             <View style={styles.sectionRow}>
               <Text style={styles.sectionHead}>आने वाला काम</Text>

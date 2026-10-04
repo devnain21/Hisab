@@ -128,7 +128,7 @@ export default function DayScreen() {
     [book.expenses, date, persona],
   );
   const expenseTotal = dayExpenses.reduce((s, x) => s + x.amount, 0);
-  const expenseCashTotal = dayExpenses.filter((x) => x.mode === "cash").reduce((s, x) => s + x.amount, 0);
+  const expenseCashTotal = dayExpenses.filter((x) => x.mode !== "online").reduce((s, x) => s + x.amount, 0);
   const expenseByTitle = useMemo(() => {
     const m = new Map<string, number>();
     dayExpenses.forEach((x) => m.set(x.title, (m.get(x.title) ?? 0) + x.amount));
@@ -206,7 +206,8 @@ export default function DayScreen() {
     bankDiff: null,
     cashFlow: flows.cash,
     bankFlow: flows.bank,
-    netProfitEstimate: workProfit + flows.cash.commission + flows.bank.commission - (flows.cash.expense + flows.bank.expense),
+    // Same basis as the week / month view: the day's work, fees and expenses by their date.
+    netProfitEstimate: workProfit + flows.cash.commission + flows.bank.commission - expenseTotal,
   };
 
   return (

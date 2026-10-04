@@ -179,7 +179,7 @@ export function walletTxns(book: Book, persona: Persona, keep: (date: string) =>
   }
 
   for (const m of book.moves) {
-    if (!keep(m.date)) continue;
+    if (!keep(m.date) || isBackdated(m.date, m.createdAt)) continue;
     for (const pocket of ["cash", "bank"] as Pocket[]) {
       const key = accountKey(persona, pocket);
       if (m.from === key) push(`${m.id}:out`, pocket, "moveOut", m.amount, m.date, m.createdAt, { kind: "move", move: m });

@@ -185,7 +185,7 @@ export function bankOf(t: { type: AepsType; cash?: AepsCash }): CashFlow {
 }
 
 type LegRow = Pick<AepsTxn, "type" | "date" | "status" | "cash" | "cashDate" | "doneDate" | "commissionMode"> &
-  Partial<Pick<AepsTxn, "collected" | "payMode">>;
+  Partial<Pick<AepsTxn, "collected" | "payMode" | "commissionDue">>;
 
 /** Day the counter cash changed hands, or null if it has not. */
 export function cashLegDate(t: LegRow): string | null {
@@ -207,6 +207,7 @@ export function commissionPocket(t: LegRow): "cash" | "bank" {
 /** Customer-paid commission arrives with the cash only when the customer paid in full; otherwise it stays on the khata. */
 export function commissionDate(t: LegRow & { amount?: number }): string | null {
   if (t.commissionMode !== "cash" && t.commissionMode !== "online") return bankLegDate(t);
+  if (t.commissionDue && cashOf(t) === "in") return null;
   const leg = cashLegDate(t);
   if (!leg || cashOf(t) !== "in" || t.collected == null || t.amount == null) return leg;
   return t.collected >= t.amount ? leg : null;

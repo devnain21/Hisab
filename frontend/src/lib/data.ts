@@ -103,6 +103,8 @@ export type AepsTxn = {
   collected?: number | null;
   /** How the customer paid: cash lands in the galla, online in the bank. */
   payMode?: "" | "cash" | "online";
+  /** Amount paid but the customer's commission is still owed; it waits on their khata. */
+  commissionDue?: boolean;
   notes: string;
   createdAt: string;
 };

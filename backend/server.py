@@ -321,6 +321,8 @@ class AepsFields(BaseModel):
     # Money the customer has handed over toward the amount, and how. None on older rows (= the full amount).
     collected: Optional[Money] = None
     payMode: Literal["", "cash", "online"] = ""
+    # Customer paid the amount but still owes the commission; it waits on their khata.
+    commissionDue: bool = False
 
 
 class AepsTxn(AepsFields):

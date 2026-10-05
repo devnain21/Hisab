@@ -19,6 +19,7 @@ import {
   aepsLegs,
   bankOf,
   cashLegDate,
+  commissionDate,
   defaultVia,
   fieldLabel,
   fieldsFor,
@@ -79,6 +80,8 @@ type Line = {
   rest: "old" | "later";
   /** What the money paid over the amount is for: kept as advance, or the rest is sent on `dueDate`. */
   extra: "advance" | "send";
+  /** Customer paid the amount but owes the commission (it goes on the khata). */
+  commDue: boolean;
   payMode: "cash" | "online";
   dueDate: string;
   notes: string;
@@ -112,6 +115,7 @@ const emptyLine = (type: AepsType = "withdrawal"): Line => ({
   handed: null,
   rest: "later",
   extra: "advance",
+  commDue: false,
   payMode: "cash",
   dueDate: todayISO(1),
   notes: "",
@@ -125,6 +129,8 @@ const lineFrom = (t: AepsTxn, jama?: Entry): Line => {
   const kept = jama?.amount ?? 0;
   const flow = flowOf({ type: t.type, cash: t.cash ?? "" });
   const owed = Math.max(0, t.amount - (t.commission > 0 && t.commissionMode === "cash" ? t.commission : 0));
+  // The row keeps money toward the amount only; the input shows all that was handed over, charge included.
+  const chargeTaken = t.collected != null && t.commission > 0 && t.commissionMode === (t.payMode || "cash") && !!commissionDate(t) ? t.commission : 0;
   const base: Line = {
     ...emptyLine(t.type),
     via: t.via || defaultVia(t.type),
@@ -145,7 +151,8 @@ const lineFrom = (t: AepsTxn, jama?: Entry): Line => {
     commissionMode: t.commissionMode || "app",
     status: isLater(t) ? "later" : t.status,
     cashTaken: legDone,
-    collected: !legDone ? "0" : t.collected == null ? null : String(t.collected),
+    collected: !legDone ? "0" : t.collected == null ? null : String(t.collected + chargeTaken),
+    commDue: !!t.commissionDue,
     payMode: t.payMode === "online" ? "online" : "cash",
     dueDate: t.dueDate || todayISO(1),
     notes: t.notes,
@@ -153,17 +160,23 @@ const lineFrom = (t: AepsTxn, jama?: Entry): Line => {
   };
   if (!jama || kept <= 0) return base;
   if (flow === "out") return { ...base, handed: String(Math.max(0, owed - kept)), rest: jamaKindOf(jama) === "old" ? "old" : "later" };
-  if (flow === "in") return { ...base, collected: String(collectedNum(base) + sameWayCharge(base) + kept), extra: "advance" };
+  if (flow === "in") return { ...base, collected: String(collectedNum(base) + kept), extra: "advance" };
   return base;
 };
 
 const digits = (v: string, max: number) => v.replace(/\D/g, "").slice(0, max);
 const num = (v: string) => parseAmount(v);
-const collectedNum = (l: Line) => (l.collected === null ? num(l.amount) : num(l.collected));
-/** Charge paid the same way as the amount is already booked as received, so money over the amount covers it first. */
+/** Service charge the customer pays (app commission never reaches them). */
+const lineCharge = (l: Line) => (num(l.commission) > 0 && (l.commissionMode === "cash" || l.commissionMode === "online") ? num(l.commission) : 0);
+/** Charge paid the same way as the amount comes out of the same money, after the amount itself is covered. */
 const sameWayCharge = (l: Line) => (num(l.commission) > 0 && l.commissionMode === l.payMode ? num(l.commission) : 0);
+/** Paid in full: the amount, plus the charge unless it was left on the khata. */
+const fullNum = (l: Line) => num(l.amount) + (l.commDue ? 0 : sameWayCharge(l));
+const collectedNum = (l: Line) => (l.collected === null ? fullNum(l) : num(l.collected));
+/** Commission still owed: left on the khata on purpose, or not covered by what was handed over. */
+const commOwed = (l: Line) => lineCharge(l) > 0 && (l.commDue || collectedNum(l) < num(l.amount) + sameWayCharge(l));
 /** Money handed over beyond the amount and its charge. */
-const overNum = (l: Line) => Math.max(0, collectedNum(l) - num(l.amount) - sameWayCharge(l));
+const overNum = (l: Line) => Math.max(0, collectedNum(l) - num(l.amount) - (commOwed(l) ? 0 : sameWayCharge(l)));
 /** Cash a withdrawal customer is owed: the amount less a charge kept from it. */
 const owedNum = (l: Line) => Math.max(0, num(l.amount) - (num(l.commission) > 0 && l.commissionMode === "cash" ? num(l.commission) : 0));
 const handedNum = (l: Line) => (l.handed === null ? owedNum(l) : Math.min(num(l.handed), owedNum(l)));
@@ -220,6 +233,7 @@ function previewOf(l: Line, date: string, createdAt = new Date().toISOString()):
     doneDate: status === "success" ? date : "",
     collected: flow === "in" ? Math.min(got, amt) : null,
     payMode: l.payMode,
+    commissionDue: flow === "in" && commOwed(l),
   };
 }
 
@@ -316,6 +330,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
       commissionMode: num(line.commission) > 0 ? line.commissionMode : ("" as AepsCommissionMode),
       collected: flow === "in" ? got : null,
       payMode: flow === "in" ? line.payMode : ("" as const),
+      commissionDue: flow === "in" && status !== "failed" && commOwed(line),
     };
   };
 
@@ -363,7 +378,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
         // Paid in full for more than was sent now: the rest goes out later as its own pending row, already paid for.
         const rest = sendLater(line);
         if (rest > 0) {
-          createAeps({ ...payload, amount: rest, commission: 0, commissionMode: "", status: "pending", doneDate: "", dueDate: line.dueDate, collected: rest, payMode: line.payMode, cashDate: day, reference: "" }, null, initial?.createdAt);
+          createAeps({ ...payload, amount: rest, commission: 0, commissionMode: "", commissionDue: false, status: "pending", doneDate: "", dueDate: line.dueDate, collected: rest, payMode: line.payMode, cashDate: day, reference: "" }, null, initial?.createdAt);
         }
       });
       onClose();
@@ -390,6 +405,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
           pickType={(t) => pickType(line.key, t)}
           onRemove={() => setLines((rows) => rows.filter((r) => r.key !== line.key))}
           oldDue={index === 0 ? oldDue : 0}
+          hasCustomer={!!choice.customerId}
         />
       ))}
 
@@ -421,12 +437,14 @@ function ServiceLine({
   pickType,
   onRemove,
   oldDue,
+  hasCustomer,
 }: {
   line: Line;
   index: number;
   count: number;
   date: string;
   oldDue: number;
+  hasCustomer: boolean;
   patch: (p: Partial<Line>) => void;
   pickType: (t: AepsType) => void;
   onRemove: () => void;
@@ -447,6 +465,11 @@ function ServiceLine({
   const handed = handedNum(line);
   const kept = flow === "out" ? Math.max(0, owed - handed) : 0;
   const canSend = line.type === "deposit" || line.type === "transfer";
+  const charge = lineCharge(line);
+  const full = fullNum(line);
+  const owedCharge = flow === "in" && commOwed(line);
+  // What stays unpaid on this service: the rest of the amount, plus the commission when it is still owed.
+  const short = flow === "in" ? Math.max(0, amt - Math.min(got, amt)) + (owedCharge ? charge : 0) : 0;
   const cutOld = Math.min(Math.max(oldDue, 0), owed);
 
   return (
@@ -600,14 +623,20 @@ function ServiceLine({
       {flow === "in" && amt > 0 && status !== "failed" ? (
         <View style={styles.money}>
           <Text style={styles.moneyTitle}>💵 ग्राहक से पैसे</Text>
+          {charge > 0 && hasCustomer ? (
+            <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
+              <Chip label={`कमीशन ${formatINR(charge)} मिला`} active={!line.commDue} onPress={() => patch({ commDue: false, collected: null })} tone={colors.success} testID="aeps-comm-paid" />
+              <Chip label="कमीशन उधार" active={line.commDue} onPress={() => patch({ commDue: true, collected: null })} tone={colors.warning} testID="aeps-comm-due" />
+            </View>
+          ) : null}
           <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
-            <Chip label={`पूरे ${formatINR(amt)}`} active={got === amt} onPress={() => patch({ collected: null })} tone={colors.success} testID="aeps-got-full" />
+            <Chip label={`पूरे ${formatINR(full)}`} active={got === full} onPress={() => patch({ collected: null })} tone={colors.success} testID="aeps-got-full" />
             {oldDue > 0 ? (
-              <Chip label={`+ पुरानी उधारी ${formatINR(oldDue)}`} active={got === amt + sameWayCharge(line) + oldDue && line.extra === "advance"} onPress={() => patch({ collected: String(amt + sameWayCharge(line) + oldDue), extra: "advance" })} tone={colors.info} testID="aeps-got-old" />
+              <Chip label={`+ पुरानी उधारी ${formatINR(oldDue)}`} active={got === full + oldDue && line.extra === "advance"} onPress={() => patch({ collected: String(full + oldDue), extra: "advance" })} tone={colors.info} testID="aeps-got-old" />
             ) : null}
             <Chip label="अभी कुछ नहीं" active={got === 0} onPress={() => patch({ collected: "0" })} tone={colors.warning} testID="aeps-got-none" />
           </View>
-          <TextInput style={[inputStyle, styles.amountInput]} value={line.collected ?? line.amount} onChangeText={(v) => patch({ collected: v })} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="aeps-input-collected" />
+          <TextInput style={[inputStyle, styles.amountInput]} value={line.collected ?? String(full)} onChangeText={(v) => patch({ collected: v })} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="aeps-input-collected" />
           {got > 0 ? (
             <View style={[styles.segment, { marginTop: spacing.sm, marginBottom: 0 }]}>
               {(["cash", "online"] as const).map((m) => (
@@ -618,12 +647,12 @@ function ServiceLine({
               ))}
             </View>
           ) : null}
-          {got < amt && status === "success" ? (
+          {short > 0 && status === "success" ? (
             <Text style={[styles.moneyHint, { marginTop: spacing.sm }]}>
-              बाकी {formatINR(amt - got)} ग्राहक की उधारी में जुड़ेंगे{oldDue > 0 ? ` (पहले से ${formatINR(oldDue)} बाकी है)` : ""}।
+              बाकी {formatINR(short)}{owedCharge ? ` (कमीशन ${formatINR(charge)} समेत)` : ""} ग्राहक की उधारी में जुड़ेंगे{oldDue > 0 ? ` (पहले से ${formatINR(oldDue)} बाकी है)` : ""}।
             </Text>
           ) : null}
-          {got < amt && status === "pending" ? <Text style={[styles.moneyHint, { marginTop: spacing.sm }]}>काम होने पर बाकी {formatINR(amt - got)} उधारी में जुड़ेंगे।</Text> : null}
+          {short > 0 && status === "pending" ? <Text style={[styles.moneyHint, { marginTop: spacing.sm }]}>काम होने पर बाकी {formatINR(short)} उधारी में जुड़ेंगे।</Text> : null}
           {over > 0 ? (
             <View style={styles.restBox}>
               <Text style={styles.restTitle}>{formatINR(over)} ज़्यादा मिले — इनका क्या करें?</Text>

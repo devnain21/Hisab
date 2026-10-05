@@ -130,6 +130,7 @@ class Customer(BaseModel):
     notes: str = ""
     persona: Optional[str] = "business"
     creditLimit: float = 0
+    remindOn: str = ""
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updatedAt: Optional[str] = None
 
@@ -145,6 +146,8 @@ class CustomerCreate(BaseModel):
     persona: Optional[str] = "business"
     # Udhaar ceiling; 0 = none. Left out by older app builds, which must not wipe it.
     creditLimit: Optional[Money] = None
+    # Day to chase the udhaar (YYYY-MM-DD, "" = none); same rule for older builds.
+    remindOn: Optional[OptISODate] = None
 
 
 def _check_paid(m):
@@ -764,8 +767,9 @@ async def update_customer(customer_id: str, payload: CustomerCreate, user: dict 
         raise HTTPException(404, "Not found")
     _check_base(existing, base)
     patch = payload.dict(exclude={"id", "createdAt"})
-    if patch.get("creditLimit") is None:
-        patch.pop("creditLimit", None)
+    for key in ("creditLimit", "remindOn"):
+        if patch.get(key) is None:
+            patch.pop(key, None)
     patch["updatedAt"] = _now()
     await db.customers.update_one({"id": customer_id, "user_id": user["user_id"]}, {"$set": patch})
     await _log_change("customers", existing, patch, user)

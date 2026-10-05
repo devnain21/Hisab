@@ -15,6 +15,7 @@ import { Pressable } from "@/src/components/tap";
 import { Amount, Button, IconButton, IconLabel, type IconName } from "@/src/components/ui";
 import { useAuth } from "@/src/context/AuthContext";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
+import { RemindDateSheet } from "@/src/components/remind-date-sheet";
 import { aepsReceiptDoc, receiptDoc, statementDoc, reminderDoc, type ShareDoc } from "@/src/lib/receipt";
 import { DataLoadError } from "@/src/components/slow-server-hint";
 import { UpiQrModal } from "@/src/components/upi-qr-sheet";
@@ -57,6 +58,7 @@ export default function CustomerDetail() {
   const [qrModal, setQrModal] = useState(false);
   const [stmt, setStmt] = useState<StmtRange | null>(null);
   const [more, setMore] = useState(false);
+  const [remindSheet, setRemindSheet] = useState(false);
 
   useEffect(() => {
     if (id) void addRecentCustomer(id);
@@ -159,6 +161,7 @@ export default function CustomerDetail() {
     moreActions.push(
       { key: "remind", label: "तगादा भेजें", icon: "message-alert-outline", color: semantic.pending, run: openReminder },
       { key: "qr", label: "QR से पेमेंट लें", icon: "qrcode-scan", run: () => setQrModal(true) },
+      { key: "remindOn", label: customer.remindOn ? "वसूली की तारीख बदलें" : "वसूली की तारीख (याद दिलाएँ)", icon: "bell-ring-outline", run: () => setRemindSheet(true) },
     );
   }
   if (entries.length > 0) moreActions.push({ key: "stmt", label: "पूरा हिसाब भेजें (PDF / WhatsApp)", icon: "file-document-outline", run: openStatement });
@@ -218,6 +221,16 @@ export default function CustomerDetail() {
               label={`उधार सीमा ${formatINR(customer.creditLimit!)}${due > customer.creditLimit! ? ` · ${formatINR(due - customer.creditLimit!)} पार` : ""}`}
               style={[styles.breakdown, { marginTop: spacing.sm }]}
             />
+          ) : null}
+          {due > 0 && customer.remindOn ? (
+            <Pressable onPress={() => setRemindSheet(true)} hitSlop={6} testID="cust-remind-on">
+              <IconLabel
+                icon="bell-ring-outline"
+                color={customer.remindOn <= todayISO() ? semantic.due : semantic.pending}
+                label={`वसूली ${customer.remindOn === todayISO() ? "आज" : formatDate(customer.remindOn)}${customer.remindOn < todayISO() ? " · तारीख निकल गई" : ""}`}
+                style={[styles.breakdown, { marginTop: spacing.sm }]}
+              />
+            </Pressable>
           ) : null}
           {customer.notes ? <Text style={styles.notes}>{customer.notes}</Text> : null}
         </View>
@@ -360,6 +373,7 @@ export default function CustomerDetail() {
         onDelete={() => { store.deleteCustomer(customer.id); router.back(); }}
       />
       <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
+      <RemindDateSheet customer={customer} visible={remindSheet} onClose={() => setRemindSheet(false)} />
       <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
       <ReceiptSheet
         doc={stmtDoc}

@@ -68,6 +68,12 @@
       "@react-native-vector-icons/material-design-icons",
       "@react-native-google-signin/google-signin",
       "expo-local-authentication",
+      [
+        "expo-notifications",
+        {
+          "color": "#00796B"
+        }
+      ],
       "./plugins/with-recents-privacy",
       [
         "expo-image-picker",

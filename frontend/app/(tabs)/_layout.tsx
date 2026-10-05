@@ -7,9 +7,11 @@ import * as Haptics from "expo-haptics";
 import { useFoldLegacyCashRows } from "@/src/lib/records";
 import { useCounterMode } from "@/src/lib/counter";
 import { usePersona } from "@/src/lib/persona";
+import { useUdhaarReminders } from "@/src/lib/notify";
 
 function LedgerMaintenance() {
   useFoldLegacyCashRows();
+  useUdhaarReminders();
   return null;
 }
 

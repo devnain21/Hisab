@@ -12,6 +12,8 @@ export type Customer = {
   persona?: "business" | "personal";
   /** Udhaar ceiling in rupees; 0 / missing = no limit. */
   creditLimit?: number;
+  /** Day to chase the udhaar (YYYY-MM-DD); "" / missing = none. */
+  remindOn?: string;
   createdAt: string;
 };
 // work: service done · payment: money received from them · given: money handed to them (loan, or

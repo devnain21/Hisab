@@ -18,6 +18,7 @@ import { resetRecentCustomers } from "@/src/lib/recent";
 import { disableLock } from "@/src/lib/app-lock";
 import { reloadPrefs } from "@/src/lib/prefs";
 import { startSettingsSync, stopSettingsSync } from "@/src/lib/settings-sync";
+import { clearUdhaarReminders } from "@/src/lib/notify";
 import { reloadBudget } from "@/src/lib/budget";
 import { queryClient } from "@/src/query-client";
 
@@ -217,6 +218,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = useCallback(async () => {
     const uid = isFirebaseConfigured() ? getFirebaseAuth().currentUser?.uid : undefined;
     stopSettingsSync();
+    void clearUdhaarReminders();
     // Changes not yet on the server would otherwise be lost; they come back when this account signs in again.
     if (uid) {
       await parkOutbox(uid);

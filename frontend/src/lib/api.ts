@@ -77,6 +77,10 @@ export const api = {
   updateMe: (b: { shop_name: string; shop_phone?: string; shop_address?: string; shop_gst?: string; shop_upi?: string; owner_name?: string; persona?: string }) =>
     req("/auth/me", { method: "PUT", body: JSON.stringify(b) }),
   logout: () => req("/auth/logout", { method: "POST" }),
+  ledgerUrl: (token: string) => `${BASE}/l/${token}`,
+  getLedgerLink: (customerId: string): Promise<{ token: string }> => req(`/customers/${customerId}/ledger-link`),
+  createLedgerLink: (customerId: string): Promise<{ token: string }> => req(`/customers/${customerId}/ledger-link`, { method: "POST" }),
+  revokeLedgerLink: (customerId: string) => req(`/customers/${customerId}/ledger-link`, { method: "DELETE" }),
   getHistory: (coll: string, id: string): Promise<{ at: string; changes: Record<string, [unknown, unknown]> }[]> =>
     req(`/history/${coll}/${encodeURIComponent(id)}`),
   listArchive: (): Promise<{ coll: string; id: string; deletedAt: string; doc: Record<string, unknown> }[]> => req("/archive"),

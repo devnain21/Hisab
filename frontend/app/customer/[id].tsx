@@ -16,6 +16,7 @@ import { Amount, Button, IconButton, IconLabel, type IconName } from "@/src/comp
 import { useAuth } from "@/src/context/AuthContext";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import { RemindDateSheet } from "@/src/components/remind-date-sheet";
+import { LedgerLinkSheet } from "@/src/components/ledger-link-sheet";
 import { aepsReceiptDoc, receiptDoc, statementDoc, reminderDoc, type ShareDoc } from "@/src/lib/receipt";
 import { DataLoadError } from "@/src/components/slow-server-hint";
 import { UpiQrModal } from "@/src/components/upi-qr-sheet";
@@ -59,6 +60,7 @@ export default function CustomerDetail() {
   const [stmt, setStmt] = useState<StmtRange | null>(null);
   const [more, setMore] = useState(false);
   const [remindSheet, setRemindSheet] = useState(false);
+  const [ledgerSheet, setLedgerSheet] = useState(false);
 
   useEffect(() => {
     if (id) void addRecentCustomer(id);
@@ -164,7 +166,12 @@ export default function CustomerDetail() {
       { key: "remindOn", label: customer.remindOn ? "वसूली की तारीख बदलें" : "वसूली की तारीख (याद दिलाएँ)", icon: "bell-ring-outline", run: () => setRemindSheet(true) },
     );
   }
-  if (entries.length > 0) moreActions.push({ key: "stmt", label: "पूरा हिसाब भेजें (PDF / WhatsApp)", icon: "file-document-outline", run: openStatement });
+  if (entries.length > 0) {
+    moreActions.push(
+      { key: "stmt", label: "पूरा हिसाब भेजें (PDF / WhatsApp)", icon: "file-document-outline", run: openStatement },
+      { key: "ledger", label: "हिसाब का लिंक (ग्राहक खुद देखे)", icon: "link-variant", run: () => setLedgerSheet(true) },
+    );
+  }
   moreActions.push({ key: "edit", label: "नाम / फ़ोन बदलें", icon: "pencil-outline", run: () => setEditSheet(true) });
   // Opening the next sheet only after this one has slid away avoids two modals fighting on iOS.
   const pickMore = (a: Action) => {
@@ -374,6 +381,7 @@ export default function CustomerDetail() {
       />
       <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
       <RemindDateSheet customer={customer} visible={remindSheet} onClose={() => setRemindSheet(false)} />
+      <LedgerLinkSheet customer={customer} due={due} shopName={user?.shop_name ?? ""} visible={ledgerSheet} onClose={() => setLedgerSheet(false)} />
       <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
       <ReceiptSheet
         doc={stmtDoc}

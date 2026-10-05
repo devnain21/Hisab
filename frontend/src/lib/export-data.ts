@@ -33,15 +33,18 @@ export async function exportFullLedgerCsv(params: {
   shop?: Partial<ShopProfile> | null;
   /** Limit the file to one book; both books when left out. */
   only?: Persona;
+  /** Rows of these days only (monthly report); balances still count every day. */
+  range?: { from: string; to: string; label: string };
 }): Promise<void> {
-  const { shop, only } = params;
+  const { shop, only, range } = params;
   const inBook = (p: Persona) => !only || p === only;
+  const inRange = (d: string) => !range || (d >= range.from && d <= range.to);
   const customers = params.customers.filter((c) => inBook(c.persona === "personal" ? "personal" : "business"));
   const ids = new Set(customers.map((c) => c.id));
   const entries = params.entries.filter((e) => ids.has(e.customerId));
-  const aeps = only === "personal" ? [] : params.aeps;
-  const expenses = params.expenses.filter((x) => inBook(expensePersona(x)));
-  const moves = params.moves.filter((m) => !only || m.from.startsWith(only) || m.to.startsWith(only));
+  const aeps = (only === "personal" ? [] : params.aeps).filter((t) => inRange(t.date));
+  const expenses = params.expenses.filter((x) => inBook(expensePersona(x)) && inRange(x.date));
+  const moves = params.moves.filter((m) => (!only || m.from.startsWith(only) || m.to.startsWith(only)) && inRange(m.date));
   const bookOf = (c?: Customer) => (c?.persona === "personal" ? "निजी" : "दुकान");
   const shopName = shop?.shop_name || "हिसाब बही खाता";
   const dateStr = todayISO();
@@ -53,6 +56,7 @@ export async function exportFullLedgerCsv(params: {
 
   // Shop & Metadata Header
   lines.push(`${escapeCsv(shopName)} - ${only === "personal" ? "निजी खाता" : only === "business" ? "दुकान खाता" : "सम्पूर्ण बही खाता"} बैकअप`);
+  if (range) lines.push(escapeCsv(`महीना: ${range.label} (${range.from} से ${range.to}) · बकाया आज तक का`));
   lines.push(`डाउनलोड तिथि: ${dateStr}`);
   if (shop?.shop_phone) lines.push(["फ़ोन", textNum(shop.shop_phone)].map(escapeCsv).join(","));
   lines.push("");
@@ -88,7 +92,7 @@ export async function exportFullLedgerCsv(params: {
   const custMap = new Map(customers.map((c) => [c.id, c]));
   const entryIds = new Set(entries.map((e) => e.id));
   const aepsIds = new Set(params.aeps.map((t) => t.id));
-  const sortedEntries = [...entries].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
+  const sortedEntries = entries.filter((e) => inRange(e.date)).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
 
   sortedEntries.forEach((e, i) => {
     const cust = custMap.get(e.customerId);
@@ -191,7 +195,7 @@ export async function exportFullLedgerCsv(params: {
   }
 
   const csvContent = lines.join("\r\n");
-  const fileName = `Hisab_${only === "personal" ? "Niji_" : only === "business" ? "Dukan_" : ""}${dateStr}.csv`;
+  const fileName = `Hisab_${only === "personal" ? "Niji_" : only === "business" ? "Dukan_" : ""}${range ? `Mahina_${range.from.slice(0, 7)}` : dateStr}.csv`;
 
   if (Platform.OS === "web") {
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });

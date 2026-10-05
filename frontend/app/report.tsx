@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Alert } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, radius, spacing } from "@/src/theme";
@@ -15,6 +15,7 @@ import { useBudget } from "@/src/lib/budget";
 import { useAuth } from "@/src/context/AuthContext";
 import { pdfSupported, reportDoc, sharePdf, type Line } from "@/src/lib/receipt";
 import { shareMessage } from "@/src/lib/share-text";
+import { exportFullLedgerCsv } from "@/src/lib/export-data";
 import { TERMS, balanceTerm } from "@/src/lib/terms";
 
 type Book = ReturnType<typeof useMoneyBook>;
@@ -97,7 +98,8 @@ export default function ReportScreen() {
   const book = useMoneyBook();
   const budget = useBudget();
   const today = todayISO();
-  const [offset, setOffset] = useState(0);
+  const { month } = useLocalSearchParams<{ month?: string }>();
+  const [offset, setOffset] = useState(month === "prev" ? -1 : 0);
   const [sharing, setSharing] = useState(false);
 
   const range = monthRange(today, offset);
@@ -158,6 +160,18 @@ export default function ReportScreen() {
     }
   };
 
+  const shareCsv = async () => {
+    if (sharing) return;
+    setSharing(true);
+    try {
+      await exportFullLedgerCsv({ ...book, jobs: [], shop: user, only: persona, range: { ...range, label: period } });
+    } catch {
+      Alert.alert("फ़ाइल नहीं बन पाई", "दोबारा कोशिश करें।");
+    } finally {
+      setSharing(false);
+    }
+  };
+
   const maxCat = now.byCat[0]?.[1] ?? 0;
   const monthBudget = isPersonal && isCurrent ? budget.total : 0;
 
@@ -168,7 +182,10 @@ export default function ReportScreen() {
           <MaterialIcon name="arrow-left" size={26} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.topTitle}>महीने की रिपोर्ट</Text>
-        <Pressable onPress={sharePdfDoc} hitSlop={8} disabled={sharing} testID="report-pdf">
+        <Pressable onPress={shareCsv} hitSlop={8} disabled={sharing} style={{ marginRight: spacing.md }} accessibilityLabel="Excel फ़ाइल भेजें" testID="report-csv">
+          <MaterialIcon name="microsoft-excel" size={26} color={colors.success} />
+        </Pressable>
+        <Pressable onPress={sharePdfDoc} hitSlop={8} disabled={sharing} accessibilityLabel="PDF भेजें" testID="report-pdf">
           {sharing ? <ActivityIndicator size="small" color={colors.brandPrimary} /> : <MaterialIcon name="file-pdf-box" size={26} color={colors.brandPrimary} />}
         </Pressable>
       </View>

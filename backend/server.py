@@ -1,5 +1,9 @@
 from fastapi import FastAPI, APIRouter, Header, HTTPException, Depends
+from fastapi.responses import HTMLResponse
 from dotenv import load_dotenv
+from html import escape
+from urllib.parse import quote
+import secrets
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -954,6 +958,135 @@ async def delete_move(move_id: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
+# --- Customer ledger link: a read-only page the customer opens without signing in ---
+async def _own_customer(customer_id: str, user: dict) -> dict:
+    c = await db.customers.find_one({"id": customer_id, "user_id": user["user_id"]}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Not found")
+    return c
+
+
+@api_router.get("/customers/{customer_id}/ledger-link")
+async def get_ledger_link(customer_id: str, user: dict = Depends(get_current_user)):
+    await _own_customer(customer_id, user)
+    doc = await db.ledger_links.find_one({"user_id": user["user_id"], "customerId": customer_id}, {"_id": 0, "token": 1})
+    return {"token": doc["token"] if doc else ""}
+
+
+@api_router.post("/customers/{customer_id}/ledger-link")
+async def create_ledger_link(customer_id: str, user: dict = Depends(get_current_user)):
+    await _own_customer(customer_id, user)
+    existing = await db.ledger_links.find_one({"user_id": user["user_id"], "customerId": customer_id}, {"_id": 0, "token": 1})
+    if existing:
+        return {"token": existing["token"]}
+    token = secrets.token_urlsafe(16)
+    await db.ledger_links.insert_one({"token": token, "user_id": user["user_id"], "customerId": customer_id, "createdAt": _now()})
+    return {"token": token}
+
+
+@api_router.delete("/customers/{customer_id}/ledger-link")
+async def revoke_ledger_link(customer_id: str, user: dict = Depends(get_current_user)):
+    await db.ledger_links.delete_many({"user_id": user["user_id"], "customerId": customer_id})
+    return {"ok": True}
+
+
+def _entry_delta(e: dict) -> float:
+    amount, paid, kind = e.get("amount") or 0, e.get("paid") or 0, e.get("type")
+    if kind == "work":
+        return amount - paid
+    if kind == "purchase":
+        return -(amount - paid)
+    if kind in ("aeps", "given"):
+        return amount
+    return -amount
+
+
+ENTRY_WORDS = {"work": "काम", "payment": "पैसे मिले", "given": "पैसे दिए", "purchase": "सामान लिया", "aeps": "काउंटर सेवा"}
+LEDGER_CSS = """
+body{margin:0;font-family:system-ui,-apple-system,'Noto Sans Devanagari',sans-serif;background:#FDFBF7;color:#1f2937}
+.wrap{max-width:560px;margin:0 auto;padding:20px 16px 40px}
+.shop{font-size:14px;color:#6b7280}.shop b{color:#00796B;font-size:18px;display:block}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:18px;margin:16px 0}
+.label{font-size:13px;color:#6b7280}.big{font-size:34px;font-weight:800;margin-top:4px}
+.due{color:#B91C1C}.ok{color:#047857}
+.pay{display:block;text-align:center;background:#00796B;color:#fff;text-decoration:none;font-weight:700;padding:14px;border-radius:12px;margin-top:14px}
+.row{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid #f1f5f9}
+.row:last-child{border-bottom:0}.d{font-size:12px;color:#6b7280}.t{font-size:15px;font-weight:600}
+.amt{font-weight:700;white-space:nowrap}.foot{font-size:12px;color:#9ca3af;text-align:center;margin-top:24px}
+"""
+
+
+def _inr(n: float) -> str:
+    n = round(n, 2)
+    whole, frac = divmod(abs(n), 1)
+    s = f"{int(whole):d}"
+    if len(s) > 3:
+        head, tail = s[:-3], s[-3:]
+        head = ",".join([head[max(0, i - 2):i] for i in range(len(head), 0, -2)][::-1])
+        s = f"{head},{tail}"
+    if frac:
+        s += f".{round(frac * 100):02d}"
+    return f"₹{s}"
+
+
+def _ledger_page(body: str, status: int = 200) -> HTMLResponse:
+    html = (
+        "<!doctype html><html lang='hi'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta name='robots' content='noindex,nofollow'><title>हिसाब</title>"
+        f"<style>{LEDGER_CSS}</style></head><body><div class='wrap'>{body}</div></body></html>"
+    )
+    return HTMLResponse(html, status_code=status, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+
+@app.get("/l/{token}", include_in_schema=False)
+async def public_ledger(token: str):
+    link = await db.ledger_links.find_one({"token": token}) if len(token) <= 64 else None
+    customer = link and await db.customers.find_one({"id": link["customerId"], "user_id": link["user_id"]})
+    if not customer:
+        return _ledger_page("<div class='card'><div class='t'>यह लिंक अब चालू नहीं है।</div><div class='d'>दुकान से नया लिंक माँगें।</div></div>", 404)
+    owner = await db.users.find_one({"user_id": link["user_id"]}) or {}
+    entries = await db.entries.find({"user_id": link["user_id"], "customerId": customer["id"]}, {"_id": 0}).to_list(None)
+    due = round(sum(_entry_delta(e) for e in entries), 2)
+    entries.sort(key=lambda e: (e.get("date", ""), e.get("createdAt", "")), reverse=True)
+
+    shop = escape(owner.get("shop_name") or owner.get("name") or "दुकान")
+    phone = escape(owner.get("shop_phone") or "")
+    upi = (owner.get("shop_upi") or "").strip()
+    if due > 0:
+        head = f"<div class='label'>आपको देने हैं</div><div class='big due'>{_inr(due)}</div>"
+    elif due < 0:
+        head = f"<div class='label'>आपका जमा</div><div class='big ok'>{_inr(-due)}</div>"
+    else:
+        head = "<div class='label'>हिसाब</div><div class='big ok'>बराबर ✓</div>"
+    if due > 0 and upi:
+        pay_url = f"upi://pay?pa={quote(upi)}&pn={quote(owner.get('shop_name') or 'Shop')}&am={due:.2f}&cu=INR"
+        head += f"<a class='pay' href='{escape(pay_url)}'>UPI से {_inr(due)} भेजें</a>"
+
+    rows = []
+    for e in entries[:200]:
+        delta = _entry_delta(e)
+        word = ENTRY_WORDS.get(e.get("type"), "")
+        desc = escape(e.get("description") or "")
+        paid = e.get("paid") or 0
+        extra = f" · {_inr(e.get('amount') or 0)} में से {_inr(paid)} उसी समय मिले" if e.get("type") == "work" and paid else ""
+        cls = "due" if delta > 0 else "ok"
+        sign = "+" if delta > 0 else "−" if delta < 0 else ""
+        rows.append(
+            f"<div class='row'><div><div class='t'>{escape(word)}{' · ' + desc if desc else ''}</div>"
+            f"<div class='d'>{escape(e.get('date', ''))}{extra}</div></div>"
+            f"<div class='amt {cls}'>{sign}{_inr(abs(delta)) if delta else _inr(e.get('amount') or 0)}</div></div>"
+        )
+    more = f"<div class='d'>पुरानी {len(entries) - 200} एंट्री नहीं दिखाई गईं</div>" if len(entries) > 200 else ""
+    body = (
+        f"<div class='shop'><b>{shop}</b>{phone}</div>"
+        f"<div class='card'><div class='label'>{escape(customer.get('name', ''))}</div>{head}</div>"
+        f"<div class='card'>{''.join(rows) or '<div class=d>अभी कोई एंट्री नहीं</div>'}{more}</div>"
+        f"<div class='foot'>यह हिसाब {shop} ने भेजा है · सिर्फ़ देखने के लिए</div>"
+    )
+    return _ledger_page(body)
+
+
 @api_router.get("/")
 async def root():
     return {"message": "Nain Hisab API"}
@@ -988,6 +1121,8 @@ async def startup():
     await db.deleted_items.create_index("deletedAt", expireAfterSeconds=60 * 60 * 24 * 180)
     await db.settings.create_index("user_id", unique=True)
     await db.edit_history.create_index([("user_id", 1), ("coll", 1), ("id", 1), ("at", -1)])
+    await db.ledger_links.create_index("token", unique=True)
+    await db.ledger_links.create_index([("user_id", 1), ("customerId", 1)])
     await _repair_null_created_at()
 
 

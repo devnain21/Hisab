@@ -3,7 +3,8 @@ import { Platform } from "react-native";
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { queryClient } from "@/src/query-client";
-import { store, type Coll } from "@/src/lib/store";
+import { api } from "@/src/lib/api";
+import { store, withPending, type Coll } from "@/src/lib/store";
 import { todayISO } from "@/src/lib/format";
 
 const COLLS: Coll[] = ["customers", "entries", "jobs", "aeps", "expenses", "moves"];
@@ -14,7 +15,28 @@ type BackupFile = { format: typeof FORMAT; version: 1; exportedAt: string; data:
 
 const rowsOf = (coll: Coll) => queryClient.getQueryData<Row[]>([coll]) ?? [];
 
+const LIST: Record<Coll, () => Promise<unknown>> = {
+  customers: api.listCustomers,
+  entries: api.listEntries,
+  jobs: api.listJobs,
+  aeps: api.listAeps,
+  expenses: api.listExpenses,
+  moves: api.listMoves,
+};
+
+/** Lists no screen has opened yet aren't in the cache; fetch them so the backup isn't silently missing them. */
+async function loadAll(): Promise<void> {
+  await Promise.allSettled(
+    COLLS.filter((c) => queryClient.getQueryData([c]) === undefined).map((c) =>
+      queryClient.fetchQuery({ queryKey: [c], queryFn: async () => withPending(c, (await LIST[c]()) as Row[]) }),
+    ),
+  );
+}
+
 export async function exportBackupJson(shopName: string): Promise<void> {
+  await loadAll();
+  const missing = COLLS.filter((c) => queryClient.getQueryData([c]) === undefined);
+  if (missing.length) throw new Error("backup-incomplete");
   const data = Object.fromEntries(COLLS.map((c) => [c, rowsOf(c)])) as Record<Coll, Row[]>;
   const body: BackupFile = { format: FORMAT, version: 1, exportedAt: new Date().toISOString(), data };
   const json = JSON.stringify(body);

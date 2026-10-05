@@ -6,7 +6,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { AppLockGate } from "@/src/components/app-lock";
-import { CACHE_MAX_AGE, queryClient, queryPersister } from "@/src/query-client";
+import { CACHE_BUSTER, CACHE_MAX_AGE, queryClient, queryPersister } from "@/src/query-client";
 import { AuthProvider } from "@/src/context/AuthContext";
 import { wakeBackend } from "@/src/lib/api";
 import { pruneDailyKeys } from "@/src/lib/daily-keys";
@@ -20,7 +20,7 @@ setTimeout(() => void pruneDailyKeys(), 8000);
 export default function RootLayout() {
   return (
     <ErrorBoundary>
-      <PersistQueryClientProvider client={queryClient} persistOptions={{ persister: queryPersister, maxAge: CACHE_MAX_AGE }}>
+      <PersistQueryClientProvider client={queryClient} persistOptions={{ persister: queryPersister, maxAge: CACHE_MAX_AGE, buster: CACHE_BUSTER }}>
         <SafeAreaProvider>
           <KeyboardProvider>
             <AuthProvider>

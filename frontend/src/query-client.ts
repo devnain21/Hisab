@@ -8,11 +8,15 @@ import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persi
 import { fileStore } from "@/src/lib/file-store";
 
 export const CACHE_MAX_AGE = 1000 * 60 * 60 * 24 * 30;
+/** Bump when the saved row shape changes, so an old cache is dropped instead of crashing the new code.
+ *  "" is the value existing caches were saved with; changing it empties every phone's offline copy once. */
+export const CACHE_BUSTER = "";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
+      // Each foreground refetches all six full lists; not more often than this.
+      staleTime: 2 * 60_000,
       gcTime: CACHE_MAX_AGE,
       retry: 3,
       retryDelay: (n) => Math.min(2000 * 2 ** n, 15_000),

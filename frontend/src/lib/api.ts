@@ -67,6 +67,9 @@ export async function serverIsUp() {
   }
 }
 
+/** Which saved copy an edit was made from, so the server won't overwrite a newer one from another device. */
+const based = (base?: string): Record<string, string> => (base ? { "X-Base-Updated-At": base } : {});
+
 export const api = {
   login: (id_token: string) =>
     req("/auth/login", { method: "POST", body: JSON.stringify({ id_token }) }),
@@ -77,30 +80,30 @@ export const api = {
   closeShop: () => req("/shop/close", { method: "POST" }),
   listCustomers: () => req("/customers"),
   createCustomer: (b: unknown) => req("/customers", { method: "POST", body: JSON.stringify(b) }),
-  updateCustomer: (id: string, b: unknown) => req(`/customers/${id}`, { method: "PUT", body: JSON.stringify(b) }),
+  updateCustomer: (id: string, b: unknown, base?: string) => req(`/customers/${id}`, { method: "PUT", body: JSON.stringify(b), headers: based(base) }),
   deleteCustomer: (id: string) => req(`/customers/${id}`, { method: "DELETE" }),
   listEntries: () => req("/entries"),
   createEntry: (b: unknown) => req("/entries", { method: "POST", body: JSON.stringify(b) }),
-  updateEntry: (id: string, b: unknown) => req(`/entries/${id}`, { method: "PUT", body: JSON.stringify(b) }),
+  updateEntry: (id: string, b: unknown, base?: string) => req(`/entries/${id}`, { method: "PUT", body: JSON.stringify(b), headers: based(base) }),
   deleteEntry: (id: string) => req(`/entries/${id}`, { method: "DELETE" }),
   listJobs: () => req("/jobs"),
   createJob: (b: unknown) => req("/jobs", { method: "POST", body: JSON.stringify(b) }),
-  updateJob: (id: string, b: unknown) => req(`/jobs/${id}`, { method: "PUT", body: JSON.stringify(b) }),
+  updateJob: (id: string, b: unknown, base?: string) => req(`/jobs/${id}`, { method: "PUT", body: JSON.stringify(b), headers: based(base) }),
   deleteJob: (id: string) => req(`/jobs/${id}`, { method: "DELETE" }),
   listAeps: () => req("/aeps"),
   createAeps: (b: unknown) => req("/aeps", { method: "POST", body: JSON.stringify(b) }),
-  updateAeps: (id: string, b: unknown) => req(`/aeps/${id}`, { method: "PUT", body: JSON.stringify(b) }),
+  updateAeps: (id: string, b: unknown, base?: string) => req(`/aeps/${id}`, { method: "PUT", body: JSON.stringify(b), headers: based(base) }),
   deleteAeps: (id: string) => req(`/aeps/${id}`, { method: "DELETE" }),
   listExpenses: () => req("/expenses"),
   createExpense: (b: unknown) => req("/expenses", { method: "POST", body: JSON.stringify(b) }),
-  updateExpense: (id: string, b: unknown) => req(`/expenses/${id}`, { method: "PUT", body: JSON.stringify(b) }),
+  updateExpense: (id: string, b: unknown, base?: string) => req(`/expenses/${id}`, { method: "PUT", body: JSON.stringify(b), headers: based(base) }),
   deleteExpense: (id: string) => req(`/expenses/${id}`, { method: "DELETE" }),
   // The server names the move ends src/dst; the app uses from/to.
   listMoves: async () =>
     ((await req("/moves")) as ({ src: string; dst: string } & Record<string, unknown>)[]).map(({ src, dst, ...m }) => ({ ...m, from: src, to: dst })),
   createMove: ({ from, to, ...m }: { from: string; to: string } & Record<string, unknown>) =>
     req("/moves", { method: "POST", body: JSON.stringify({ ...m, src: from, dst: to }) }),
-  updateMove: (id: string, { from, to, ...m }: { from: string; to: string } & Record<string, unknown>) =>
-    req(`/moves/${id}`, { method: "PUT", body: JSON.stringify({ ...m, src: from, dst: to }) }),
+  updateMove: (id: string, { from, to, ...m }: { from: string; to: string } & Record<string, unknown>, base?: string) =>
+    req(`/moves/${id}`, { method: "PUT", body: JSON.stringify({ ...m, src: from, dst: to }), headers: based(base) }),
   deleteMove: (id: string) => req(`/moves/${id}`, { method: "DELETE" }),
 };

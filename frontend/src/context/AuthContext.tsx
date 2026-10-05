@@ -16,6 +16,8 @@ import { clearFileStore } from "@/src/lib/file-store";
 import { resetTrashMemory } from "@/src/lib/trash";
 import { resetRecentCustomers } from "@/src/lib/recent";
 import { disableLock } from "@/src/lib/app-lock";
+import { reloadPrefs } from "@/src/lib/prefs";
+import { reloadBudget } from "@/src/lib/budget";
 import { queryClient } from "@/src/query-client";
 
 if (Platform.OS !== "web") {
@@ -62,6 +64,31 @@ function writeCachedProfile(uid: string, user: User) {
 // Account the data on this phone belongs to; under the "hisab_" prefix so a wipe clears it too.
 const OWNER_KEY = "hisab_owner_uid";
 
+// Phone-only settings (slip logo and note, reminder text, lock timer, budget, mode) aren't on the server;
+// they wait outside the "hisab_" prefix until the same account signs in again.
+const SETTINGS_KEYS = ["hisab_prefs_v1", "hisab_personal_budget_v1", "hisab_persona_v1"];
+const PARKED_SETTINGS = "parked_settings_";
+
+async function parkSettings(uid: string) {
+  try {
+    const pairs = (await AsyncStorage.multiGet(SETTINGS_KEYS)).filter(([, v]) => v != null);
+    if (pairs.length) await AsyncStorage.setItem(PARKED_SETTINGS + uid, JSON.stringify(Object.fromEntries(pairs)));
+  } catch {}
+}
+
+async function unparkSettings(uid: string) {
+  try {
+    const raw = await AsyncStorage.getItem(PARKED_SETTINGS + uid);
+    if (!raw) return;
+    const saved = JSON.parse(raw) as Record<string, string>;
+    const have = new Set((await AsyncStorage.multiGet(SETTINGS_KEYS)).filter(([, v]) => v != null).map(([k]) => k));
+    const back = Object.entries(saved).filter(([k, v]) => SETTINGS_KEYS.includes(k) && typeof v === "string" && !have.has(k));
+    if (back.length) await AsyncStorage.multiSet(back);
+    await AsyncStorage.removeItem(PARKED_SETTINGS + uid);
+  } catch {}
+  await Promise.all([reloadPrefs(), reloadBudget()]);
+}
+
 /** The next person to sign in on this device must not see this khata or inherit its PIN. */
 async function wipeLocalData() {
   await clearOutbox();
@@ -75,6 +102,7 @@ async function wipeLocalData() {
   await clearFileStore();
   resetTrashMemory();
   resetRecentCustomers();
+  await Promise.all([reloadPrefs(), reloadBudget()]);
   await disableLock().catch(() => {});
 }
 
@@ -116,12 +144,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const owner = await AsyncStorage.getItem(OWNER_KEY).catch(() => null);
       if (owner && owner !== fbUser.uid) {
         await parkOutbox(owner);
+        await parkSettings(owner);
         await wipeLocalData();
       }
       await AsyncStorage.setItem(OWNER_KEY, fbUser.uid).catch(() => {});
       // The free backend can take up to a minute to wake up (or we may be offline), so don't block on it.
       const cached = await readCachedProfile(fbUser.uid);
       await unparkOutbox(fbUser.uid);
+      await unparkSettings(fbUser.uid);
       setState({ status: "authenticated", user: cached ?? mapFirebaseUser(fbUser) });
       setSyncEnabled(true);
       try {
@@ -184,7 +214,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = useCallback(async () => {
     const uid = isFirebaseConfigured() ? getFirebaseAuth().currentUser?.uid : undefined;
     // Changes not yet on the server would otherwise be lost; they come back when this account signs in again.
-    if (uid) await parkOutbox(uid);
+    if (uid) {
+      await parkOutbox(uid);
+      await parkSettings(uid);
+    }
     try {
       await api.logout();
     } catch {}

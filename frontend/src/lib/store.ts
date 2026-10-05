@@ -15,7 +15,8 @@ import { fileStore } from "@/src/lib/file-store";
 export type Coll = "customers" | "entries" | "jobs" | "aeps" | "expenses" | "moves";
 type Op =
   | { kind: "create"; coll: Coll; item: { id: string } & Record<string, unknown> }
-  | { kind: "update"; coll: Coll; itemId: string; patch: Record<string, unknown> }
+  // `base`: the server copy (updatedAt) this edit was made from; a newer copy saved elsewhere is not overwritten.
+  | { kind: "update"; coll: Coll; itemId: string; patch: Record<string, unknown>; base?: string }
   | { kind: "delete"; coll: Coll; itemId: string };
 
 const KEY = "hisab_outbox_v1";
@@ -77,7 +78,15 @@ export async function withPending<T extends { id: string; customerId?: string }>
   return ops.reduce((acc, op) => applyOp(coll, acc, op), rows);
 }
 
+const savedVersion = (coll: Coll, id: string): string | undefined =>
+  (queryClient.getQueryData<{ id: string; updatedAt?: string }[]>([coll]) ?? []).find((x) => x.id === id)?.updatedAt;
+
 function enqueue(op: Op) {
+  if (op.kind === "update") {
+    // Rows copied from the cache carry an old updatedAt; it must never overwrite the server's.
+    const { updatedAt: _stale, ...patch } = op.patch;
+    op = { ...op, patch, base: op.base ?? savedVersion(op.coll, op.itemId) };
+  }
   ops.push(op);
   persist();
   for (const coll of COLLS) {
@@ -98,12 +107,12 @@ function send(op: Op): Promise<unknown> {
     return api.createJob(op.item);
   }
   if (op.kind === "update") {
-    if (op.coll === "customers") return api.updateCustomer(op.itemId, op.patch);
-    if (op.coll === "entries") return api.updateEntry(op.itemId, op.patch);
-    if (op.coll === "aeps") return api.updateAeps(op.itemId, op.patch);
-    if (op.coll === "expenses") return api.updateExpense(op.itemId, op.patch);
-    if (op.coll === "moves") return api.updateMove(op.itemId, op.patch as Record<string, unknown> & { from: string; to: string });
-    return api.updateJob(op.itemId, op.patch);
+    if (op.coll === "customers") return api.updateCustomer(op.itemId, op.patch, op.base);
+    if (op.coll === "entries") return api.updateEntry(op.itemId, op.patch, op.base);
+    if (op.coll === "aeps") return api.updateAeps(op.itemId, op.patch, op.base);
+    if (op.coll === "expenses") return api.updateExpense(op.itemId, op.patch, op.base);
+    if (op.coll === "moves") return api.updateMove(op.itemId, op.patch as Record<string, unknown> & { from: string; to: string }, op.base);
+    return api.updateJob(op.itemId, op.patch, op.base);
   }
   if (op.coll === "customers") return api.deleteCustomer(op.itemId);
   if (op.coll === "entries") return api.deleteEntry(op.itemId);
@@ -152,7 +161,8 @@ function describe(op: Op): string {
 }
 
 function reject(op: Op, status: number | undefined) {
-  rejected = [{ coll: op.coll, kind: op.kind, status, at: new Date().toISOString(), label: describe(op), op }, ...rejected].slice(0, MAX_REJECTED);
+  const label = describe(op) + (status === 409 ? " (दूसरे फ़ोन / वेबसाइट पर बदल चुका)" : "");
+  rejected = [{ coll: op.coll, kind: op.kind, status, at: new Date().toISOString(), label, op }, ...rejected].slice(0, MAX_REJECTED);
   if (rejectedLoaded) AsyncStorage.setItem(REJECTED_KEY, JSON.stringify(rejected)).catch(() => {});
 }
 
@@ -168,7 +178,14 @@ export function retryableRejectedCount() {
 /** Queue the set-aside changes again, oldest first; ones saved without their data stay listed. */
 export async function retryRejected() {
   await ensureLoaded();
-  const again = rejected.filter((r) => r.op).reverse().map((r) => r.op as Op);
+  // Sent again on purpose: an edit refused as out of date now replaces the newer copy.
+  const again = rejected
+    .filter((r) => r.op)
+    .reverse()
+    .map((r) => {
+      const op = r.op as Op;
+      return op.kind === "update" ? { ...op, base: undefined } : op;
+    });
   if (again.length === 0) return;
   rejected = rejected.filter((r) => !r.op);
   await AsyncStorage.setItem(REJECTED_KEY, JSON.stringify(rejected)).catch(() => {});
@@ -211,6 +228,13 @@ export function setSyncEnabled(on: boolean) {
   if (on) void flush();
 }
 
+/** Our own save is the newest copy now: later queued edits of the row, and the next ones, build on it. */
+function adoptVersion(op: Op, version: string) {
+  const id = op.kind === "create" ? op.item.id : op.kind === "update" ? op.itemId : "";
+  for (const o of ops) if (o !== op && o.kind === "update" && o.coll === op.coll && o.itemId === id) o.base = version;
+  queryClient.setQueryData<{ id: string; updatedAt?: string }[]>([op.coll], (old) => old?.map((x) => (x.id === id ? { ...x, updatedAt: version } : x)));
+}
+
 export async function flush() {
   await ensureLoaded();
   if (!syncEnabled || flushing || ops.length === 0) return;
@@ -227,8 +251,9 @@ export async function flush() {
       if (!syncEnabled) return;
       const op = ops[0];
       try {
-        await send(op);
+        const saved = (await send(op)) as { updatedAt?: string } | null;
         serverFails = 0;
+        if (op.kind !== "delete" && saved?.updatedAt) adoptVersion(op, saved.updatedAt);
       } catch (e) {
         const status = statusOf(e);
         // One change the server keeps crashing on must not hold back everything queued after it,

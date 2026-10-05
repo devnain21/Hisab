@@ -56,6 +56,13 @@ export async function loadPrefs(): Promise<Prefs> {
   return memory!;
 }
 
+/** Re-reads storage after sign-out wiped it or sign-in restored it. */
+export async function reloadPrefs() {
+  memory = null;
+  const p = await loadPrefs();
+  listeners.forEach((fn) => fn(p));
+}
+
 export function getPrefs(): Prefs {
   return memory ?? DEFAULTS;
 }

@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { isPersonalTask, useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
 import { formatDate, formatINR, todayISO } from "@/src/lib/format";
-import { buildAllLedgers, workForJob, type WorkStatus } from "@/src/lib/records";
+import { buildAllLedgers, workForJobs, type WorkStatus } from "@/src/lib/records";
 import { store } from "@/src/lib/store";
 import { AddEntrySheet, AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
@@ -52,15 +52,7 @@ function ShopWork() {
   const today = todayISO();
 
   const ledger = useMemo(() => buildAllLedgers(entries), [entries]);
-  const workOf = useMemo(() => {
-    const m = new Map<string, Entry>();
-    jobs.forEach((j) => {
-      if (j.status !== "done") return;
-      const w = workForJob(j, entries);
-      if (w) m.set(j.id, w);
-    });
-    return m;
-  }, [jobs, entries]);
+  const workOf = useMemo(() => workForJobs(jobs.filter((j) => j.status === "done"), entries), [jobs, entries]);
   const payOf = (j: Job) => {
     const w = workOf.get(j.id);
     return w ? ledger.get(w.id) : undefined;
@@ -70,7 +62,8 @@ function ShopWork() {
     if (params.filter && FILTERS.includes(params.filter)) setFilter(params.filter);
   }, [params.filter, params.t]);
 
-  const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? "ग्राहक" : "खुद का काम");
+  const nameById = useMemo(() => new Map(customers.map((c) => [c.id, c.name])), [customers]);
+  const nameOf = (id: string) => (id ? nameById.get(id) ?? "ग्राहक" : "खुद का काम");
   // Own tasks have no money side, so finishing one is a single tap.
   const complete = (j: Job) => (j.customerId ? setCompleting(j) : store.updateJob(j.id, { status: "done", dueDate: today }));
 

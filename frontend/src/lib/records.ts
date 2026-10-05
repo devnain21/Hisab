@@ -52,6 +52,24 @@ export function workForJob(job: Job, entries: Entry[]): Entry | undefined {
   return entries.find((e) => e.type === "work" && e.customerId === job.customerId && e.description === job.title && e.date === job.dueDate);
 }
 
+/** `workForJob` for many jobs at once: one pass over entries instead of one per job. Same first-match result. */
+export function workForJobs(jobs: Job[], entries: Entry[]): Map<string, Entry> {
+  const byId = new Map<string, Entry>();
+  const byKey = new Map<string, Entry>();
+  for (const e of entries) {
+    if (!byId.has(e.id)) byId.set(e.id, e);
+    if (e.type !== "work") continue;
+    const k = `${e.customerId}\u0000${e.description}\u0000${e.date}`;
+    if (!byKey.has(k)) byKey.set(k, e);
+  }
+  const out = new Map<string, Entry>();
+  for (const j of jobs) {
+    const w = j.entryId ? byId.get(j.entryId) : j.status === "done" ? byKey.get(`${j.customerId}\u0000${j.title}\u0000${j.dueDate}`) : undefined;
+    if (w) out.set(j.id, w);
+  }
+  return out;
+}
+
 export const ADVANCE = "एडवांस";
 
 /** Advance taken while booking a future job. Older rows carry no link, only the note. */

@@ -1,10 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { todayISO } from "@/src/lib/format";
 
-const DAILY_KEY = /^hisab_(?:counted_cash_[a-z]+|portal_bank)_(\d{4}-\d{2}-\d{2})$/;
+const DAILY_KEY = /^hisab_(?:counted_cash_[a-z]+|portal_bank|reconcile_[a-z]+:[a-z]+)_(\d{4}-\d{2}-\d{2})$/;
 const KEEP_DAYS = 60;
 
-/** Counted-cash and portal-balance notes are saved per day; drop the ones nobody will look at again. */
+/** Counted-cash, portal-balance and reconcile notes are saved per day; drop the ones nobody will look at again. */
 export async function pruneDailyKeys(): Promise<void> {
   try {
     const cutoff = todayISO(-KEEP_DAYS);

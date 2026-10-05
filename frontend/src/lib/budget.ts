@@ -21,6 +21,13 @@ async function load(): Promise<Budget> {
   return memory!;
 }
 
+/** Re-reads storage after sign-out wiped it or sign-in restored it. */
+export async function reloadBudget() {
+  memory = null;
+  const b = await load();
+  listeners.forEach((fn) => fn(b));
+}
+
 export async function saveBudget(b: Budget) {
   memory = b;
   listeners.forEach((fn) => fn(b));

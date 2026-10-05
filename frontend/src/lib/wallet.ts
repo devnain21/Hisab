@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import * as Crypto from "expo-crypto";
 import { api } from "./api";
 import { store, withPending } from "./store";
-import { isBackdated, todayISO } from "./format";
+import { isBackdated, roundMoney, todayISO } from "./format";
 import { isRepayment, useAeps, useCustomers, useEntries, type AepsTxn, type Customer, type Entry } from "./data";
 import { useExpenses, expensePersona, type Expense } from "./expenses";
 import { aepsLegs } from "./aeps";
@@ -54,8 +54,8 @@ async function uploadLocalMoves() {
   } catch {}
 }
 
-export async function addMove(m: Omit<Move, "id" | "createdAt">): Promise<Move> {
-  const item: Move = { ...m, id: Crypto.randomUUID(), createdAt: new Date().toISOString() };
+export async function addMove(m: Omit<Move, "id" | "createdAt">, createdAt?: string): Promise<Move> {
+  const item: Move = { ...m, id: Crypto.randomUUID(), createdAt: createdAt ?? new Date().toISOString() };
   store.createMove(item);
   return item;
 }
@@ -108,9 +108,10 @@ export type PocketFlow = {
 export type Flows = Record<Pocket, PocketFlow>;
 
 const emptyPocket = (): PocketFlow => ({ work: 0, received: 0, counterIn: 0, commission: 0, moveIn: 0, counterOut: 0, expense: 0, fee: 0, given: 0, purchase: 0, moveOut: 0 });
-export const pocketIn = (f: PocketFlow) => f.work + f.received + f.counterIn + f.commission + f.moveIn;
-export const pocketOut = (f: PocketFlow) => f.counterOut + f.expense + f.fee + f.given + f.purchase + f.moveOut;
-export const pocketNet = (f: PocketFlow) => pocketIn(f) - pocketOut(f);
+// Rounded to paise: summed paise amounts leave float noise that would read as "−₹0".
+export const pocketIn = (f: PocketFlow) => roundMoney(f.work + f.received + f.counterIn + f.commission + f.moveIn);
+export const pocketOut = (f: PocketFlow) => roundMoney(f.counterOut + f.expense + f.fee + f.given + f.purchase + f.moveOut);
+export const pocketNet = (f: PocketFlow) => roundMoney(pocketIn(f) - pocketOut(f)) + 0;
 
 type Book = { entries: Entry[]; customers: Customer[]; aeps: AepsTxn[]; expenses: Expense[]; moves: Move[] };
 

@@ -10,6 +10,7 @@ import type { AepsTxn, Customer, Entry, Job } from "@/src/lib/data";
 import type { Expense } from "@/src/lib/expenses";
 import type { Move } from "@/src/lib/wallet";
 import { bundleFor, putInTrash } from "@/src/lib/trash";
+import { fileStore } from "@/src/lib/file-store";
 
 export type Coll = "customers" | "entries" | "jobs" | "aeps" | "expenses" | "moves";
 type Op =
@@ -31,9 +32,11 @@ function notify() {
   listeners.forEach((l) => l());
 }
 
+// A file, not AsyncStorage: Android caps one AsyncStorage value at ~2 MB, which a long offline spell can cross.
 function ensureLoaded() {
   if (!loadPromise) {
-    loadPromise = AsyncStorage.getItem(KEY)
+    loadPromise = fileStore
+      .getItem(KEY)
       .then((raw) => {
         const saved: Op[] = raw ? JSON.parse(raw) : [];
         ops = [...saved, ...ops];
@@ -44,9 +47,12 @@ function ensureLoaded() {
   return loadPromise;
 }
 
+// Never written before the saved queue is read, or a change made at startup would overwrite it.
 function persist() {
-  AsyncStorage.setItem(KEY, JSON.stringify(ops)).catch(() => {});
+  void ensureLoaded().then(() => fileStore.setItem(KEY, JSON.stringify(ops)).catch(() => {}));
 }
+
+void ensureLoaded();
 
 function applyOp<T extends { id: string; customerId?: string }>(coll: Coll, list: T[], op: Op): T[] {
   if (op.kind === "delete" && op.coll === "customers" && coll !== "customers") {
@@ -252,13 +258,15 @@ export async function flush() {
 }
 
 export async function clearOutbox() {
+  // A load still in flight would otherwise bring the cleared changes back.
+  await ensureLoaded();
   ops = [];
   rejected = [];
   serverFails = 0;
   await AsyncStorage.removeItem(REJECTED_KEY).catch(() => {});
   if (retryTimer) clearTimeout(retryTimer);
   retryTimer = null;
-  await AsyncStorage.removeItem(KEY).catch(() => {});
+  await fileStore.removeItem(KEY).catch(() => {});
   notify();
 }
 
@@ -285,7 +293,7 @@ export async function unparkOutbox(uid: string) {
     await ensureLoaded();
     const parked: Op[] = JSON.parse(raw);
     ops = [...parked, ...ops];
-    await AsyncStorage.setItem(KEY, JSON.stringify(ops));
+    await fileStore.setItem(KEY, JSON.stringify(ops));
     await AsyncStorage.removeItem(PARKED_PREFIX + uid);
     for (const coll of COLLS) queryClient.invalidateQueries({ queryKey: [coll] });
     notify();
@@ -327,7 +335,8 @@ export const store = {
     if (target) void putInTrash("customers", target, bundleFor(id));
     enqueue({ kind: "delete", coll: "customers", itemId: id });
   },
-  createEntry(b: Omit<Entry, "id" | "createdAt">): Entry {
+  /** `createdAt` only for rows that must share another row's typed-on time (galla skips late-typed rows by it). */
+  createEntry(b: Omit<Entry, "id" | "createdAt"> & { createdAt?: string }): Entry {
     const item: Entry = { id: Crypto.randomUUID(), createdAt: now(), paid: 0, ...b };
     enqueue({ kind: "create", coll: "entries", item });
     return item;
@@ -362,8 +371,8 @@ export const store = {
     if (target) void putInTrash("jobs", target);
     enqueue({ kind: "delete", coll: "jobs", itemId: id });
   },
-  createAeps(b: Omit<AepsTxn, "id" | "createdAt">): AepsTxn {
-    const item: AepsTxn = { id: Crypto.randomUUID(), createdAt: now(), ...b };
+  createAeps(b: Omit<AepsTxn, "id" | "createdAt">, createdAt?: string): AepsTxn {
+    const item: AepsTxn = { id: Crypto.randomUUID(), createdAt: createdAt ?? now(), ...b };
     enqueue({ kind: "create", coll: "aeps", item });
     return item;
   },

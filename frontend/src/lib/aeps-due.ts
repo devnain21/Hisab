@@ -31,15 +31,17 @@ export function khataPaid(aepsId: string, entries: Entry[] = entriesNow()): numb
 export function syncAepsDue(id: string, t: AepsBody) {
   const existing = aepsDueEntry(id);
   const paid = existing ? khataPaid(id) : 0;
+  // A failed row or one moved to someone else owes nothing here; what was paid stays with that customer as advance.
+  const stillTheirs = !!existing && existing.customerId === t.customerId && t.status !== "failed";
   // Once the customer paid something on the khata the entry must keep covering it, or that payment turns into a false advance.
-  const due = Math.max(aepsDue(t), paid);
+  const due = stillTheirs ? Math.max(aepsDue(t), paid) : aepsDue(t);
   const body = { type: "aeps" as const, date: t.doneDate || t.date, description: dueTitle(t), amount: due, notes: t.reference ? `Txn ${t.reference}` : "", linkId: id };
-  if (existing && paid > 0) {
+  if (existing && paid > 0 && stillTheirs) {
     store.updateEntry(existing.id, { ...body, amount: due });
     return;
   }
-  if (existing && (due <= 0 || existing.customerId !== t.customerId)) store.deleteEntry(existing.id);
-  if (due <= 0 || !t.customerId) return;
+  if (existing && (due <= 0 || !stillTheirs)) store.deleteEntry(existing.id);
+  if (due <= 0 || !t.customerId || t.status === "failed") return;
   if (existing && existing.customerId === t.customerId) store.updateEntry(existing.id, body);
   else store.createEntry({ customerId: t.customerId, paid: 0, ...body });
 }
@@ -74,7 +76,7 @@ export function jamaKindOf(e: Entry): JamaKind {
 }
 
 /** `undefined` leaves the jama as it is (status changes from the list); a failed or unlinked row drops it. */
-function syncAepsJama(id: string, t: AepsBody, jama: Jama | null | undefined) {
+function syncAepsJama(id: string, t: AepsBody, jama: Jama | null | undefined, createdAt?: string) {
   const existing = aepsJamaEntry(id);
   const drop = t.status === "failed" || !t.customerId || jama === null || (jama !== undefined && jama.amount <= 0);
   if (drop) {
@@ -98,14 +100,17 @@ function syncAepsJama(id: string, t: AepsBody, jama: Jama | null | undefined) {
   if (existing && existing.customerId === t.customerId) store.updateEntry(existing.id, body);
   else {
     if (existing) store.deleteEntry(existing.id);
-    store.createEntry({ customerId: t.customerId!, paid: 0, ...body });
+    // Same typed-on time as the counter row, so galla counts (or skips as backdated) both together.
+    const rowCreatedAt = createdAt ?? queryClient.getQueryData<AepsTxn[]>(["aeps"])?.find((x) => x.id === id)?.createdAt;
+    store.createEntry({ customerId: t.customerId!, paid: 0, ...body, ...(rowCreatedAt ? { createdAt: rowCreatedAt } : {}) });
   }
 }
 
-export function createAeps(t: AepsBody, jama?: Jama | null): AepsTxn {
-  const row = store.createAeps(t);
+/** `createdAt` ties a row added while editing an older one to that visit, so galla treats them alike. */
+export function createAeps(t: AepsBody, jama?: Jama | null, createdAt?: string): AepsTxn {
+  const row = store.createAeps(t, createdAt);
   syncAepsDue(row.id, t);
-  syncAepsJama(row.id, t, jama);
+  syncAepsJama(row.id, t, jama, row.createdAt);
   return row;
 }
 

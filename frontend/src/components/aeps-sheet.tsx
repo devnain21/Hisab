@@ -153,13 +153,17 @@ const lineFrom = (t: AepsTxn, jama?: Entry): Line => {
   };
   if (!jama || kept <= 0) return base;
   if (flow === "out") return { ...base, handed: String(Math.max(0, owed - kept)), rest: jamaKindOf(jama) === "old" ? "old" : "later" };
-  if (flow === "in") return { ...base, collected: String(collectedNum(base) + kept), extra: "advance" };
+  if (flow === "in") return { ...base, collected: String(collectedNum(base) + sameWayCharge(base) + kept), extra: "advance" };
   return base;
 };
 
 const digits = (v: string, max: number) => v.replace(/\D/g, "").slice(0, max);
 const num = (v: string) => parseAmount(v);
 const collectedNum = (l: Line) => (l.collected === null ? num(l.amount) : num(l.collected));
+/** Charge paid the same way as the amount is already booked as received, so money over the amount covers it first. */
+const sameWayCharge = (l: Line) => (num(l.commission) > 0 && l.commissionMode === l.payMode ? num(l.commission) : 0);
+/** Money handed over beyond the amount and its charge. */
+const overNum = (l: Line) => Math.max(0, collectedNum(l) - num(l.amount) - sameWayCharge(l));
 /** Cash a withdrawal customer is owed: the amount less a charge kept from it. */
 const owedNum = (l: Line) => Math.max(0, num(l.amount) - (num(l.commission) > 0 && l.commissionMode === "cash" ? num(l.commission) : 0));
 const handedNum = (l: Line) => (l.handed === null ? owedNum(l) : Math.min(num(l.handed), owedNum(l)));
@@ -176,7 +180,7 @@ function lineJama(l: Line): Jama | null {
     return kept > 0 ? { amount: kept, mode: "cash", kind: l.rest } : null;
   }
   if (flow === "in" && l.extra === "advance") {
-    const over = collectedNum(l) - amt;
+    const over = overNum(l);
     return over > 0 ? { amount: over, mode: l.payMode, kind: "advance" } : null;
   }
   return null;
@@ -220,7 +224,7 @@ function previewOf(l: Line, date: string, createdAt = new Date().toISOString()):
 }
 
 /** Money paid over the amount that is to be sent later as its own pending row. */
-const sendLater = (l: Line) => (flowOf(l) === "in" && l.status !== "failed" && l.extra === "send" ? Math.max(0, collectedNum(l) - num(l.amount)) : 0);
+const sendLater = (l: Line) => (flowOf(l) === "in" && l.status !== "failed" && l.extra === "send" ? overNum(l) : 0);
 
 type InputSpec = { placeholder: string; keyboard?: KeyboardTypeOptions; caps?: "none" | "words" | "characters"; max?: number; clean?: (v: string) => string; presets?: string[] };
 const INPUT: Partial<Record<AepsField, InputSpec>> = {
@@ -355,11 +359,11 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
         };
         const jama = lineJama(line);
         if (initial && i === 0) saveAeps(initial.id, payload, jama);
-        else createAeps(payload, jama);
+        else createAeps(payload, jama, initial?.createdAt);
         // Paid in full for more than was sent now: the rest goes out later as its own pending row, already paid for.
         const rest = sendLater(line);
         if (rest > 0) {
-          createAeps({ ...payload, amount: rest, commission: 0, commissionMode: "", status: "pending", doneDate: "", dueDate: line.dueDate, collected: rest, payMode: line.payMode, cashDate: day, reference: "" }, null);
+          createAeps({ ...payload, amount: rest, commission: 0, commissionMode: "", status: "pending", doneDate: "", dueDate: line.dueDate, collected: rest, payMode: line.payMode, cashDate: day, reference: "" }, null, initial?.createdAt);
         }
       });
       onClose();
@@ -438,7 +442,7 @@ function ServiceLine({
   const preview = previewOf(line, date);
   const bill = aepsBill(preview);
   const jama = lineJama(line);
-  const over = flow === "in" ? Math.max(0, got - amt) : 0;
+  const over = flow === "in" ? overNum(line) : 0;
   const owed = owedNum(line);
   const handed = handedNum(line);
   const kept = flow === "out" ? Math.max(0, owed - handed) : 0;
@@ -599,7 +603,7 @@ function ServiceLine({
           <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
             <Chip label={`पूरे ${formatINR(amt)}`} active={got === amt} onPress={() => patch({ collected: null })} tone={colors.success} testID="aeps-got-full" />
             {oldDue > 0 ? (
-              <Chip label={`+ पुरानी उधारी ${formatINR(oldDue)}`} active={got === amt + oldDue && line.extra === "advance"} onPress={() => patch({ collected: String(amt + oldDue), extra: "advance" })} tone={colors.info} testID="aeps-got-old" />
+              <Chip label={`+ पुरानी उधारी ${formatINR(oldDue)}`} active={got === amt + sameWayCharge(line) + oldDue && line.extra === "advance"} onPress={() => patch({ collected: String(amt + sameWayCharge(line) + oldDue), extra: "advance" })} tone={colors.info} testID="aeps-got-old" />
             ) : null}
             <Chip label="अभी कुछ नहीं" active={got === 0} onPress={() => patch({ collected: "0" })} tone={colors.warning} testID="aeps-got-none" />
           </View>

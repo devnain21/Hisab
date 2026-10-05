@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { colors, spacing, radius } from "@/src/theme";
 import { isRepayment, useCustomers, type Entry } from "@/src/lib/data";
-import { cleanAmountInput, formatDateShort, formatINR, formatMonth, formatWeekdayDate, monthRange, parseAmount, roundMoney, shiftISO, todayISO, weekRange } from "@/src/lib/format";
+import { cleanAmountInput, formatDateShort, formatINR, formatMonth, formatWeekdayDate, isBackdated, monthRange, parseAmount, roundMoney, shiftISO, todayISO, weekRange } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { EditRecordSheet } from "@/src/components/sheets";
 import { AEPS_META, bankLegDate, cashLegDate, moneyLines } from "@/src/lib/aeps";
@@ -171,11 +171,13 @@ export default function DayScreen() {
   // A correction move makes the app's galla equal to the counted cash from this day on.
   const matchCounted = () => {
     if (diff === null || diff === 0) return;
+    // Galla leaves out rows typed long after their day; a deliberate match of an old day must still count there.
+    const stamp = isBackdated(date, new Date().toISOString()) ? new Date(`${date}T12:00:00`).toISOString() : undefined;
     confirmAction(
       `${labels.cash} ${formatINR(countedNum ?? 0)} कर दें?`,
       diff > 0 ? `हिसाब में ${formatINR(diff)} "बाहर से जोड़े" लिखे जाएँगे।` : `हिसाब में ${formatINR(-diff)} "बाहर निकाले" लिखे जाएँगे।`,
       "हाँ, बराबर करें",
-      () => void addMove(diff > 0 ? { date, from: "", to: cashKey, amount: diff, note: `${labels.cash} मिलान` } : { date, from: cashKey, to: "", amount: -diff, note: `${labels.cash} मिलान` }),
+      () => void addMove(diff > 0 ? { date, from: "", to: cashKey, amount: diff, note: `${labels.cash} मिलान` } : { date, from: cashKey, to: "", amount: -diff, note: `${labels.cash} मिलान` }, stamp),
     );
   };
   const daySummary: DaySummaryData = {

@@ -87,6 +87,7 @@ export async function exportFullLedgerCsv(params: {
 
   const custMap = new Map(customers.map((c) => [c.id, c]));
   const entryIds = new Set(entries.map((e) => e.id));
+  const aepsIds = new Set(params.aeps.map((t) => t.id));
   const sortedEntries = [...entries].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
 
   sortedEntries.forEach((e, i) => {
@@ -96,9 +97,11 @@ export async function exportFullLedgerCsv(params: {
       e.type === "work"
         ? "काम / बिक्री"
         : e.type === "payment"
-          ? e.linkId && !entryIds.has(e.linkId)
+          ? e.linkId && aepsIds.has(e.linkId)
             ? "AEPS जमा"
-            : "भुगतान मिला"
+            : e.linkId && !entryIds.has(e.linkId)
+              ? "एडवांस जमा"
+              : "भुगतान मिला"
           : e.type === "purchase"
             ? personal
               ? "उधार लिया / सामान लिया"

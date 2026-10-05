@@ -883,7 +883,10 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
   const paidNow = isPurchase ? money.receivedNum : 0;
   const needsDescription = kind === "work";
   const fullChip = kind === "payment" && due > 0 ? due : kind === "given" && due < 0 ? -due : 0;
-  const filled = isPurchase ? items.titled && paidNow <= amt : !needsDescription || !!description.trim();
+  // Paid back later against this purchase; the amount can't go below it or the extra has no row to show on.
+  const repaidLater = isPurchase ? roundMoney(later.reduce((s, p) => s + p.amount, 0)) : 0;
+  const overRepaid = isPurchase && amt > 0 && paidNow + repaidLater > amt + 0.005;
+  const filled = isPurchase ? items.titled && paidNow <= amt && !overRepaid : !needsDescription || !!description.trim();
   const valid = (initial ? true : choice.ready) && filled && isFinite(amt) && amt > 0;
   // Personal: lent money, or goods still to be paid for, can carry a "by when" that lands in मेरे काम.
   const canRemind = !initial && isPersonalBook && (kind === "given" || (isPurchase && amt - paidNow > 0));
@@ -934,6 +937,11 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
         <>
           <ItemsField items={items} label="क्या लिया" placeholder={ui.placeholder} addLabel="और जोड़ें" />
           <MoneyFields money={money} receivedLabel="अभी कितने दिए (₹)" hideTotal purchase />
+          {overRepaid ? (
+            <Text style={[styles.hint, { color: colors.error }]}>
+              कुल {formatINR(paidNow + repaidLater)} चुका चुके हैं — रकम इससे कम नहीं हो सकती। ज़्यादा दिए पैसे नीचे से हटाएँ।
+            </Text>
+          ) : null}
           {paidNow > 0 ? <PayModeField label="कैसे दिए" value={payMode} onChange={setPayMode} split={initial ? undefined : split} total={paidNow} /> : null}
         </>
       ) : (
@@ -1067,12 +1075,15 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
 
   const job = entry ? jobForWork(entry, jobs) : undefined;
   // Extra money taken on the work day beyond the bill, booked as a linked advance row.
-  const extras = entry ? entries.filter((e) => e.type === "payment" && e.linkId === entry.id && e.date === entry.date && e.description === ADVANCE && e.notes.endsWith("के साथ")) : [];
-  const extraSum = extras.reduce((s, e) => s + e.amount, 0);
+  const sameDayExtras = entry ? entries.filter((e) => e.type === "payment" && e.linkId === entry.id && e.date === entry.date && e.description === ADVANCE && e.notes.endsWith("के साथ")) : [];
   const link = entry ? linkedPayment(entry, entries) : undefined;
   // Only an old unlinked two-row record is folded into `paid`. A linked "पैसे मिले" written later
   // the same day is its own row (own mode, own notes) and must stay as it is.
-  const legacyLink = entry && link && !link.linkId && !(entry.paid ?? 0) && !extras.some((e) => e.id === link.id) ? link : undefined;
+  const legacyLink = entry && link && !link.linkId && !(entry.paid ?? 0) && !sameDayExtras.some((e) => e.id === link.id) ? link : undefined;
+  const rowMode: PayMode = legacyLink?.mode ?? entry?.mode ?? "cash";
+  // The form has one pay mode; an advance taken the other way (online part of a split) stays its own row.
+  const extras = sameDayExtras.filter((e) => (e.mode ?? "cash") === rowMode);
+  const extraSum = extras.reduce((s, e) => s + e.amount, 0);
   // Every other payment booked against this work, shown so it can be seen / removed here.
   const later = entry ? settlementsFor(entry, entries).filter((p) => p.id !== legacyLink?.id && !extras.some((e) => e.id === p.id)) : [];
 
@@ -1080,7 +1091,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
     if (!entry) return;
     items.reset(itemsOf(entry));
     money.reset(String(entry.amount), String(((entry.paid ?? 0) || (legacyLink?.amount ?? 0)) + extraSum));
-    setPayMode(legacyLink?.mode ?? entry.mode ?? "cash");
+    setPayMode(rowMode);
     setGovtFee(entry.fee ? String(entry.fee) : "");
     setFeeMode(entry.feeMode ?? "online");
     setDate(entry.date);

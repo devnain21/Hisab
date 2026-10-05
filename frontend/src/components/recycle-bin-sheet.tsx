@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, FlatList, Modal } from "react-native";
+import { View, Text, StyleSheet, FlatList, Modal, ActivityIndicator } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { clearTrashItems, describeTrash, getTrashList, restoreTrashItem, subscribeTrash, trashPersona, type TrashItem } from "@/src/lib/trash";
+import { clearTrashItems, describeTrash, getTrashList, restoreTrashItem, subscribeTrash, trashPersona, type TrashColl, type TrashItem } from "@/src/lib/trash";
+import { api } from "@/src/lib/api";
+import { queryClient } from "@/src/query-client";
 import { formatDateShort, localDay } from "@/src/lib/format";
 import { confirmAction, showNotice } from "@/src/lib/confirm";
 import { usePersona } from "@/src/lib/persona";
+
+const TRASH_COLLS: TrashColl[] = ["customers", "entries", "jobs", "aeps", "expenses", "moves"];
+const isLive = (coll: TrashColl, id: string) => (queryClient.getQueryData<{ id: string }[]>([coll]) ?? []).some((r) => r.id === id);
 
 export function RecycleBinModal({
   visible,
@@ -17,11 +22,35 @@ export function RecycleBinModal({
   onClose: () => void;
 }) {
   const [items, setItems] = useState<TrashItem[]>([]);
+  const [source, setSource] = useState<"phone" | "server">("phone");
+  const [server, setServer] = useState<TrashItem[] | null>(null);
+  const [serverError, setServerError] = useState(false);
+  const [busy, setBusy] = useState("");
   const insets = useSafeAreaInsets();
   const { persona } = usePersona();
 
   const load = () => {
     getTrashList().then((list) => setItems(list.filter((t) => (trashPersona(t, list) ?? persona) === persona)));
+  };
+
+  // The server keeps every delete for 180 days, also from other phones and from before this phone's bin.
+  const loadServer = async () => {
+    setServerError(false);
+    try {
+      const rows = await api.listArchive();
+      const mapped: TrashItem[] = rows
+        .filter((r) => (TRASH_COLLS as string[]).includes(r.coll))
+        .map((r) => {
+          const doc = r.doc as Record<string, any>;
+          const data = r.coll === "moves" ? { ...doc, from: doc.src, to: doc.dst } : doc;
+          return { id: `${r.coll}:${r.id}:${r.deletedAt}`, coll: r.coll as TrashColl, title: "", subtitle: "", deletedAt: r.deletedAt, data };
+        })
+        // Already back (e.g. from this phone's bin) or deleted twice: show each live-less row once.
+        .filter((t, i, all) => !isLive(t.coll, t.data.id) && all.findIndex((o) => o.coll === t.coll && o.data.id === t.data.id) === i);
+      setServer(mapped.filter((t) => (trashPersona(t, mapped) ?? persona) === persona));
+    } catch {
+      setServerError(true);
+    }
   };
 
   useEffect(() => {
@@ -31,10 +60,34 @@ export function RecycleBinModal({
     }
   }, [visible, persona]);
 
+  useEffect(() => {
+    if (visible && source === "server") void loadServer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, source, persona]);
+
   const handleRestore = async (id: string) => {
     const result = await restoreTrashItem(id);
     if (result === "no-customer") showNotice("पहले खाता वापस लाएं", "जिस खाते की यह एंट्री है वह हटाया जा चुका है। पहले उस खाते को वापस लाएं।");
     load();
+  };
+
+  const handleServerRestore = async (item: TrashItem) => {
+    const owner = (item.data as { customerId?: string }).customerId;
+    if ((item.coll === "entries" || item.coll === "jobs") && owner && !isLive("customers", owner)) {
+      showNotice("पहले खाता वापस लाएं", "जिस खाते की यह एंट्री है वह हटाया जा चुका है। पहले उस खाते को वापस लाएं।");
+      return;
+    }
+    setBusy(item.id);
+    try {
+      await api.restoreArchive(item.coll, item.data.id);
+      await Promise.all(TRASH_COLLS.map((c) => queryClient.invalidateQueries({ queryKey: [c] })));
+      setServer((list) => (list ?? []).filter((t) => t.id !== item.id));
+    } catch (e) {
+      const status = (e as { status?: number }).status;
+      showNotice("वापस नहीं आया", status === 409 ? "यह रिकॉर्ड पहले से मौजूद है।" : "इंटरनेट / सर्वर से जुड़ नहीं पाए। थोड़ी देर बाद फिर कोशिश करें।");
+    } finally {
+      setBusy("");
+    }
   };
 
   const handleClear = () =>
@@ -50,13 +103,50 @@ export function RecycleBinModal({
           <View style={styles.header}>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={styles.title}>कचरा पेटी</Text>
-              <Text style={styles.subtitle}>हाल में हटाए गए आख़िरी 50 रिकॉर्ड (इसी फ़ोन पर)</Text>
+              <Text style={styles.subtitle}>
+                {source === "phone" ? "हाल में हटाए गए आख़िरी 50 रिकॉर्ड (इसी फ़ोन पर)" : "पिछले 180 दिन में हटाया गया सब कुछ (किसी भी फ़ोन से)"}
+              </Text>
             </View>
             <Pressable onPress={onClose} hitSlop={12} accessibilityRole="button" accessibilityLabel="बंद करें" testID="trash-close">
               <MaterialIcon name="close" size={24} color={colors.onSurface} />
             </Pressable>
           </View>
 
+          <View style={styles.segment}>
+            {(["phone", "server"] as const).map((s) => (
+              <Pressable key={s} onPress={() => setSource(s)} style={[styles.segmentBtn, source === s && styles.segmentOn]} testID={`trash-source-${s}`}>
+                <MaterialIcon name={s === "phone" ? "cellphone" : "cloud-outline"} size={16} color={source === s ? colors.onBrandPrimary : colors.onSurface} />
+                <Text style={[styles.segmentText, source === s && { color: colors.onBrandPrimary }]}>{s === "phone" ? "इस फ़ोन पर" : "सर्वर (180 दिन)"}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {source === "server" ? (
+            server === null && !serverError ? (
+              <View style={styles.emptyBox}><ActivityIndicator color={colors.brandPrimary} /></View>
+            ) : serverError ? (
+              <View style={styles.emptyBox}>
+                <MaterialIcon name="cloud-off-outline" size={44} color={colors.muted} />
+                <Text style={styles.emptyTitle}>सर्वर से जुड़ नहीं पाए</Text>
+                <Pressable onPress={() => void loadServer()} style={[styles.restoreBtn, { marginTop: spacing.md }]} testID="trash-server-retry">
+                  <Text style={styles.restoreText}>फिर कोशिश करें</Text>
+                </Pressable>
+              </View>
+            ) : (server ?? []).length === 0 ? (
+              <View style={styles.emptyBox}>
+                <MaterialIcon name="cloud-check-outline" size={44} color={colors.muted} />
+                <Text style={styles.emptyTitle}>सर्वर पर कुछ हटाया हुआ नहीं</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={server}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={{ paddingBottom: spacing.xl + insets.bottom }}
+                renderItem={({ item }) => <TrashCard item={item} busy={busy === item.id} onRestore={() => void handleServerRestore(item)} />}
+              />
+            )
+          ) : (
+          <>
           {items.length > 0 ? (
             <View style={styles.clearRow}>
               <Text style={styles.countText}>{items.length} रिकॉर्ड मौजूद हैं</Text>
@@ -77,50 +167,48 @@ export function RecycleBinModal({
               data={items}
               keyExtractor={(item) => item.id}
               contentContainerStyle={{ paddingBottom: spacing.xl + insets.bottom }}
-              renderItem={({ item }) => {
-                const label = describeTrash(item);
-                const collBadge =
-                  item.coll === "customers"
-                    ? { label: "खाता", color: "#1D4ED8" }
-                    : item.coll === "entries"
-                    ? { label: "हिसाब", color: "#047857" }
-                    : item.coll === "jobs"
-                    ? { label: "काम", color: "#B45309" }
-                    : item.coll === "expenses"
-                    ? { label: "खर्च", color: "#B91C1C" }
-                    : item.coll === "moves"
-                    ? { label: "जोड़े / निकाले", color: "#0E7490" }
-                    : { label: "काउंटर", color: "#6D28D9" };
-
-                return (
-                  <View style={styles.card}>
-                    <View style={{ flex: 1, minWidth: 0, marginRight: spacing.sm }}>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }}>
-                        <View style={[styles.badge, { backgroundColor: collBadge.color + "18" }]}>
-                          <Text style={[styles.badgeText, { color: collBadge.color }]}>{collBadge.label}</Text>
-                        </View>
-                        <Text style={styles.dateText}>{formatDateShort(localDay(item.deletedAt) ?? item.deletedAt.slice(0, 10))}</Text>
-                      </View>
-                      <Text style={styles.itemTitle} numberOfLines={1}>{label.title}</Text>
-                      {label.subtitle ? <Text style={styles.itemSub}>{label.subtitle}</Text> : null}
-                    </View>
-
-                    <Pressable
-                      style={styles.restoreBtn}
-                      onPress={() => handleRestore(item.id)}
-                      testID={`trash-restore-${item.id}`}
-                    >
-                      <MaterialIcon name="backup-restore" size={18} color={colors.brandPrimary} />
-                      <Text style={styles.restoreText}>वापस लाएं</Text>
-                    </Pressable>
-                  </View>
-                );
-              }}
+              renderItem={({ item }) => <TrashCard item={item} onRestore={() => handleRestore(item.id)} />}
             />
+          )}
+          </>
           )}
         </View>
       </View>
     </Modal>
+  );
+}
+
+function TrashCard({ item, busy, onRestore }: { item: TrashItem; busy?: boolean; onRestore: () => void }) {
+  const label = describeTrash(item);
+  const collBadge =
+    item.coll === "customers"
+      ? { label: "खाता", color: "#1D4ED8" }
+      : item.coll === "entries"
+      ? { label: "हिसाब", color: "#047857" }
+      : item.coll === "jobs"
+      ? { label: "काम", color: "#B45309" }
+      : item.coll === "expenses"
+      ? { label: "खर्च", color: "#B91C1C" }
+      : item.coll === "moves"
+      ? { label: "जोड़े / निकाले", color: "#0E7490" }
+      : { label: "काउंटर", color: "#6D28D9" };
+  return (
+    <View style={styles.card}>
+      <View style={{ flex: 1, minWidth: 0, marginRight: spacing.sm }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }}>
+          <View style={[styles.badge, { backgroundColor: collBadge.color + "18" }]}>
+            <Text style={[styles.badgeText, { color: collBadge.color }]}>{collBadge.label}</Text>
+          </View>
+          <Text style={styles.dateText}>{formatDateShort(localDay(item.deletedAt) ?? item.deletedAt.slice(0, 10))}</Text>
+        </View>
+        <Text style={styles.itemTitle} numberOfLines={1}>{label.title || "रिकॉर्ड"}</Text>
+        {label.subtitle ? <Text style={styles.itemSub}>{label.subtitle}</Text> : null}
+      </View>
+      <Pressable style={styles.restoreBtn} onPress={onRestore} disabled={busy} testID={`trash-restore-${item.id}`}>
+        {busy ? <ActivityIndicator size="small" color={colors.brandPrimary} /> : <MaterialIcon name="backup-restore" size={18} color={colors.brandPrimary} />}
+        <Text style={styles.restoreText}>वापस लाएं</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -154,6 +242,10 @@ const styles = StyleSheet.create({
     color: colors.muted,
     marginTop: 2,
   },
+  segment: { flexDirection: "row", gap: spacing.xs, padding: 4, marginBottom: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  segmentBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 40, borderRadius: radius.sm },
+  segmentOn: { backgroundColor: colors.brandPrimary },
+  segmentText: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
   clearRow: {
     flexDirection: "row",
     justifyContent: "space-between",

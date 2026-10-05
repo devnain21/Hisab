@@ -17,6 +17,7 @@ import { resetTrashMemory } from "@/src/lib/trash";
 import { resetRecentCustomers } from "@/src/lib/recent";
 import { disableLock } from "@/src/lib/app-lock";
 import { reloadPrefs } from "@/src/lib/prefs";
+import { startSettingsSync, stopSettingsSync } from "@/src/lib/settings-sync";
 import { reloadBudget } from "@/src/lib/budget";
 import { queryClient } from "@/src/query-client";
 
@@ -64,9 +65,9 @@ function writeCachedProfile(uid: string, user: User) {
 // Account the data on this phone belongs to; under the "hisab_" prefix so a wipe clears it too.
 const OWNER_KEY = "hisab_owner_uid";
 
-// Phone-only settings (slip logo and note, reminder text, lock timer, budget, mode) aren't on the server;
-// they wait outside the "hisab_" prefix until the same account signs in again.
-const SETTINGS_KEYS = ["hisab_prefs_v1", "hisab_personal_budget_v1", "hisab_persona_v1"];
+// Settings wait outside the "hisab_" prefix until the same account signs in again; the lock timer and
+// hidden-amounts switch exist only here, and offline edits to the synced ones haven't reached the server yet.
+const SETTINGS_KEYS = ["hisab_prefs_v1", "hisab_personal_budget_v1", "hisab_persona_v1", "hisab_settings_meta_v1"];
 const PARKED_SETTINGS = "parked_settings_";
 
 async function parkSettings(uid: string) {
@@ -136,6 +137,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       setSyncEnabled(false);
+      stopSettingsSync();
       if (!fbUser) {
         setState({ status: "unauthenticated", user: null });
         return;
@@ -154,6 +156,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await unparkSettings(fbUser.uid);
       setState({ status: "authenticated", user: cached ?? mapFirebaseUser(fbUser) });
       setSyncEnabled(true);
+      void startSettingsSync();
       try {
         const token = await fbUser.getIdToken();
         const me = await api.login(token);
@@ -213,6 +216,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     const uid = isFirebaseConfigured() ? getFirebaseAuth().currentUser?.uid : undefined;
+    stopSettingsSync();
     // Changes not yet on the server would otherwise be lost; they come back when this account signs in again.
     if (uid) {
       await parkOutbox(uid);

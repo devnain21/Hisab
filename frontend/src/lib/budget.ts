@@ -28,10 +28,21 @@ export async function reloadBudget() {
   listeners.forEach((fn) => fn(b));
 }
 
-export async function saveBudget(b: Budget) {
+let onSaved: (() => void) | null = null;
+export function setBudgetSaveHook(fn: (() => void) | null) {
+  onSaved = fn;
+}
+
+export async function getBudget(): Promise<Budget> {
+  return load();
+}
+
+/** `silent` writes a copy that came from the server, so it isn't sent back. */
+export async function saveBudget(b: Budget, silent = false) {
   memory = b;
   listeners.forEach((fn) => fn(b));
   await AsyncStorage.setItem(KEY, JSON.stringify(b)).catch(() => {});
+  if (!silent) onSaved?.();
 }
 
 export function useBudget(): Budget {

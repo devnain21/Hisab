@@ -485,6 +485,25 @@ def _check_base(existing: dict, base: Optional[str]):
 
 BaseHeader = Header(None, alias="X-Base-Updated-At")
 
+HISTORY_SKIP = {"updatedAt", "createdAt", "id", "user_id", "_id"}
+
+
+async def _log_change(coll: str, existing: dict, patch: dict, user: dict):
+    """Keeps the old and new value of every field an edit changed, for disputes; never blocks the edit."""
+    changes = {
+        k: [existing.get(k), v]
+        for k, v in patch.items()
+        if k not in HISTORY_SKIP and existing.get(k) != v and not (existing.get(k) in (None, "", 0) and v in (None, "", 0))
+    }
+    if not changes:
+        return
+    try:
+        await db.edit_history.insert_one(
+            {"user_id": user["user_id"], "coll": coll, "id": existing["id"], "at": datetime.now(timezone.utc), "changes": changes}
+        )
+    except Exception:
+        logger.exception("edit history write failed for %s %s", coll, existing.get("id"))
+
 
 # Offline clients generate the id and may resend the same create after a dropped response.
 async def _create_idempotent(collection, model, payload: BaseModel, user: dict):
@@ -626,6 +645,100 @@ async def close_shop(user: dict = Depends(get_current_user)):
     return _user_out(user)
 
 
+ARCHIVE_COLLS = ("customers", "entries", "jobs", "aeps", "expenses", "moves")
+
+
+@api_router.get("/archive")
+async def list_archive(user: dict = Depends(get_current_user), limit: int = 300):
+    """Rows deleted in the last 180 days, newest first (duplicate clean-ups left out)."""
+    limit = max(1, min(limit, 1000))
+    cur = db.deleted_items.find(
+        {"user_id": user["user_id"], "coll": {"$in": list(ARCHIVE_COLLS)}, "reason": {"$exists": False}},
+        {"_id": 0, "user_id": 0},
+    ).sort("deletedAt", -1).limit(limit)
+    out = []
+    async for d in cur:
+        doc = {k: v for k, v in (d.get("doc") or {}).items() if k != "user_id"}
+        out.append({"coll": d["coll"], "id": d.get("id", ""), "deletedAt": d["deletedAt"].isoformat() if hasattr(d["deletedAt"], "isoformat") else str(d["deletedAt"]), "doc": doc})
+    return out
+
+
+class RestoreIn(BaseModel):
+    coll: Literal["customers", "entries", "jobs", "aeps", "expenses", "moves"]
+    id: str = Field(min_length=1, max_length=80)
+
+
+@api_router.post("/archive/restore")
+async def restore_archive(payload: RestoreIn, user: dict = Depends(get_current_user)):
+    """Puts a deleted row back; a customer comes back with the entries and jobs deleted along with it."""
+    uid = user["user_id"]
+    item = await db.deleted_items.find_one(
+        {"user_id": uid, "coll": payload.coll, "id": payload.id, "reason": {"$exists": False}}, sort=[("deletedAt", -1)]
+    )
+    if not item:
+        raise HTTPException(404, "Not in the archive")
+    if await db[payload.coll].find_one({"user_id": uid, "id": payload.id}, {"_id": 1}):
+        raise HTTPException(409, "Already exists")
+    group = [item]
+    if payload.coll == "customers":
+        group += await db.deleted_items.find(
+            {"user_id": uid, "coll": {"$in": ["entries", "jobs"]}, "deletedAt": item["deletedAt"], "doc.customerId": payload.id}
+        ).to_list(None)
+    now = _now()
+    restored = 0
+
+    async def work(s):
+        nonlocal restored
+        for g in group:
+            doc = {k: v for k, v in (g.get("doc") or {}).items() if k not in ("_id", "user_id")}
+            if await db[g["coll"]].find_one({"user_id": uid, "id": doc.get("id")}, {"_id": 1}, session=s):
+                continue
+            await db[g["coll"]].insert_one({**doc, "user_id": uid, "updatedAt": now}, session=s)
+            await db.deleted_items.delete_one({"_id": g["_id"]}, session=s)
+            restored += 1
+
+    await _atomic(work)
+    return {"ok": True, "restored": restored}
+
+
+class SettingsIn(BaseModel):
+    data: dict
+    updatedAt: str = Field(min_length=10, max_length=40)
+
+
+# Slip logo, slip note, reminder text, default mode and budget; the logo is a small JPEG data URI.
+MAX_SETTINGS_CHARS = 400_000
+
+
+@api_router.get("/settings")
+async def get_settings(user: dict = Depends(get_current_user)):
+    doc = await db.settings.find_one({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    return doc or {"data": None, "updatedAt": ""}
+
+
+@api_router.put("/settings")
+async def put_settings(payload: SettingsIn, user: dict = Depends(get_current_user)):
+    if len(json.dumps(payload.data, ensure_ascii=False)) > MAX_SETTINGS_CHARS:
+        raise HTTPException(413, "settings too large")
+    existing = await db.settings.find_one({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    # A phone that was offline for a while must not overwrite what another phone saved since.
+    if existing and existing.get("updatedAt", "") > payload.updatedAt:
+        return existing
+    doc = {"data": payload.data, "updatedAt": payload.updatedAt}
+    await db.settings.update_one({"user_id": user["user_id"]}, {"$set": doc}, upsert=True)
+    return doc
+
+
+@api_router.get("/history/{coll}/{item_id}")
+async def get_history(coll: Literal["customers", "entries", "jobs", "aeps", "expenses", "moves"], item_id: str, user: dict = Depends(get_current_user)):
+    rows = await db.edit_history.find(
+        {"user_id": user["user_id"], "coll": coll, "id": item_id}, {"_id": 0, "user_id": 0}
+    ).sort("at", -1).to_list(100)
+    for r in rows:
+        r["at"] = r["at"].replace(tzinfo=timezone.utc).isoformat()
+    return rows
+
+
 @api_router.post("/auth/logout")
 async def logout():
     # Firebase ID tokens are stateless; the client drops its own session.
@@ -655,6 +768,7 @@ async def update_customer(customer_id: str, payload: CustomerCreate, user: dict 
         patch.pop("creditLimit", None)
     patch["updatedAt"] = _now()
     await db.customers.update_one({"id": customer_id, "user_id": user["user_id"]}, {"$set": patch})
+    await _log_change("customers", existing, patch, user)
     return _rows(Customer, [{**existing, **patch}])[0]
 
 
@@ -702,6 +816,7 @@ async def update_entry(entry_id: str, payload: EntryUpdate, user: dict = Depends
     patch["paid"] = paid
     patch["updatedAt"] = _now()
     await db.entries.update_one({"id": entry_id, "user_id": user["user_id"]}, {"$set": patch})
+    await _log_change("entries", existing, patch, user)
     return _rows(Entry, [{**existing, **patch}])[0]
 
 
@@ -733,6 +848,7 @@ async def update_job(job_id: str, payload: JobUpdate, user: dict = Depends(get_c
         _check_base(existing, base)
         patch["updatedAt"] = _now()
         await db.jobs.update_one({"id": job_id, "user_id": user["user_id"]}, {"$set": patch})
+        await _log_change("jobs", existing, patch, user)
     return _rows(Job, [{**existing, **patch}])[0]
 
 
@@ -763,6 +879,7 @@ async def update_aeps(txn_id: str, payload: AepsFields, user: dict = Depends(get
     patch = payload.dict()
     patch["updatedAt"] = _now()
     await db.aeps.update_one({"id": txn_id, "user_id": user["user_id"]}, {"$set": patch})
+    await _log_change("aeps", existing, patch, user)
     return _rows(AepsTxn, [{**existing, **patch}])[0]
 
 
@@ -793,6 +910,7 @@ async def update_expense(expense_id: str, payload: ExpenseFields, user: dict = D
     patch = payload.dict()
     patch["updatedAt"] = _now()
     await db.expenses.update_one({"id": expense_id, "user_id": user["user_id"]}, {"$set": patch})
+    await _log_change("expenses", existing, patch, user)
     return _rows(Expense, [{**existing, **patch}])[0]
 
 
@@ -822,6 +940,7 @@ async def update_move(move_id: str, payload: MoneyMoveFields, user: dict = Depen
     patch = payload.dict()
     patch["updatedAt"] = _now()
     await db.moves.update_one({"id": move_id, "user_id": user["user_id"]}, {"$set": patch})
+    await _log_change("moves", existing, patch, user)
     return _rows(MoneyMove, [{**existing, **patch}])[0]
 
 
@@ -863,6 +982,8 @@ async def startup():
     await db.aeps.create_index([("user_id", 1), ("date", -1)])
     await db.deleted_items.create_index([("user_id", 1), ("coll", 1), ("id", 1)])
     await db.deleted_items.create_index("deletedAt", expireAfterSeconds=60 * 60 * 24 * 180)
+    await db.settings.create_index("user_id", unique=True)
+    await db.edit_history.create_index([("user_id", 1), ("coll", 1), ("id", 1), ("at", -1)])
     await _repair_null_created_at()
 
 

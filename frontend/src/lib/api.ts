@@ -77,6 +77,13 @@ export const api = {
   updateMe: (b: { shop_name: string; shop_phone?: string; shop_address?: string; shop_gst?: string; shop_upi?: string; owner_name?: string; persona?: string }) =>
     req("/auth/me", { method: "PUT", body: JSON.stringify(b) }),
   logout: () => req("/auth/logout", { method: "POST" }),
+  getHistory: (coll: string, id: string): Promise<{ at: string; changes: Record<string, [unknown, unknown]> }[]> =>
+    req(`/history/${coll}/${encodeURIComponent(id)}`),
+  listArchive: (): Promise<{ coll: string; id: string; deletedAt: string; doc: Record<string, unknown> }[]> => req("/archive"),
+  restoreArchive: (coll: string, id: string): Promise<{ ok: boolean; restored: number }> =>
+    req("/archive/restore", { method: "POST", body: JSON.stringify({ coll, id }) }),
+  getSettings: (): Promise<{ data: Record<string, unknown> | null; updatedAt: string }> => req("/settings"),
+  putSettings: (b: { data: Record<string, unknown>; updatedAt: string }) => req("/settings", { method: "PUT", body: JSON.stringify(b) }),
   closeShop: () => req("/shop/close", { method: "POST" }),
   listCustomers: () => req("/customers"),
   createCustomer: (b: unknown) => req("/customers", { method: "POST", body: JSON.stringify(b) }),

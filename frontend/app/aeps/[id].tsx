@@ -12,6 +12,7 @@ import { confirmAction } from "@/src/lib/confirm";
 import { useAuth } from "@/src/context/AuthContext";
 import { Pressable } from "@/src/components/tap";
 import { AepsSheet } from "@/src/components/aeps-sheet";
+import { EditHistory } from "@/src/components/edit-history";
 import { aepsReceiptDoc, sharePdf } from "@/src/lib/receipt";
 import { aepsJamaEntry, cashSettledAeps, completeAeps, failAeps, jamaKindOf, khataPaid, removeAeps } from "@/src/lib/aeps-due";
 
@@ -248,6 +249,7 @@ export default function AepsDetail() {
             <Text style={styles.callText}>कॉल करें</Text>
           </Pressable>
         ) : null}
+        <EditHistory coll="aeps" id={t.id} />
       </ScrollView>
 
       <AepsSheet visible={editing} initial={t} onClose={() => setEditing(false)} />

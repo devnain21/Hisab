@@ -9,6 +9,7 @@ import { OLD_ENTRY_DAYS, dateOnSave, formatDateShort, formatINR, isBackdated, is
 import { DangerLink, DateField, MoreInfo, SheetShell } from "@/src/components/sheets";
 import { store } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
+import { EditHistory } from "@/src/components/edit-history";
 
 export function AddExpenseSheet({
   visible,
@@ -203,6 +204,7 @@ export function AddExpenseSheet({
             </Text>
           </Pressable>
           {initial ? <DangerLink label="यह खर्च हटाएँ" onPress={remove} testID="expense-delete" /> : null}
+          {initial ? <EditHistory coll="expenses" id={initial.id} /> : null}
       </View>
     </SheetShell>
   );

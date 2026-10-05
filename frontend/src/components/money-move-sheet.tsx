@@ -7,6 +7,7 @@ import { accountKey, accountLabel, addMove, balanceOf, deleteMove, pocketName, u
 import { Chip, DangerLink, DateField, Field, PrimaryButton, SheetShell, inputStyle } from "@/src/components/sheets";
 import { store } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
+import { EditHistory } from "@/src/components/edit-history";
 
 export type MoveKind = "in" | "out" | "swap";
 
@@ -210,6 +211,7 @@ export function MoneyMoveSheet({
           }
         />
       ) : null}
+      {initial ? <EditHistory coll="moves" id={initial.id} /> : null}
     </SheetShell>
   );
 }

@@ -25,6 +25,7 @@ import { usePersona } from "@/src/lib/persona";
 import { getPrefs } from "@/src/lib/prefs";
 import { useKeyboardOverlap } from "@/src/lib/keyboard-overlap";
 import { useRouter } from "expo-router";
+import { EditHistory } from "@/src/components/edit-history";
 
 export function SheetShell({ visible, onClose, title, children, testID }: { visible: boolean; onClose: () => void; title: string; children: React.ReactNode; testID?: string }) {
   const insets = useSafeAreaInsets();
@@ -873,6 +874,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
           onPress={() => confirmAction(`${name || "यह खाता"} हटाएँ?`, `इनकी सारी एंट्री${targetPersona === "personal" ? "" : " और काम"} भी हटेंगे, और पुराने दिनों का ${targetPersona === "personal" ? "कैश" : "गल्ला"} / बैंक हिसाब बदल जाएगा। गलती से हटाया तो प्रोफ़ाइल › कचरा पेटी से पूरा खाता वापस ला सकते हैं।`, "हटा दें", () => { onDelete(); onClose(); })}
         />
       ) : null}
+      {initial?.id ? <EditHistory coll="customers" id={initial.id} /> : null}
       {contacts.modal}
     </SheetShell>
   );
@@ -1112,7 +1114,12 @@ function DeleteEntryLink({ entry, onDone }: { entry: Entry; onDone: () => void }
       onDone();
     });
   };
-  return <DangerLink label="यह एंट्री हटाएँ" onPress={remove} testID="delete-entry-link" />;
+  return (
+    <>
+      <DangerLink label="यह एंट्री हटाएँ" onPress={remove} testID="delete-entry-link" />
+      <EditHistory coll="entries" id={entry.id} />
+    </>
+  );
 }
 
 export function DangerLink({ label, onPress, testID }: { label: string; onPress: () => void; testID?: string }) {
@@ -1309,6 +1316,7 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
       </Field>
       <PrimaryButton label="बदलाव सेव करें" onPress={save} disabled={!title.trim()} saving={saving} testID="save-edit-job-btn" />
       <DangerLink label="यह काम हटाएँ" onPress={remove} testID="delete-job-link" />
+      {job ? <EditHistory coll="jobs" id={job.id} /> : null}
     </SheetShell>
   );
 }

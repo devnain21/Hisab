@@ -67,11 +67,19 @@ export function getPrefs(): Prefs {
   return memory ?? DEFAULTS;
 }
 
-export async function savePrefs(patch: Partial<Prefs>) {
+let onSaved: ((patch: Partial<Prefs>) => void) | null = null;
+/** Lets settings sync hear about changes without prefs importing it. */
+export function setPrefsSaveHook(fn: ((patch: Partial<Prefs>) => void) | null) {
+  onSaved = fn;
+}
+
+/** `silent` writes a copy that came from the server, so it isn't sent back. */
+export async function savePrefs(patch: Partial<Prefs>, silent = false) {
   const next = { ...getPrefs(), ...patch };
   memory = next;
   listeners.forEach((fn) => fn(next));
   await AsyncStorage.setItem(KEY, JSON.stringify(next)).catch(() => {});
+  if (!silent) onSaved?.(patch);
 }
 
 export function usePrefs(): Prefs {

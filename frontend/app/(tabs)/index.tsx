@@ -6,7 +6,7 @@ import { useState, useMemo, useCallback } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, spacing, radius } from "@/src/theme";
+import { colors, spacing, radius, semantic, type } from "@/src/theme";
 import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, isRepayment, type Entry, type Job } from "@/src/lib/data";
 import { buildAllLedgers, workForJob } from "@/src/lib/records";
 import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
@@ -234,10 +234,10 @@ export default function Home() {
             <Text style={styles.eyebrow}>{formatWeekdayDate(today)}</Text>
             <Text style={styles.h1} numberOfLines={2} testID="shop-name">{accountName(user) || "आज का खाता"}</Text>
           </View>
-          <Pressable onPress={() => void savePrefs({ hideAmounts: !hideAmounts })} hitSlop={8} testID="toggle-hide-amounts" style={styles.accountBtn}>
+          <Pressable onPress={() => void savePrefs({ hideAmounts: !hideAmounts })} hitSlop={8} accessibilityRole="button" accessibilityLabel={hideAmounts ? "रकम दिखाएँ" : "रकम छिपाएँ"} testID="toggle-hide-amounts" style={styles.accountBtn}>
             <MaterialIcon name={hideAmounts ? "eye-off-outline" : "eye-outline"} size={24} color={colors.onSurface} />
           </Pressable>
-          <Pressable onPress={() => router.push("/(tabs)/profile")} hitSlop={8} testID="open-profile" style={styles.accountBtn}>
+          <Pressable onPress={() => router.push("/(tabs)/profile")} hitSlop={8} accessibilityRole="button" accessibilityLabel="प्रोफ़ाइल और सेटिंग" testID="open-profile" style={styles.accountBtn}>
             <MaterialIcon name="account-circle-outline" size={28} color={colors.onSurface} />
           </Pressable>
         </View>
@@ -282,7 +282,7 @@ export default function Home() {
                       {c.phone ? <Text style={styles.resultSub}>{formatPhone(c.phone)}</Text> : null}
                     </View>
                     <Text style={[styles.resultDue, { color: b > 0 ? colors.error : b < 0 && c.persona === "personal" ? colors.warning : colors.success }]}>
-                      {b === 0 ? TERMS.settled : `${formatINR(Math.abs(b))} ${balanceTerm(b, c.persona === "personal", true)}`}
+                      {b === 0 ? TERMS.settled : `${money(Math.abs(b))} ${balanceTerm(b, c.persona === "personal", true)}`}
                     </Text>
                   </Pressable>
                 ))}
@@ -323,7 +323,7 @@ export default function Home() {
                   >
                     <MaterialIcon name="account-outline" size={14} color={colors.brandPrimary} />
                     <Text style={styles.recentChipName} numberOfLines={1}>{c.name}</Text>
-                    {bal > 0 ? (
+                    {bal > 0 && !hideAmounts ? (
                       <Text style={styles.recentChipDue}>{formatINR(bal)}</Text>
                     ) : null}
                   </Pressable>
@@ -450,7 +450,13 @@ export default function Home() {
                 <MaterialIcon name={isPersonal ? "swap-vertical" : "briefcase-plus-outline"} size={17} color={colors.onBrandPrimary} />
                 <Text style={styles.primaryActionText}>{labels.newWork}</Text>
               </Pressable>
-              <Pressable style={styles.expenseAction} onPress={() => setExpenseSheet(true)} testID="quick-expense">
+              {isPersonal ? null : (
+                <Pressable style={styles.gotAction} onPress={() => setMoneySheet(true)} accessibilityRole="button" accessibilityLabel="पैसे मिले" testID="quick-payment">
+                  <MaterialIcon name="arrow-bottom-left" size={17} color={colors.success} />
+                  <Text style={styles.gotActionText}>पैसे मिले</Text>
+                </Pressable>
+              )}
+              <Pressable style={styles.expenseAction} onPress={() => setExpenseSheet(true)} accessibilityRole="button" accessibilityLabel="खर्च" testID="quick-expense">
                 <MaterialIcon name="coffee-outline" size={17} color={colors.warning} />
                 <Text style={styles.expenseActionText}>खर्च</Text>
               </Pressable>
@@ -538,7 +544,7 @@ export default function Home() {
                               {[label, e.description, e.date === today ? "आज" : formatDateShort(e.date)].filter(Boolean).join(" · ")}
                             </Text>
                           </View>
-                          <Text style={{ fontSize: 15, fontWeight: "800", color: tint }}>{formatINR(e.amount)}</Text>
+                          <Text style={{ fontSize: 15, fontWeight: "800", color: tint, fontVariant: ["tabular-nums"] }}>{money(e.amount)}</Text>
                         </Pressable>
                       );
                     })}
@@ -574,7 +580,7 @@ export default function Home() {
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.rowTitle} numberOfLines={1}>{j.title}</Text>
                         <Text style={styles.rowSub} numberOfLines={1}>
-                          {nameOf(j.customerId)}{j.estimatedAmount > 0 ? ` · ${formatINR(j.estimatedAmount)}` : ""}{late ? " · देर" : ""}
+                          {nameOf(j.customerId)}{j.estimatedAmount > 0 ? ` · ${money(j.estimatedAmount)}` : ""}{late ? " · देर" : ""}
                         </Text>
                       </View>
                       <MaterialIcon name="pencil-outline" size={18} color={colors.muted} />
@@ -601,10 +607,10 @@ export default function Home() {
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.rowTitle} numberOfLines={1}>{j.title}</Text>
                         <Text style={styles.rowSub} numberOfLines={1}>
-                          {nameOf(j.customerId)} · {w.date === today ? "आज" : formatDateShort(w.date)} · {formatINR(w.amount)}
+                          {nameOf(j.customerId)} · {w.date === today ? "आज" : formatDateShort(w.date)} · {money(w.amount)}
                         </Text>
                       </View>
-                      <Pressable style={styles.receiptBtn} onPress={() => sendReceipt(w)} hitSlop={6} testID={`home-receipt-${j.id}`}>
+                      <Pressable style={styles.receiptBtn} onPress={() => sendReceipt(w)} hitSlop={6} accessibilityRole="button" accessibilityLabel={`${j.title} की रसीद भेजें`} testID={`home-receipt-${j.id}`}>
                         <MaterialIcon name="file-document-outline" size={16} color={colors.brandPrimary} />
                         <Text style={styles.receiptBtnText}>रसीद</Text>
                       </Pressable>
@@ -648,8 +654,8 @@ function StatCard({ label, value, hint, icon, tone, onPress, testID }: { label: 
 
 const styles = StyleSheet.create({
   topRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md },
-  accountBtn: { marginTop: spacing.sm, width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  eyebrow: { fontSize: 11, color: colors.brandSecondary, fontWeight: "700", textTransform: "uppercase" },
+  accountBtn: { marginTop: spacing.xs, width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  eyebrow: { ...type.caption, color: colors.brandSecondary, fontWeight: "700", textTransform: "uppercase" },
   h1: { fontSize: 30, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xs },
   sub: { fontSize: 13, color: colors.muted, marginTop: spacing.xs },
   pendingPill: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", marginTop: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.errorSoft },
@@ -673,6 +679,8 @@ const styles = StyleSheet.create({
   primaryActionText: { color: colors.onBrandPrimary, fontSize: 15, fontWeight: "700" },
   secondaryAction: { flex: 2.5, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.surface },
   secondaryActionText: { color: colors.brandPrimary, fontSize: 14, fontWeight: "700" },
+  gotAction: { flex: 2.5, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 3, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: semantic.received, backgroundColor: semantic.receivedSoft },
+  gotActionText: { color: semantic.received, fontSize: 14, fontWeight: "700" },
   expenseAction: { flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 3, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.surfaceSecondary },
   expenseActionText: { color: colors.warning, fontSize: 14, fontWeight: "700" },
   taskAction: { flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary },
@@ -730,7 +738,7 @@ const styles = StyleSheet.create({
     color: colors.onSurface,
   },
   resultSub: {
-    fontSize: 11,
+    ...type.caption,
     color: colors.muted,
     marginTop: 1,
   },
@@ -745,7 +753,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   recentLabel: {
-    fontSize: 11,
+    ...type.caption,
     color: colors.muted,
     fontWeight: "700",
   },
@@ -767,7 +775,8 @@ const styles = StyleSheet.create({
     maxWidth: 90,
   },
   recentChipDue: {
-    fontSize: 11,
+    ...type.caption,
+    fontVariant: ["tabular-nums"],
     fontWeight: "700",
     color: colors.error,
   },
@@ -776,7 +785,7 @@ const styles = StyleSheet.create({
   sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xl, marginBottom: spacing.md },
   sectionHead: { fontSize: 18, fontWeight: "700", color: colors.onSurface },
   link: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
-  receiptBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandPrimary },
+  receiptBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md, minHeight: 40, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandPrimary },
   receiptBtnText: { fontSize: 12, fontWeight: "700", color: colors.brandPrimary },
   rowTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   rowSub: { fontSize: 12, color: colors.muted, marginTop: 2 },

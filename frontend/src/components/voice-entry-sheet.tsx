@@ -298,7 +298,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   chipText: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.onSurface,
   },
   previewCard: {
@@ -336,7 +336,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
   },
   badgeText: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: "700",
   },
   typeSelector: {
@@ -356,7 +356,7 @@ const styles = StyleSheet.create({
     borderColor: colors.brandPrimary,
   },
   typeBtnText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "600",
     color: colors.onSurface,
   },

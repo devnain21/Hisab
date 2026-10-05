@@ -4,7 +4,7 @@ import Animated, { FadeInDown } from "react-native-reanimated";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, spacing, radius } from "@/src/theme";
+import { colors, spacing, radius, semantic } from "@/src/theme";
 import { computeBalance, isRepayment, itemsOf, useAeps, useCustomers, useEntries, useJobs, type AepsTxn, type Entry, type EntryType, type Job } from "@/src/lib/data";
 import { AEPS_META, STATUS_META, aepsBill, aepsDue, defaultVia, statusLabel, viaBill } from "@/src/lib/aeps";
 import { formatDate, formatINR, formatPhone, monthRange, todayISO } from "@/src/lib/format";
@@ -12,6 +12,7 @@ import { store } from "@/src/lib/store";
 import { buildLedger, type WorkState, type WorkStatus } from "@/src/lib/records";
 import { AddEntrySheet, AddJobSheet, AddCustomerSheet, Chip, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
+import { IconButton, IconLabel } from "@/src/components/ui";
 import { useAuth } from "@/src/context/AuthContext";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import { aepsReceiptDoc, receiptDoc, statementDoc, reminderDoc, type ShareDoc } from "@/src/lib/receipt";
@@ -143,11 +144,9 @@ export default function CustomerDetail() {
   const openReminder = () => setShareDoc(reminderDoc(customer, due, user ?? {}));
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, flexDirection: "row", alignItems: "center", gap: spacing.md }}>
-        <Pressable onPress={() => router.back()} hitSlop={12} testID="back-btn">
-          <MaterialIcon name="arrow-left" size={26} color={colors.onSurface} />
-        </Pressable>
-        <View style={{ flex: 1, minWidth: 0 }}>
+      <View style={{ paddingTop: insets.top + spacing.sm, paddingHorizontal: spacing.sm, paddingBottom: spacing.sm, flexDirection: "row", alignItems: "center" }}>
+        <IconButton icon="arrow-left" label="वापस" size={26} onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))} testID="back-btn" />
+        <View style={{ flex: 1, minWidth: 0, marginLeft: spacing.xs }}>
           <Text style={styles.name} numberOfLines={2}>{customer.name}</Text>
           <Text style={styles.sub} numberOfLines={1}>
             {customer.phone ? formatPhone(customer.phone) : "फ़ोन नहीं"}{customer.address ? ` · ${customer.address}` : ""}
@@ -155,24 +154,18 @@ export default function CustomerDetail() {
         </View>
         {customer.phone ? (
           <>
-            <Pressable onPress={() => Linking.openURL(`tel:${customer.phone}`)} hitSlop={8} testID="call-cust-btn">
-              <MaterialIcon name="phone-outline" size={22} color={colors.onSurface} />
-            </Pressable>
-            <Pressable
+            <IconButton icon="phone-outline" label="कॉल करें" onPress={() => Linking.openURL(`tel:${customer.phone}`)} testID="call-cust-btn" />
+            <IconButton
+              icon="whatsapp"
+              label="WhatsApp खोलें"
+              color={semantic.whatsapp}
               onPress={() => Linking.openURL(`https://wa.me/91${customer.phone.replace(/[^0-9]/g, "").slice(-10)}`)}
-              hitSlop={8}
               testID="direct-wa-btn"
-            >
-              <MaterialIcon name="whatsapp" size={22} color="#128C7E" />
-            </Pressable>
+            />
           </>
         ) : null}
-        <Pressable onPress={openStatement} hitSlop={8} testID="share-whatsapp-btn">
-          <MaterialIcon name="share-variant-outline" size={22} color={colors.brandPrimary} />
-        </Pressable>
-        <Pressable onPress={() => setEditSheet(true)} hitSlop={10} testID="edit-cust-btn">
-          <MaterialIcon name="pencil-outline" size={22} color={colors.onSurface} />
-        </Pressable>
+        <IconButton icon="share-variant-outline" label="हिसाब शेयर करें" color={colors.brandPrimary} onPress={openStatement} testID="share-whatsapp-btn" />
+        <IconButton icon="pencil-outline" label="विवरण बदलें" onPress={() => setEditSheet(true)} testID="edit-cust-btn" />
       </View>
 
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}>
@@ -463,7 +456,7 @@ function AepsRow({ t, kept, onPress }: { t: AepsTxn; kept: number; onPress: () =
 
 function ReceiptButton({ entryId, onPress }: { entryId: string; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} hitSlop={10} style={styles.receiptBtn} testID={`receipt-${entryId}`}>
+    <Pressable onPress={onPress} hitSlop={6} style={styles.receiptBtn} accessibilityRole="button" accessibilityLabel="रसीद भेजें" testID={`receipt-${entryId}`}>
       <MaterialIcon name="receipt-text-outline" size={20} color={colors.brandPrimary} />
     </Pressable>
   );
@@ -493,7 +486,7 @@ function WorkCard({ entry, status, onPress, onSettle, onReceipt }: { entry: Entr
           <Text style={styles.jobTitle} numberOfLines={2}>{entry.description || (purchase ? "सामान / सेवा" : given ? "पैसे दिए" : "काम")}</Text>
           <Text style={styles.sub}>{formatDate(entry.date)}{entry.notes ? ` · ${entry.notes}` : ""}</Text>
           {entry.fee && entry.fee > 0 ? (
-            <Text style={{ fontSize: 11, color: colors.muted, marginTop: 2 }}>
+            <Text style={{ fontSize: 12, color: colors.muted, marginTop: 2 }}>
               पोर्टल फीस: {formatINR(entry.fee)} ({entry.feeMode === "cash" ? "नकद" : "बैंक"}) · बचत: {formatINR(entry.amount - entry.fee)}
             </Text>
           ) : null}
@@ -535,7 +528,7 @@ function WorkCard({ entry, status, onPress, onSettle, onReceipt }: { entry: Entr
             {status.fromJama > 0 && status.settlements.length === 0 ? word.fromPool : ""}
           </Text>
           {status.state === "settled" ? (
-            <Text style={[styles.moneyText, { color: colors.success, fontWeight: "700" }]}>✔ {status.settledOn ? `${formatDate(status.settledOn)} को ` : ""}चुकता</Text>
+            <IconLabel icon="check-circle" color={colors.success} label={`${status.settledOn ? `${formatDate(status.settledOn)} को ` : ""}चुकता`} style={[styles.moneyText, { fontWeight: "700" }]} />
           ) : (
             <Text style={[styles.moneyText, { color: ui.fg, fontWeight: "800" }]}>{word.left} {formatINR(status.remaining)}</Text>
           )}
@@ -599,7 +592,7 @@ const styles = StyleSheet.create({
   actionText: { color: "#fff", fontWeight: "700", fontSize: 13 },
   statementBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, marginTop: spacing.sm, paddingVertical: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.surface },
   statementText: { color: colors.brandPrimary, fontWeight: "700", fontSize: 13 },
-  statementHint: { color: colors.muted, fontSize: 11 },
+  statementHint: { color: colors.muted, fontSize: 12 },
   sectionHead: { fontSize: 17, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xl, marginBottom: spacing.md },
   sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xl, marginBottom: spacing.md },  jobRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   jobTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
@@ -611,11 +604,11 @@ const styles = StyleSheet.create({
   filterText: { fontSize: 12, fontWeight: "700", color: colors.onSurface },
   card: { padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   cardTop: { flexDirection: "row", gap: spacing.md, alignItems: "flex-start" },
-  receiptBtn: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center", backgroundColor: colors.brandTertiary },
+  receiptBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: colors.brandTertiary },
   iconBadge: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   amount: { fontSize: 16, fontWeight: "800", color: colors.onSurface },
   statePill: { flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.pill, marginTop: 4 },
-  stateText: { fontSize: 11, fontWeight: "800" },
+  stateText: { fontSize: 12, fontWeight: "800" },
   moneyLine: { flexDirection: "row", flexWrap: "wrap", columnGap: spacing.md, rowGap: 2, marginTop: spacing.sm, marginLeft: 48 },
   moneyText: { fontSize: 12, color: colors.onSurfaceSecondary },
   settleBtn: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, borderRadius: radius.md, backgroundColor: colors.success },

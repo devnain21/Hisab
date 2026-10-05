@@ -17,7 +17,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/src/context/AuthContext";
-import { colors, spacing, radius } from "@/src/theme";
+import { colors, spacing, radius, semantic } from "@/src/theme";
+import { IconButton } from "@/src/components/ui";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
 import * as Application from "expo-application";
@@ -345,11 +346,13 @@ export default function Profile() {
         paddingBottom: spacing.xxl,
       }}
     >
-      <View style={styles.topHeader}>
+      <View style={[styles.topHeader, { alignItems: "center", gap: spacing.xs }]}>
+        <IconButton icon="arrow-left" label="वापस" onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))} style={{ marginLeft: -spacing.sm }} testID="profile-back" />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.eyebrow}>प्रोफ़ाइल व सेटिंग्स</Text>
           <Text style={styles.h1}>{isPersonal ? "मेरा खाता" : "मेरी दुकान"}</Text>
         </View>
+        <IconButton icon="chart-box-outline" label="रिपोर्ट" color={colors.brandPrimary} background={colors.brandTertiary} onPress={() => router.push("/report" as never)} testID="profile-report" />
       </View>
 
       {hasShop ? (
@@ -395,14 +398,14 @@ export default function Profile() {
         {syncing ? <ActivityIndicator size="small" color={sync.color} /> : <Text style={[styles.syncLineAction, { color: sync.color }]}>{sync.action}</Text>}
       </Pressable>
 
-      <LinearGradient colors={["#0F172A", "#1E293B", "#334155"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.cardContainer}>
+      <LinearGradient colors={["#004D40", "#00695C", "#00796B"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.cardContainer}>
         <View style={styles.cardTopRow}>
           <View style={styles.merchantBadge}>
-            <MaterialIcon name={isPersonal ? "account" : "storefront"} size={13} color="#FCD34D" />
+            <MaterialIcon name={isPersonal ? "account" : "storefront"} size={13} color="#FFFFFF" />
             <Text style={styles.merchantBadgeText}>{isPersonal ? "निजी खाता" : "दुकान खाता"}</Text>
           </View>
-          <Pressable style={styles.editCardBtn} onPress={() => setShopSheet(true)} testID="profile-edit-visiting-card">
-            <MaterialIcon name="pencil" size={14} color="#CBD5E1" />
+          <Pressable style={styles.editCardBtn} onPress={() => setShopSheet(true)} hitSlop={8} accessibilityRole="button" accessibilityLabel="जानकारी बदलें" testID="profile-edit-visiting-card">
+            <MaterialIcon name="pencil" size={14} color="#E0F2F1" />
             <Text style={styles.editCardBtnText}>बदलें</Text>
           </Pressable>
         </View>
@@ -416,20 +419,20 @@ export default function Profile() {
               {isPersonal ? user?.email : ownerName ? `प्रोपराइटर: ${ownerName}` : user?.email}
             </Text>
             <View style={styles.cardDetailRow}>
-              <MaterialIcon name="phone-outline" size={13} color="#94A3B8" />
+              <MaterialIcon name="phone-outline" size={13} color="#B2DFDB" />
               <Text style={styles.cardDetailText} numberOfLines={1}>
                 {user?.shop_phone ? formatPhone(user.shop_phone) : "फ़ोन नंबर जोड़ें"}
               </Text>
             </View>
             {user?.shop_address ? (
               <View style={styles.cardDetailRow}>
-                <MaterialIcon name="map-marker-outline" size={13} color="#94A3B8" />
+                <MaterialIcon name="map-marker-outline" size={13} color="#B2DFDB" />
                 <Text style={styles.cardDetailText} numberOfLines={1}>{user.shop_address}</Text>
               </View>
             ) : null}
             {!isPersonal && user?.shop_gst ? (
               <View style={styles.cardDetailRow}>
-                <MaterialIcon name="card-account-details-outline" size={13} color="#94A3B8" />
+                <MaterialIcon name="card-account-details-outline" size={13} color="#B2DFDB" />
                 <Text style={styles.cardDetailText} numberOfLines={1}>GSTIN: {user.shop_gst}</Text>
               </View>
             ) : null}
@@ -446,13 +449,13 @@ export default function Profile() {
         {user?.shop_upi ? (
           <View style={styles.upiPill}>
             <View style={styles.upiPillLeft}>
-              <MaterialIcon name="qrcode-scan" size={15} color="#38BDF8" />
+              <MaterialIcon name="qrcode-scan" size={15} color="#FFFFFF" />
               <Text style={styles.upiPillText} numberOfLines={1}>
                 UPI: <Text style={styles.upiPillBold}>{user.shop_upi}</Text>
               </Text>
             </View>
-            <Pressable style={styles.upiCopyBtn} onPress={() => handleCopyUpi(user.shop_upi || "")} testID="copy-upi-btn">
-              <Text style={styles.upiCopyText}>{copiedUpi ? "कॉपी हुआ ✓" : "कॉपी"}</Text>
+            <Pressable style={styles.upiCopyBtn} onPress={() => handleCopyUpi(user.shop_upi || "")} hitSlop={8} accessibilityRole="button" accessibilityLabel="UPI ID कॉपी करें" testID="copy-upi-btn">
+              <Text style={styles.upiCopyText}>{copiedUpi ? "कॉपी हुआ" : "कॉपी"}</Text>
             </Pressable>
           </View>
         ) : null}
@@ -471,7 +474,7 @@ export default function Profile() {
 
         <View style={styles.cardActionsRow}>
           <Pressable style={styles.cardPrimaryBtn} onPress={handleShareVisitingCard} testID="share-card-btn">
-            <MaterialIcon name="share-variant-outline" size={15} color="#0F172A" />
+            <MaterialIcon name="share-variant-outline" size={15} color={colors.brandSecondary} />
             <Text style={styles.cardPrimaryBtnText}>कार्ड शेयर करें</Text>
           </Pressable>
           <Pressable style={styles.cardSecondaryBtn} onPress={() => setQrModalOpen(true)} testID="view-qr-btn">
@@ -484,7 +487,7 @@ export default function Profile() {
       <Text style={styles.groupHead}>रिपोर्ट व हिसाब</Text>
       <View style={styles.card}>
         <Pressable style={styles.settingRow} onPress={() => router.push("/report" as never)} testID="profile-report">
-          <View style={[styles.iconCircle, { backgroundColor: colors.brandTertiary }]}>
+          <View style={styles.iconCircle}>
             <MaterialIcon name="chart-box-outline" size={20} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
@@ -496,8 +499,8 @@ export default function Profile() {
           <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
         </Pressable>
         <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => router.push("/balance" as never)} testID="profile-total-balance">
-          <View style={[styles.iconCircle, { backgroundColor: colors.successSoft }]}>
-            <MaterialIcon name="wallet-outline" size={20} color={colors.success} />
+          <View style={styles.iconCircle}>
+            <MaterialIcon name="wallet-outline" size={20} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowValue}>{labels.cash} व बैंक</Text>
@@ -512,7 +515,7 @@ export default function Profile() {
       <Text style={styles.groupHead}>{isPersonal ? "मेरी सेटिंग्स" : "दुकान सेटिंग्स"}</Text>
       <View style={styles.card}>
         <Pressable style={styles.settingRow} onPress={() => setShopSheet(true)} testID="profile-shop-settings">
-          <View style={[styles.iconCircle, { backgroundColor: colors.brandTertiary }]}>
+          <View style={styles.iconCircle}>
             <MaterialIcon name="storefront-outline" size={20} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
@@ -525,8 +528,8 @@ export default function Profile() {
         </Pressable>
 
         <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => setQrModalOpen(true)} testID="profile-qr-settings">
-          <View style={[styles.iconCircle, { backgroundColor: "#EFF6FF" }]}>
-            <MaterialIcon name="qrcode" size={20} color="#2563EB" />
+          <View style={styles.iconCircle}>
+            <MaterialIcon name="qrcode" size={20} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowValue}>{isPersonal ? "मेरा QR कोड" : "दुकान का QR कोड"}</Text>
@@ -537,8 +540,8 @@ export default function Profile() {
 
         {!isPersonal ? (
           <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => setReceiptSheet(true)} testID="profile-receipt-settings">
-            <View style={[styles.iconCircle, { backgroundColor: "#F5F3FF" }]}>
-              <MaterialIcon name="receipt-text-outline" size={20} color="#6D28D9" />
+            <View style={styles.iconCircle}>
+              <MaterialIcon name="receipt-text-outline" size={20} color={colors.brandPrimary} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.rowValue}>बिल / रसीद सेटिंग</Text>
@@ -549,8 +552,8 @@ export default function Profile() {
         ) : null}
 
         <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => setReminderSheet(true)} testID="profile-reminder-text">
-          <View style={[styles.iconCircle, { backgroundColor: "#E7F6EC" }]}>
-            <MaterialIcon name="whatsapp" size={20} color="#128C7E" />
+          <View style={styles.iconCircle}>
+            <MaterialIcon name="whatsapp" size={20} color={semantic.whatsapp} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowValue}>तगादा मैसेज</Text>
@@ -560,8 +563,8 @@ export default function Profile() {
         </Pressable>
 
         <View style={[styles.settingRow, styles.rowBorder]}>
-          <View style={[styles.iconCircle, { backgroundColor: colors.successSoft }]}>
-            <MaterialIcon name="cash-sync" size={20} color={colors.success} />
+          <View style={styles.iconCircle}>
+            <MaterialIcon name="cash-sync" size={20} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowValue}>पैसे अक्सर कैसे मिलते हैं</Text>
@@ -580,8 +583,8 @@ export default function Profile() {
       <Text style={styles.groupHead}>सुरक्षा व गोपनीयता</Text>
       <View style={styles.card}>
         <View style={styles.settingRow}>
-          <View style={[styles.iconCircle, { backgroundColor: colors.surface }]}>
-            <MaterialIcon name="eye-off-outline" size={20} color={colors.onSurface} />
+          <View style={styles.iconCircle}>
+            <MaterialIcon name="eye-off-outline" size={20} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowValue}>बैलेंस छुपाएँ</Text>
@@ -593,8 +596,8 @@ export default function Profile() {
         {lockSupported ? (
           <>
             <View style={[styles.settingRow, styles.rowBorder]}>
-              <View style={[styles.iconCircle, { backgroundColor: "#FEF2F2" }]}>
-                <MaterialIcon name="shield-lock-outline" size={20} color={colors.error} />
+              <View style={styles.iconCircle}>
+                <MaterialIcon name="shield-lock-outline" size={20} color={colors.brandPrimary} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowValue}>ऐप लॉक (PIN)</Text>
@@ -605,7 +608,7 @@ export default function Profile() {
 
             {lock.enabled ? (
               <View style={[styles.settingRow, styles.rowBorder, { flexWrap: "wrap" }]}>
-                <View style={[styles.iconCircle, { backgroundColor: colors.brandTertiary }]}>
+                <View style={styles.iconCircle}>
                   <MaterialIcon name="timer-lock-outline" size={20} color={colors.brandPrimary} />
                 </View>
                 <View style={{ flex: 1 }}>
@@ -624,8 +627,8 @@ export default function Profile() {
 
             {lock.enabled && hasBio ? (
               <View style={[styles.settingRow, styles.rowBorder]}>
-                <View style={[styles.iconCircle, { backgroundColor: "#F0FDF4" }]}>
-                  <MaterialIcon name="fingerprint" size={20} color={colors.success} />
+                <View style={styles.iconCircle}>
+                  <MaterialIcon name="fingerprint" size={20} color={colors.brandPrimary} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.rowValue}>फिंगरप्रिंट से खोलें</Text>
@@ -637,7 +640,7 @@ export default function Profile() {
 
             {lock.enabled ? (
               <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => setVerifyFor("change")} testID="change-pin">
-                <View style={[styles.iconCircle, { backgroundColor: colors.brandTertiary }]}>
+                <View style={styles.iconCircle}>
                   <MaterialIcon name="form-textbox-password" size={20} color={colors.brandPrimary} />
                 </View>
                 <View style={{ flex: 1 }}>
@@ -670,8 +673,8 @@ export default function Profile() {
 
         <View style={[styles.settingRow, styles.rowBorder, { flexWrap: "wrap" }]}>
           <Pressable style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, flex: 1, minWidth: 200 }} onPress={backup} disabled={backingUp} testID="backup-btn">
-            <View style={[styles.iconCircle, { backgroundColor: "#F0FDF4" }]}>
-              <MaterialIcon name="file-excel-outline" size={20} color={colors.success} />
+            <View style={styles.iconCircle}>
+              <MaterialIcon name="file-excel-outline" size={20} color={colors.brandPrimary} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.rowValue}>Excel फ़ाइल (.csv)</Text>
@@ -691,8 +694,8 @@ export default function Profile() {
         </View>
 
         <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={jsonBackup} disabled={backingUp} testID="backup-json-btn">
-          <View style={[styles.iconCircle, { backgroundColor: "#EFF6FF" }]}>
-            <MaterialIcon name="cloud-download-outline" size={20} color="#1D4ED8" />
+          <View style={styles.iconCircle}>
+            <MaterialIcon name="cloud-download-outline" size={20} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowValue}>पूरा बैकअप (.json)</Text>
@@ -703,8 +706,8 @@ export default function Profile() {
 
         {Platform.OS !== "web" ? (
           <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={restoreBackup} testID="restore-json-btn">
-            <View style={[styles.iconCircle, { backgroundColor: "#F5F3FF" }]}>
-              <MaterialIcon name="backup-restore" size={20} color="#6D28D9" />
+            <View style={styles.iconCircle}>
+              <MaterialIcon name="backup-restore" size={20} color={colors.brandPrimary} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.rowValue}>बैकअप से वापस लाएँ</Text>
@@ -715,8 +718,8 @@ export default function Profile() {
         ) : null}
 
         <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => setTrashOpen(true)} testID="trash-btn">
-          <View style={[styles.iconCircle, { backgroundColor: "#FFFBEB" }]}>
-            <MaterialIcon name="delete-restore" size={20} color={colors.warning} />
+          <View style={styles.iconCircle}>
+            <MaterialIcon name="delete-restore" size={20} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
@@ -737,7 +740,7 @@ export default function Profile() {
       <Text style={styles.groupHead}>मदद व जानकारी</Text>
       <View style={styles.card}>
         <Pressable style={styles.settingRow} onPress={() => setGuideOpen(true)} testID="profile-guide">
-          <View style={[styles.iconCircle, { backgroundColor: colors.brandTertiary }]}>
+          <View style={styles.iconCircle}>
             <MaterialIcon name="lightbulb-on-outline" size={20} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
@@ -747,8 +750,8 @@ export default function Profile() {
           <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
         </Pressable>
         <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={openSupport} testID="profile-support">
-          <View style={[styles.iconCircle, { backgroundColor: "#E7F6EC" }]}>
-            <MaterialIcon name="whatsapp" size={20} color="#128C7E" />
+          <View style={styles.iconCircle}>
+            <MaterialIcon name="whatsapp" size={20} color={semantic.whatsapp} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowValue}>मदद चाहिए? WhatsApp करें</Text>
@@ -757,8 +760,8 @@ export default function Profile() {
           <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
         </Pressable>
         <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={checkUpdate} disabled={checkingUpdate} testID="profile-check-update">
-          <View style={[styles.iconCircle, { backgroundColor: colors.successSoft }]}>
-            <MaterialIcon name="cellphone-arrow-down" size={20} color={colors.success} />
+          <View style={styles.iconCircle}>
+            <MaterialIcon name="cellphone-arrow-down" size={20} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowValue}>नया अपडेट जाँचें</Text>
@@ -879,8 +882,8 @@ function QrCodeModal({
               <View style={qrStyles.upiBox}>
                 <Text style={qrStyles.upiLabel}>UPI ID: </Text>
                 <Text style={qrStyles.upiVal} numberOfLines={1}>{upiId}</Text>
-                <Pressable style={qrStyles.copyPill} onPress={handleCopy} testID="qr-copy-btn">
-                  <Text style={qrStyles.copyPillText}>{copied ? "कॉपी ✓" : "कॉपी"}</Text>
+                <Pressable style={qrStyles.copyPill} onPress={handleCopy} hitSlop={10} accessibilityRole="button" accessibilityLabel="UPI ID कॉपी करें" testID="qr-copy-btn">
+                  <Text style={qrStyles.copyPillText}>{copied ? "कॉपी हुआ" : "कॉपी"}</Text>
                 </Pressable>
               </View>
 
@@ -915,7 +918,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   eyebrow: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.brandSecondary,
     fontWeight: "700",
     textTransform: "uppercase",
@@ -964,22 +967,23 @@ const styles = StyleSheet.create({
   },
   merchantBadgeText: {
     color: "#F8FAFC",
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: "700",
   },
   editCardBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 3,
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    gap: 4,
+    backgroundColor: "rgba(255, 255, 255, 0.16)",
+    paddingHorizontal: spacing.md,
+    minHeight: 32,
     borderRadius: radius.pill,
   },
   editCardBtnText: {
-    color: "#CBD5E1",
-    fontSize: 11,
-    fontWeight: "600",
+    color: "#E0F2F1",
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "700",
   },
   cardMain: {
     flexDirection: "row",
@@ -996,7 +1000,7 @@ const styles = StyleSheet.create({
   cardOwnerName: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#94A3B8",
+    color: "#B2DFDB",
     marginTop: 2,
   },
   cardDetailRow: {
@@ -1007,7 +1011,7 @@ const styles = StyleSheet.create({
   },
   cardDetailText: {
     fontSize: 12,
-    color: "#CBD5E1",
+    color: "#E0F2F1",
     fontWeight: "500",
   },
   cardAvatar: {
@@ -1025,7 +1029,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
-    borderColor: "#94A3B8",
+    borderColor: "#B2DFDB",
   },
   cardAvatarInitials: {
     fontSize: 22,
@@ -1049,22 +1053,24 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   upiPillText: {
-    color: "#CBD5E1",
+    color: "#E0F2F1",
     fontSize: 12,
   },
   upiPillBold: {
-    color: "#38BDF8",
+    color: "#FFFFFF",
     fontWeight: "700",
   },
   upiCopyBtn: {
-    backgroundColor: "rgba(56, 189, 248, 0.2)",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    paddingHorizontal: spacing.md,
+    minHeight: 32,
+    justifyContent: "center",
     borderRadius: radius.pill,
   },
   upiCopyText: {
-    color: "#38BDF8",
-    fontSize: 11,
+    color: "#FFFFFF",
+    fontSize: 12,
+    lineHeight: 18,
     fontWeight: "700",
   },
   cardActionsRow: {
@@ -1083,7 +1089,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   cardPrimaryBtnText: {
-    color: "#0F172A",
+    color: colors.brandSecondary,
     fontSize: 12,
     fontWeight: "700",
   },
@@ -1157,7 +1163,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   sectionMiniLabel: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: "800",
     color: colors.muted,
     textTransform: "uppercase",
@@ -1193,7 +1199,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   personaHelper: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.muted,
     marginTop: 6,
     lineHeight: 15,
@@ -1224,7 +1230,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.errorSoft,
   },
   healthChipText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "700",
   },
   healthTextGood: {
@@ -1257,7 +1263,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   analyticsLabel: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.muted,
     fontWeight: "600",
   },
@@ -1268,7 +1274,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   analyticsSub: {
-    fontSize: 10,
+    fontSize: 12,
     color: colors.muted,
     marginTop: 2,
   },
@@ -1292,7 +1298,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   progressSubText: {
-    fontSize: 10,
+    fontSize: 12,
     color: colors.muted,
   },
 
@@ -1312,7 +1318,7 @@ const styles = StyleSheet.create({
     color: colors.success,
   },
   syncSub: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.onSurfaceSecondary,
     marginTop: 2,
   },
@@ -1325,7 +1331,7 @@ const styles = StyleSheet.create({
     borderColor: colors.warning,
   },
   syncBtnSmallText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "700",
     color: colors.warning,
   },
@@ -1375,7 +1381,7 @@ const styles = StyleSheet.create({
     color: colors.onSurface,
   },
   rowLabel: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.muted,
     marginTop: 2,
   },
@@ -1386,7 +1392,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   trashBadgeText: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: "700",
     color: colors.warning,
   },
@@ -1418,12 +1424,12 @@ const styles = StyleSheet.create({
   syncLine: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.md, marginBottom: spacing.md, paddingHorizontal: spacing.md, paddingVertical: 10, borderRadius: radius.md, backgroundColor: colors.successSoft },
   syncLineText: { flex: 1, fontSize: 12, fontWeight: "700" },
   syncLineAction: { fontSize: 12, fontWeight: "800" },
-  meter: { marginTop: spacing.md, padding: spacing.sm, borderRadius: radius.sm, backgroundColor: "rgba(252, 211, 77, 0.12)" },
+  meter: { marginTop: spacing.md, padding: spacing.sm, borderRadius: radius.sm, backgroundColor: "rgba(255, 255, 255, 0.12)" },
   meterHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  meterText: { fontSize: 12, fontWeight: "700", color: "#FCD34D" },
+  meterText: { fontSize: 12, fontWeight: "700", color: "#FFFFFF" },
   meterAction: { fontSize: 12, fontWeight: "800", color: "#F8FAFC" },
   meterTrack: { height: 5, borderRadius: 3, backgroundColor: "rgba(255, 255, 255, 0.15)", marginTop: 6, overflow: "hidden" },
-  meterFill: { height: 5, borderRadius: 3, backgroundColor: "#FCD34D" },
+  meterFill: { height: 5, borderRadius: 3, backgroundColor: "#FFFFFF" },
   miniSeg: { flexDirection: "row", backgroundColor: colors.surface, borderRadius: radius.pill, padding: 2, borderWidth: 1, borderColor: colors.border },
   miniSegBtn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill },
   miniSegOn: { backgroundColor: colors.brandPrimary },
@@ -1434,7 +1440,7 @@ const styles = StyleSheet.create({
   backupStatus: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: 10, backgroundColor: colors.successSoft },
   backupStatusText: { flex: 1, fontSize: 12, fontWeight: "700" },
   dangerZone: { marginTop: spacing.xl, borderWidth: 1, borderColor: colors.error, borderRadius: radius.md, padding: spacing.md, backgroundColor: "#FFF7F6" },
-  dangerHead: { fontSize: 11, fontWeight: "800", color: colors.error, letterSpacing: 0.5, marginBottom: spacing.xs },
+  dangerHead: { fontSize: 12, fontWeight: "800", color: colors.error, letterSpacing: 0.5, marginBottom: spacing.xs },
   dangerRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingVertical: spacing.xs },
 
   // Footer
@@ -1449,7 +1455,7 @@ const styles = StyleSheet.create({
     color: colors.muted,
   },
   footerSub: {
-    fontSize: 10,
+    fontSize: 12,
     color: colors.muted,
     marginTop: 2,
   },
@@ -1528,12 +1534,14 @@ const qrStyles = StyleSheet.create({
   copyPill: {
     marginLeft: 8,
     backgroundColor: colors.brandTertiary,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingHorizontal: spacing.md,
+    minHeight: 28,
+    justifyContent: "center",
     borderRadius: radius.pill,
   },
   copyPillText: {
-    fontSize: 10,
+    fontSize: 12,
+    lineHeight: 18,
     fontWeight: "700",
     color: colors.brandPrimary,
   },

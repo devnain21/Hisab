@@ -310,11 +310,13 @@ export default function DayScreen() {
             ) : null}
             <View style={styles.workPillsRow}>
               <View style={[styles.miniPill, { backgroundColor: colors.successSoft }]}>
-                <Text style={[styles.miniPillText, { color: colors.success }]}>💵 नकद: {formatINR(workCash)}</Text>
+                <MaterialIcon name="cash" size={14} color={colors.success} />
+                <Text style={[styles.miniPillText, { color: colors.success }]}>नकद: {formatINR(workCash)}</Text>
               </View>
               {workOnline > 0 ? (
                 <View style={[styles.miniPill, { backgroundColor: colors.infoSoft }]}>
-                  <Text style={[styles.miniPillText, { color: colors.info }]}>📱 UPI: {formatINR(workOnline)}</Text>
+                  <MaterialIcon name="cellphone" size={14} color={colors.info} />
+                  <Text style={[styles.miniPillText, { color: colors.info }]}>UPI: {formatINR(workOnline)}</Text>
                 </View>
               ) : null}
               {workUdhaar > 0 ? (
@@ -794,24 +796,24 @@ const styles = StyleSheet.create({
   rangeCell: { flexBasis: "48%", flexGrow: 1, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   rangeVal: { fontSize: 20, fontWeight: "800", marginTop: 2 },
   rangeDayVal: { flex: 1, textAlign: "right", fontSize: 13, fontWeight: "700" },
-  rangeLegend: { fontSize: 11, color: colors.muted, textAlign: "right", marginTop: spacing.xs },
+  rangeLegend: { fontSize: 12, color: colors.muted, textAlign: "right", marginTop: spacing.xs },
   topBar: { flexDirection: "row", alignItems: "center", gap: spacing.lg, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
   topTitle: { flex: 1, fontSize: 18, fontWeight: "700", color: colors.onSurface },
   dateRow: { flexDirection: "row", alignItems: "center", marginTop: spacing.sm },
   arrow: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   dateText: { fontSize: 17, fontWeight: "700", color: colors.onSurface },
-  dateHint: { fontSize: 11, color: colors.muted, marginTop: 2 },
+  dateHint: { fontSize: 12, color: colors.muted, marginTop: 2 },
   segment: { flexDirection: "row", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: 4, marginTop: spacing.lg, borderWidth: 1, borderColor: colors.border },
   segmentBtn: { flex: 1, alignItems: "center", paddingVertical: 10, borderRadius: radius.sm },
   segmentActive: { backgroundColor: colors.brandPrimary },
   segmentText: { fontSize: 12, fontWeight: "700", color: colors.onSurface, paddingHorizontal: 2 },
-  segmentValue: { fontSize: 11, fontWeight: "600", color: colors.muted, marginTop: 1, paddingHorizontal: 2 },
+  segmentValue: { fontSize: 12, fontWeight: "600", color: colors.muted, marginTop: 1, paddingHorizontal: 2 },
   dayHero: { padding: spacing.lg, borderRadius: radius.md, backgroundColor: colors.brandPrimary, marginBottom: spacing.md },
   dayHeroLabel: { fontSize: 13, fontWeight: "600", color: colors.onBrandPrimary, opacity: 0.85 },
   dayHeroValue: { fontSize: 28, fontWeight: "800", color: colors.onBrandPrimary, marginTop: 2 },
   dayHeroRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md },
   dayHeroCell: { flex: 1, padding: spacing.sm, borderRadius: radius.sm, backgroundColor: "rgba(255,255,255,0.15)" },
-  dayHeroCellLabel: { fontSize: 11, color: colors.onBrandPrimary, opacity: 0.85 },
+  dayHeroCellLabel: { fontSize: 12, color: colors.onBrandPrimary, opacity: 0.85 },
   dayHeroCellValue: { fontSize: 15, fontWeight: "800", color: colors.onBrandPrimary, marginTop: 2 },
   breakdown: { marginBottom: spacing.lg, padding: spacing.md, gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   breakdownRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
@@ -855,11 +857,14 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   miniPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: radius.pill,
   },
-  miniPillText: { fontSize: 11, fontWeight: "700" },
+  miniPillText: { fontSize: 12, lineHeight: 18, fontWeight: "700" },
   modeBadgeOnline: {
     flexDirection: "row",
     alignItems: "center",
@@ -869,7 +874,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: colors.infoSoft,
   },
-  modeBadgeTextOnline: { fontSize: 10, fontWeight: "700", color: colors.info },
+  modeBadgeTextOnline: { fontSize: 12, fontWeight: "700", color: colors.info },
   modeBadgeCash: {
     flexDirection: "row",
     alignItems: "center",
@@ -879,8 +884,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: colors.successSoft,
   },
-  modeBadgeTextCash: { fontSize: 10, fontWeight: "700", color: colors.success },
-  feeInfoText: { fontSize: 11, color: colors.muted, marginTop: 2, fontWeight: "500" },
+  modeBadgeTextCash: { fontSize: 12, fontWeight: "700", color: colors.success },
+  feeInfoText: { fontSize: 12, color: colors.muted, marginTop: 2, fontWeight: "500" },
   row: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   name: { fontSize: 15, fontWeight: "700", color: colors.onSurface },
   desc: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: 2 },
@@ -1037,7 +1042,7 @@ const styles = StyleSheet.create({
     color: colors.onSurface,
   },
   expenseSub: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.muted,
     marginTop: 2,
   },
@@ -1062,7 +1067,7 @@ const styles = StyleSheet.create({
     color: colors.onSurface,
   },
   aepsDesc: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.muted,
     marginTop: 2,
   },

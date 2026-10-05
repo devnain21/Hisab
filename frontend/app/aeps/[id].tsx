@@ -166,7 +166,7 @@ export default function AepsDetail() {
             </View>
             <View style={styles.billCell}>
               <Text style={styles.billLabel}>बाकी</Text>
-              <Text style={[styles.billValue, { color: bill.due > 0 ? colors.error : colors.success }]}>{bill.due > 0 ? formatINR(bill.due) : "✔"}</Text>
+              <Text style={[styles.billValue, { color: bill.due > 0 ? colors.error : colors.success }]}>{bill.due > 0 ? formatINR(bill.due) : "पूरा"}</Text>
             </View>
           </View>
         ) : null}
@@ -234,7 +234,7 @@ export default function AepsDetail() {
             <MaterialIcon name="file-pdf-box" size={20} color={colors.onBrandPrimary} />
           )}
           <Text style={styles.pdfText}>
-            {sharingPdf ? "PDF बन रही है..." : "📄 PDF रसीद (प्रिंट / शेयर)"}
+            {sharingPdf ? "PDF बन रही है..." : "PDF रसीद (प्रिंट / शेयर)"}
           </Text>
         </Pressable>
 

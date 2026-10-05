@@ -5,10 +5,13 @@ import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
-import { colors, spacing, radius } from "@/src/theme";
+import { colors, spacing, radius, semantic, elevation, type } from "@/src/theme";
 import { entryDelta, useCustomers, useEntries } from "@/src/lib/data";
 import { buildAllLedgers } from "@/src/lib/records";
 import { formatDateShort, formatINR, formatPhone, initials, roundMoney, todayISO } from "@/src/lib/format";
+import { HIDDEN, usePrefs } from "@/src/lib/prefs";
+import { AddCustomerSheet } from "@/src/components/sheets";
+import { Amount, EmptyState } from "@/src/components/ui";
 import { usePersona } from "@/src/lib/persona";
 import { TERMS, balanceTerm, totalTerm } from "@/src/lib/terms";
 
@@ -31,6 +34,8 @@ export default function CustomersScreen() {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("due");
   const [sort, setSort] = useState<Sort>("recent");
+  const [adding, setAdding] = useState(false);
+  const { hideAmounts } = usePrefs();
   const today = todayISO();
   const daysSince = (d: string) => Math.round((new Date(today).getTime() - new Date(d).getTime()) / 86400000);
 
@@ -133,8 +138,8 @@ export default function CustomersScreen() {
         {!loading && filter !== "all" && (filter === "due" ? totalDue : totalOwe) > 0 ? (
           <Text style={styles.summary} testID="customers-summary">
             {totalTerm(filter === "due", isPersonal)}{" "}
-            <Text style={{ color: filter === "due" ? colors.error : isPersonal ? colors.warning : colors.success, fontWeight: "800" }}>
-              {formatINR(filter === "due" ? totalDue : totalOwe)}
+            <Text style={{ color: filter === "due" ? semantic.due : isPersonal ? semantic.pending : semantic.received, fontWeight: "800" }}>
+              {hideAmounts ? HIDDEN : formatINR(filter === "due" ? totalDue : totalOwe)}
             </Text>{" "}
             · {counts[filter]} {labels.customers}
           </Text>
@@ -162,12 +167,13 @@ export default function CustomersScreen() {
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl * 2 }}
           ListEmptyComponent={
-            <View style={styles.empty} testID="customers-empty">
-              <MaterialIcon name="account-group-outline" size={32} color={colors.muted} />
-              <Text style={styles.emptyTitle}>
-                {q ? "कोई नहीं मिला" : customers.length === 0 ? (isPersonal ? "अभी कोई नहीं" : "अभी कोई ग्राहक नहीं") : filter === "due" ? "किसी से पैसे नहीं मिलने हैं" : filter === "owe" ? (isPersonal ? "किसी को देने नहीं हैं" : "किसी का एडवांस नहीं") : "इस सूची में कोई नहीं"}
-              </Text>
-              {!q && customers.length === 0 && <Text style={styles.emptySub}>होम से एंट्री लिखते ही यहाँ दिखेंगे</Text>}
+            <View testID="customers-empty">
+              <EmptyState
+                icon="account-group-outline"
+                title={q ? "कोई नहीं मिला" : customers.length === 0 ? (isPersonal ? "अभी कोई नहीं" : "अभी कोई ग्राहक नहीं") : filter === "due" ? "किसी से पैसे नहीं मिलने हैं" : filter === "owe" ? (isPersonal ? "किसी को देने नहीं हैं" : "किसी का एडवांस नहीं") : "इस सूची में कोई नहीं"}
+                message={!q && customers.length === 0 ? "एंट्री लिखते ही यहाँ दिखेंगे, या अभी जोड़ें" : undefined}
+                action={!q && customers.length === 0 ? { label: labels.newCustomer, onPress: () => setAdding(true), testID: "customers-empty-add" } : undefined}
+              />
             </View>
           }
           renderItem={({ item, index }) => (
@@ -183,7 +189,10 @@ export default function CustomersScreen() {
                   {item.c.phone ? formatPhone(item.c.phone) : "फ़ोन नहीं"}{item.c.address ? ` · ${item.c.address}` : ""}
                 </Text>
                 {dupePhones.has(phoneKey(item.c.phone || "")) ? (
-                  <Text style={styles.dupe} numberOfLines={1}>⚠ यही नंबर किसी और खाते में भी है</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
+                    <MaterialIcon name="alert-outline" size={14} color={colors.warning} />
+                    <Text style={styles.dupe} numberOfLines={1}>यही नंबर किसी और खाते में भी है</Text>
+                  </View>
                 ) : null}
                 {item.last ? (
                   <Text style={styles.last} numberOfLines={1}>
@@ -195,9 +204,11 @@ export default function CustomersScreen() {
                 ) : null}
               </View>
               <View style={{ alignItems: "flex-end" }}>
-                <Text style={[styles.dueAmt, { color: item.due > 0 ? colors.error : item.due < 0 ? (isPersonal ? colors.warning : colors.success) : colors.muted }]}>
-                  {item.due === 0 ? TERMS.settled : formatINR(Math.abs(item.due))}
-                </Text>
+                {item.due === 0 ? (
+                  <Text style={[styles.dueAmt, { color: colors.muted }]}>{TERMS.settled}</Text>
+                ) : (
+                  <Amount value={Math.abs(item.due)} tone={item.due > 0 ? "due" : isPersonal ? "pending" : "received"} size="bodyLg" style={{ textAlign: "right" }} />
+                )}
                 {item.due !== 0 ? <Text style={styles.dueTag}>{balanceTerm(item.due, isPersonal, true)}</Text> : null}
               </View>
             </Pressable>
@@ -206,6 +217,16 @@ export default function CustomersScreen() {
         />
       )}
 
+      <Pressable
+        style={[styles.fab, { bottom: insets.bottom + 16 }]}
+        onPress={() => setAdding(true)}
+        accessibilityRole="button"
+        accessibilityLabel={labels.newCustomer}
+        testID="add-customer-fab"
+      >
+        <MaterialIcon name="account-plus" size={26} color={colors.onBrandPrimary} />
+      </Pressable>
+      <AddCustomerSheet visible={adding} onClose={() => setAdding(false)} />
     </View>
   );
 }
@@ -227,13 +248,10 @@ const styles = StyleSheet.create({
   avatar: { width: 44, height: 44, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
   avatarText: { fontWeight: "700", color: colors.onBrandTertiary, fontSize: 14 },
   name: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
-  sub: { fontSize: 12, color: colors.muted, marginTop: 2 },
-  last: { fontSize: 11, color: colors.muted, marginTop: 2 },
-  dupe: { fontSize: 11, color: colors.warning, fontWeight: "700", marginTop: 2 },
-  dueAmt: { fontSize: 15, fontWeight: "700" },
-  dueTag: { fontSize: 11, color: colors.muted, marginTop: 2 },
-  empty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },
-  emptyTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
-  emptySub: { fontSize: 13, color: colors.muted },
-  fab: { position: "absolute", right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#000", shadowOpacity: 0.15, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
+  sub: { ...type.caption, color: colors.muted, marginTop: 2 },
+  last: { ...type.caption, color: colors.muted, marginTop: 2 },
+  dupe: { ...type.caption, color: colors.warning, fontWeight: "700", flexShrink: 1 },
+  dueAmt: { ...type.bodyLg, fontWeight: "700" },
+  dueTag: { ...type.caption, color: colors.muted },
+  fab: { position: "absolute", right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center", ...elevation.high },
 });

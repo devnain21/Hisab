@@ -4,6 +4,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
+import { IconLabel } from "@/src/components/ui";
 import { formatINR, formatDate } from "@/src/lib/format";
 import { shareDayCloseReport, type DaySummaryData } from "@/src/lib/day-close";
 
@@ -36,7 +37,7 @@ export function DayCloseModal({
         <View style={styles.sheet}>
           <View style={styles.header}>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.title}>🌙 दुकान बंद रिपोर्ट</Text>
+              <Text style={styles.title}>दुकान बंद रिपोर्ट</Text>
               <Text style={styles.subtitle}>{formatDate(data.date)} · आज का अंतिम हिसाब</Text>
             </View>
             <Pressable onPress={onClose} hitSlop={12} testID="day-close-close">
@@ -63,7 +64,7 @@ export function DayCloseModal({
 
             {/* Work & Profit Card */}
             <View style={styles.card}>
-              <Text style={styles.cardHeading}>💼 काम, पोर्टल फीस व बचत</Text>
+              <IconLabel icon="briefcase-outline" iconColor={colors.brandPrimary} label="काम, पोर्टल फीस व बचत" style={styles.cardHeading} boxStyle={{ marginBottom: spacing.sm }} />
               <View style={styles.row}>
                 <Text style={styles.rowLabel}>कुल काम बिल:</Text>
                 <Text style={styles.rowVal}>{formatINR(data.workTotal)}</Text>
@@ -98,7 +99,7 @@ export function DayCloseModal({
 
             {/* Galla & Bank Breakdown */}
             <View style={styles.card}>
-              <Text style={styles.cardHeading}>💵 नकद गल्ला स्थिति</Text>
+              <IconLabel icon="cash" iconColor={colors.success} label="नकद गल्ला स्थिति" style={styles.cardHeading} boxStyle={{ marginBottom: spacing.sm }} />
               <View style={styles.row}>
                 <Text style={styles.rowLabel}>सुबह का गल्ला:</Text>
                 <Text style={styles.rowVal}>{formatINR(data.openingCash)}</Text>
@@ -132,7 +133,7 @@ export function DayCloseModal({
                     ]}
                   >
                     {data.cashDiff === 0
-                      ? "गल्ला मिलान: बिल्कुल सही ✅"
+                      ? "गल्ला मिलान: बिल्कुल सही"
                       : data.cashDiff > 0
                       ? `अंतर: ${formatINR(data.cashDiff)} ज़्यादा हैं`
                       : `अंतर: ${formatINR(-data.cashDiff)} कम हैं`}
@@ -142,7 +143,7 @@ export function DayCloseModal({
             </View>
 
             <View style={styles.card}>
-              <Text style={styles.cardHeading}>📱 ऑनलाइन बैंक / UPI खाता</Text>
+              <IconLabel icon="bank-outline" iconColor={colors.info} label="ऑनलाइन बैंक / UPI खाता" style={styles.cardHeading} boxStyle={{ marginBottom: spacing.sm }} />
               <View style={styles.row}>
                 <Text style={styles.rowLabel}>सुबह का बैलेंस:</Text>
                 <Text style={styles.rowVal}>{formatINR(data.openingBank)}</Text>
@@ -156,7 +157,7 @@ export function DayCloseModal({
             </View>
 
             <View style={styles.card}>
-              <Text style={styles.cardHeading}>☕ दुकान का खर्च व नई उधारी</Text>
+              <IconLabel icon="coffee-outline" iconColor={colors.warning} label="दुकान का खर्च व नई उधारी" style={styles.cardHeading} boxStyle={{ marginBottom: spacing.sm }} />
               <View style={styles.row}>
                 <Text style={styles.rowLabel}>कुल दुकान खर्च:</Text>
                 <Text style={[styles.rowVal, { color: colors.warning }]}>
@@ -232,7 +233,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   statLabel: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.muted,
     fontWeight: "600",
   },
@@ -251,9 +252,9 @@ const styles = StyleSheet.create({
   },
   cardHeading: {
     fontSize: 14,
+    lineHeight: 21,
     fontWeight: "700",
     color: colors.onSurface,
-    marginBottom: spacing.sm,
   },
   row: {
     flexDirection: "row",

@@ -4,7 +4,8 @@ import { useLocalSearchParams } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, spacing, radius } from "@/src/theme";
+import { colors, spacing, radius, semantic } from "@/src/theme";
+import { Pill } from "@/src/components/ui";
 import { isPersonalTask, useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
 import { formatDate, formatINR, todayISO } from "@/src/lib/format";
 import { buildAllLedgers, workForJobs, type WorkStatus } from "@/src/lib/records";
@@ -382,31 +383,23 @@ function stripPayNote(notes: string) {
 
 function PayPill({ pay }: { pay: WorkStatus }) {
   const map = {
-    cash: { bg: colors.successSoft, fg: colors.success, label: "नकद" },
-    settled: { bg: colors.successSoft, fg: colors.success, label: "✔ चुकता" },
-    partial: { bg: "#FEF3E2", fg: colors.warning, label: "कुछ बाकी" },
-    pending: { bg: colors.errorSoft, fg: colors.error, label: "पैसे बाकी" },
+    cash: { bg: semantic.receivedSoft, fg: semantic.received, label: "नकद", icon: undefined },
+    settled: { bg: semantic.receivedSoft, fg: semantic.received, label: "चुकता", icon: "check" as const },
+    partial: { bg: semantic.pendingSoft, fg: semantic.pending, label: "कुछ बाकी", icon: undefined },
+    pending: { bg: semantic.dueSoft, fg: semantic.due, label: "पैसे बाकी", icon: undefined },
   } as const;
   const s = map[pay.state];
-  return (
-    <View style={{ paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill, backgroundColor: s.bg }}>
-      <Text style={{ fontSize: 11, fontWeight: "800", color: s.fg }}>{s.label}</Text>
-    </View>
-  );
+  return <Pill label={s.label} color={s.fg} background={s.bg} icon={s.icon} />;
 }
 
 function StatusPill({ status, free }: { status: Job["status"]; free?: boolean }) {
   const map = {
     pending: { bg: colors.surfaceTertiary, fg: colors.onSurfaceTertiary, label: "काम बाकी" },
-    doing: { bg: colors.errorSoft, fg: colors.error, label: "चल रहा" },
-    done: { bg: colors.successSoft, fg: colors.success, label: free ? "मुफ़्त" : "पूरा" },
+    doing: { bg: semantic.pendingSoft, fg: semantic.pending, label: "चल रहा" },
+    done: { bg: semantic.receivedSoft, fg: semantic.received, label: free ? "मुफ़्त" : "पूरा" },
   } as const;
   const s = map[status];
-  return (
-    <View style={{ paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill, backgroundColor: s.bg }}>
-      <Text style={{ fontSize: 11, fontWeight: "700", color: s.fg }}>{s.label}</Text>
-    </View>
-  );
+  return <Pill label={s.label} color={s.fg} background={s.bg} />;
 }
 
 const styles = StyleSheet.create({

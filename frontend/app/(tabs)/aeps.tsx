@@ -8,6 +8,7 @@ import { useAeps, type AepsTxn, type AepsType } from "@/src/lib/data";
 import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, bankLegDate, bankOf, cashLegDate, cashOf, commissionDate, isLater } from "@/src/lib/aeps";
 import { cleanAmountInput, formatDateShort, formatINR, localDay, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
+import { IconLabel } from "@/src/components/ui";
 import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
 import { AepsSheet } from "@/src/components/aeps-sheet";
 import { completeAeps } from "@/src/lib/aeps-due";
@@ -88,7 +89,7 @@ function Reconcile({ label, pocketKey, app, hint, testID }: { label: string; poc
       {diff === null ? (
         <Text style={styles.meta}>{lastText}</Text>
       ) : diff === 0 ? (
-        <Text style={[styles.portalResult, { color: colors.success }]}>✓ बिल्कुल मिल गया · {lastText}</Text>
+        <IconLabel icon="check-circle" color={colors.success} label={`बिल्कुल मिल गया · ${lastText}`} style={styles.portalResult} />
       ) : (
         <>
           <Text style={[styles.portalResult, { color: colors.error }]}>
@@ -244,7 +245,7 @@ export default function AepsScreen() {
         </View>
 
         <View style={styles.portalBox} testID="aeps-portal">
-          <Text style={styles.reconcileTitle}>⚖️ मिलान — असल पैसा बनाम हिसाब</Text>
+          <IconLabel icon="scale-balance" iconColor={colors.brandPrimary} label="मिलान — असल पैसा बनाम हिसाब" style={styles.reconcileTitle} />
           <Reconcile label="पोर्टल / बैंक ऐप में" pocketKey={BANK_KEY} app={appBank} hint={bankHint} testID="aeps-portal" />
           <Reconcile label="गल्ले में गिने नोट" pocketKey={CASH_KEY} app={appCash} hint={cashHint} testID="aeps-galla" />
         </View>
@@ -343,7 +344,7 @@ export default function AepsScreen() {
                     ) : t.commission > 0 ? (
                       <Text style={styles.commission}>+{formatINR(t.commission)}</Text>
                     ) : (
-                      <Text style={{ fontSize: 11, color: colors.muted }}>रसीद</Text>
+                      <Text style={{ fontSize: 12, color: colors.muted }}>रसीद</Text>
                     )}
                   </View>
                 </View>
@@ -392,7 +393,7 @@ const styles = StyleSheet.create({
   stat: { flex: 1, padding: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   statLabel: { fontSize: 12, fontWeight: "700", color: colors.muted },
   statValue: { fontSize: 17, fontWeight: "800", marginTop: 2 },
-  statSub: { fontSize: 10, color: colors.muted, marginTop: 2 },
+  statSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   customRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: spacing.sm, paddingVertical: 6 },
   customText: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
   portalBox: { marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, gap: spacing.sm },
@@ -418,9 +419,9 @@ const styles = StyleSheet.create({
   name: { fontSize: 15, fontWeight: "700", color: colors.onSurface },
   meta: { fontSize: 12, color: colors.muted, marginTop: 2 },
   amount: { fontSize: 16, fontWeight: "800" },
-  commission: { fontSize: 11, fontWeight: "700", color: colors.brandSecondary },
+  commission: { fontSize: 12, fontWeight: "700", color: colors.brandSecondary },
   statusPill: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.pill },
-  statusText: { fontSize: 11, fontWeight: "700" },
+  statusText: { fontSize: 12, fontWeight: "700" },
   empty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },
   emptyTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   emptySub: { fontSize: 13, color: colors.muted },

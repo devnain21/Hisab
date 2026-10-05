@@ -49,5 +49,5 @@ const styles = StyleSheet.create({
   notes: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: 4 },
   metaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   metaPill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, backgroundColor: colors.surface },
-  metaText: { fontSize: 11, fontWeight: "700", color: colors.muted },
+  metaText: { fontSize: 12, fontWeight: "700", color: colors.muted },
 });

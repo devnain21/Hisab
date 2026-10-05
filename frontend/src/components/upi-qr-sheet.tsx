@@ -56,10 +56,10 @@ export function UpiQrModal({
         <View style={styles.card}>
           <View style={styles.header}>
             <View>
-              <Text style={styles.title}>📱 UPI QR कोड</Text>
+              <Text style={styles.title}>UPI QR कोड</Text>
               <Text style={styles.subtitle}>{shopName}</Text>
             </View>
-            <Pressable onPress={onClose} hitSlop={12} testID="qr-close">
+            <Pressable onPress={onClose} hitSlop={12} accessibilityRole="button" accessibilityLabel="बंद करें" testID="qr-close">
               <MaterialIcon name="close" size={24} color={colors.onSurface} />
             </Pressable>
           </View>
@@ -154,7 +154,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   amountLabel: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.muted,
   },
   amountValue: {
@@ -201,12 +201,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   copyBtnText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "700",
     color: colors.brandPrimary,
   },
   hintText: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.muted,
     textAlign: "center",
     marginTop: spacing.md,

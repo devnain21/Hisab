@@ -31,6 +31,7 @@ import {
 import { aepsDueEntry, aepsJamaEntry, createAeps, jamaKindOf, saveAeps, type Jama } from "@/src/lib/aeps-due";
 import { dateOnSave, formatINR, nowHM, parseAmount, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
+import { IconLabel } from "@/src/components/ui";
 import { Chip, CustomerPicker, DateField, Field, PrimaryButton, SheetShell, inputStyle, useCustomerChoice } from "@/src/components/sheets";
 
 type LineStatus = AepsStatus | "later";
@@ -574,7 +575,7 @@ function ServiceLine({
 
       {flow === "out" && amt > 0 && status !== "failed" ? (
         <View style={styles.money}>
-          <Text style={styles.moneyTitle}>💵 ग्राहक को कैश</Text>
+          <IconLabel icon="cash" iconColor={colors.success} label="ग्राहक को कैश" style={styles.moneyTitle} boxStyle={{ marginBottom: spacing.sm }} />
           {status === "pending" ? (
             <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
               <Chip label="कैश दे दिया" icon="cash-check" active={line.cashTaken} tone={colors.success} onPress={() => patch({ cashTaken: true })} testID="aeps-cash-yes" />
@@ -622,7 +623,7 @@ function ServiceLine({
 
       {flow === "in" && amt > 0 && status !== "failed" ? (
         <View style={styles.money}>
-          <Text style={styles.moneyTitle}>💵 ग्राहक से पैसे</Text>
+          <IconLabel icon="cash" iconColor={colors.success} label="ग्राहक से पैसे" style={styles.moneyTitle} boxStyle={{ marginBottom: spacing.sm }} />
           {charge > 0 && hasCustomer ? (
             <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
               <Chip label={`कमीशन ${formatINR(charge)} मिला`} active={!line.commDue} onPress={() => patch({ commDue: false, collected: null })} tone={colors.success} testID="aeps-comm-paid" />
@@ -715,7 +716,7 @@ function ServiceLine({
           <View style={[styles.previewRow, styles.previewTotal]}>
             <Text style={styles.previewLabel}>कुल {formatINR(bill.total)} · मिले {formatINR(bill.settled + over)}</Text>
             <Text style={[styles.previewValue, { color: bill.due > 0 ? colors.error : colors.success }]}>
-              {bill.due > 0 ? `उधारी ${formatINR(bill.due)}` : jama ? `✔ पूरा · जमा ${formatINR(jama.amount)}` : "✔ पूरा"}
+              {bill.due > 0 ? `उधारी ${formatINR(bill.due)}` : jama ? `पूरा · जमा ${formatINR(jama.amount)}` : "पूरा"}
             </Text>
           </View>
         ) : null}
@@ -723,7 +724,7 @@ function ServiceLine({
           <View style={[styles.previewRow, styles.previewTotal]}>
             <Text style={styles.previewLabel}>ग्राहक के हाथ में {formatINR(handed)}</Text>
             <Text style={[styles.previewValue, { color: kept > 0 ? colors.info : colors.success }]}>
-              {kept > 0 ? (line.rest === "old" && oldDue > 0 ? `उधारी में कटे ${formatINR(Math.min(kept, oldDue))}` : `जमा ${formatINR(kept)}`) : "✔ पूरा"}
+              {kept > 0 ? (line.rest === "old" && oldDue > 0 ? `उधारी में कटे ${formatINR(Math.min(kept, oldDue))}` : `जमा ${formatINR(kept)}`) : "पूरा"}
             </Text>
           </View>
         ) : null}
@@ -791,7 +792,7 @@ function TotalCard({ lines, date }: { lines: Line[]; date: string }) {
   });
   return (
     <View style={styles.total} testID="aeps-total">
-      <Text style={styles.moneyTitle}>🧾 पूरा हिसाब · {lines.length} सेवाएँ</Text>
+      <IconLabel icon="receipt-text-outline" iconColor={colors.brandPrimary} label={`पूरा हिसाब · ${lines.length} सेवाएँ`} style={styles.moneyTitle} boxStyle={{ marginBottom: spacing.sm }} />
       {rows.map((r) => (
         <View key={r.label} style={styles.previewRow}>
           <Text style={styles.previewLabel}>{r.label}</Text>
@@ -838,7 +839,7 @@ const styles = StyleSheet.create({
   moreBtn: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: spacing.sm },
   moreText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
   money: { marginBottom: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
-  moneyTitle: { fontSize: 14, fontWeight: "800", color: colors.onSurface, marginBottom: spacing.sm },
+  moneyTitle: { fontSize: 14, lineHeight: 21, fontWeight: "800", color: colors.onSurface },
   moneyHint: { fontSize: 12, color: colors.onSurfaceSecondary, lineHeight: 17 },
   restBox: { marginTop: spacing.md, padding: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary },
   restTitle: { fontSize: 13, fontWeight: "800", color: colors.onSurface, marginBottom: spacing.sm },

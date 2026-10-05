@@ -137,7 +137,7 @@ const styles = StyleSheet.create({
   splitTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   splitLabel: { fontSize: 12, fontWeight: "600", color: colors.onBrandPrimary, opacity: 0.85 },
   splitValue: { fontSize: 18, fontWeight: "800", color: colors.onBrandPrimary, marginTop: 2 },
-  splitHint: { fontSize: 11, color: colors.onBrandPrimary, opacity: 0.8, marginTop: 4 },
+  splitHint: { fontSize: 12, color: colors.onBrandPrimary, opacity: 0.8, marginTop: 4 },
   actions: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.lg },
   action: { flex: 1, alignItems: "center", gap: 4, paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   actionText: { fontSize: 12, fontWeight: "700", color: colors.onSurface },

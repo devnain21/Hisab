@@ -427,7 +427,7 @@ const styles = StyleSheet.create({
     color: colors.onSurface,
   },
   contactPhone: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.muted,
     marginTop: 1,
   },
@@ -442,7 +442,7 @@ const styles = StyleSheet.create({
     borderColor: colors.brandPrimary,
   },
   clipLabel: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.brandSecondary,
     fontWeight: "700",
   },
@@ -491,7 +491,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   previewHeading: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "700",
     color: colors.muted,
     marginBottom: 4,

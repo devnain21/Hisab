@@ -75,5 +75,43 @@ export function makeStyles<T extends StyleSheet.NamedStyles<T> | StyleSheet.Name
 
 export const colors = light;
 
+/** One colour per money meaning, used the same way on every screen. */
+export const semantic = {
+  due: light.error,
+  dueSoft: light.errorSoft,
+  received: light.success,
+  receivedSoft: light.successSoft,
+  pending: light.warning,
+  pendingSoft: "#FFF4E5",
+  bank: light.info,
+  bankSoft: light.infoSoft,
+  cash: light.success,
+  whatsapp: "#128C7E",
+  whatsappSoft: "#E7F6F3",
+};
+
 export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48 };
 export const radius = { sm: 6, md: 12, lg: 20, pill: 999 };
+
+// Devanagari matras sit above and below the line; ~1.5x line height keeps them from being clipped on Android.
+// 12 is the smallest size Hindi stays readable at.
+export const type = {
+  caption: { fontSize: 12, lineHeight: 18 },
+  body: { fontSize: 14, lineHeight: 21 },
+  bodyLg: { fontSize: 16, lineHeight: 24 },
+  title: { fontSize: 20, lineHeight: 30 },
+  headline: { fontSize: 24, lineHeight: 34 },
+  display: { fontSize: 32, lineHeight: 44 },
+} as const;
+
+export const weight = { regular: "400", medium: "500", semibold: "600", bold: "700", heavy: "800" } as const;
+
+export const elevation = {
+  none: {},
+  low: { elevation: 1, shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } },
+  mid: { elevation: 3, shadowColor: "#000", shadowOpacity: 0.1, shadowRadius: 6, shadowOffset: { width: 0, height: 3 } },
+  high: { elevation: 6, shadowColor: "#000", shadowOpacity: 0.16, shadowRadius: 10, shadowOffset: { width: 0, height: 5 } },
+} as const;
+
+/** Smallest comfortable tap target. */
+export const TAP = 44;

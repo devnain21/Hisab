@@ -339,7 +339,10 @@ export function CustomerPicker({ choice, label = "नाम", allowSelf, testPre
  * "कुल रकम" + "अभी मिले". Received follows the total until the user edits it, so the common
  * cash case is just typing the amount.
  */
-function useMoneyInput() {
+function useMoneyInput(
+  /** Leave "received" empty until the user says, so forgetting a tap can't book udhaar as a cash sale. */
+  ask = false,
+) {
   const [total, setTotalRaw] = useState("");
   const [received, setReceivedRaw] = useState("");
   const [touched, setTouched] = useState(false);
@@ -347,14 +350,19 @@ function useMoneyInput() {
   const [less, setLess] = useState(0);
   const minus = (t: string, by: number) => (t.trim() ? String(Math.max(roundMoney(parseAmount(t) - by), 0)) : "");
   const follow = (t: string) => (less ? minus(t, less) : t);
+  const totalNum = parseAmount(total);
   return {
     total,
     received,
-    totalNum: parseAmount(total),
+    totalNum,
     receivedNum: parseAmount(received),
+    /** Paying in full now: the total less what was already received. */
+    fullNow: Math.max(roundMoney(totalNum - less), 0),
+    /** The user has said how much came in (always true outside ask mode). */
+    answered: !ask || received.trim() !== "",
     setTotal: (t: string) => {
       setTotalRaw(t);
-      if (!touched) setReceivedRaw(follow(t));
+      if (!touched && !ask) setReceivedRaw(follow(t));
     },
     setReceived: (r: string) => {
       setTouched(true);
@@ -365,6 +373,7 @@ function useMoneyInput() {
       setTotalRaw(t);
       setTouched(r !== undefined);
       if (r !== undefined) setReceivedRaw(r);
+      else if (ask) setReceivedRaw("");
       else setReceivedRaw(alreadyGot ? minus(t, alreadyGot) : t);
     },
   };
@@ -412,7 +421,7 @@ function MoneyFields({
             </Field>
             <View style={[styles.resultBox, { borderColor: r > t ? colors.error : r >= t ? colors.success : colors.warning }]} testID="money-result">
               <Text style={[styles.resultText, { color: r > t ? colors.error : r >= t ? colors.success : colors.warning }]}>
-                {r > t ? `कुल ${formatINR(t)} से ज़्यादा नहीं` : r >= t ? "✔ पूरे चुकाए" : `${formatINR(t - r)} देने हैं`}
+                {r > t ? `कुल ${formatINR(t)} से ज़्यादा नहीं` : r >= t ? "पूरे चुकाए" : `${formatINR(t - r)} देने हैं`}
               </Text>
             </View>
           </>
@@ -421,16 +430,22 @@ function MoneyFields({
       {!purchase && t > 0 ? (
         <Field label={receivedLabel}>
           <View style={[styles.chipRow, { marginBottom: spacing.sm }]}>
-            <Chip label={`पूरे ${formatINR(t)}`} active={r === t} onPress={() => money.setReceived(String(t))} tone={colors.success} testID="money-full" />
+            <Chip label={`पूरे मिले ${formatINR(money.fullNow)}`} active={money.received !== "" && r === money.fullNow} onPress={() => money.setReceived(String(money.fullNow))} tone={colors.success} testID="money-full" />
             {advance > 0 ? (
-              <Chip label={`एडवांस काटकर ${formatINR(Math.max(t - advance, 0))}`} active={r === Math.max(t - advance, 0) && r !== t} onPress={() => money.setReceived(String(Math.max(t - advance, 0)))} tone={colors.success} testID="money-advance" />
+              <Chip label={`एडवांस काटकर ${formatINR(Math.max(t - advance, 0))}`} active={money.received !== "" && r === Math.max(t - advance, 0) && r !== money.fullNow} onPress={() => money.setReceived(String(Math.max(t - advance, 0)))} tone={colors.success} testID="money-advance" />
             ) : null}
-            <Chip label="कुछ नहीं" active={money.received !== "" && r === 0} onPress={() => money.setReceived("0")} tone={colors.error} testID="money-none" />
+            <Chip label="उधार · कुछ नहीं मिला" active={money.received !== "" && r === 0} onPress={() => money.setReceived("0")} tone={colors.error} testID="money-none" />
           </View>
-          <TextInput style={inputStyle} value={money.received} onChangeText={money.setReceived} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-money-received" />
+          <TextInput style={inputStyle} value={money.received} onChangeText={money.setReceived} placeholder={money.answered ? "0" : "कितने मिले? ऊपर चुनें या लिखें"} placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-money-received" />
         </Field>
       ) : null}
-      {purchase ? null : <MoneyResult total={t} received={r} advance={advance} freeAllowed={freeAllowed} />}
+      {purchase ? null : !money.answered && t > 0 ? (
+        <View style={[styles.resultBox, { borderColor: colors.warning }]} testID="money-result">
+          <Text style={[styles.resultText, { color: colors.warning }]}>पैसे मिले या उधार — एक चुनें</Text>
+        </View>
+      ) : (
+        <MoneyResult total={t} received={r} advance={advance} freeAllowed={freeAllowed} />
+      )}
     </>
   );
 }
@@ -525,7 +540,7 @@ function MoneyResult({ total, received, advance, freeAllowed }: { total: number;
     text = "मुफ़्त काम";
     tone = colors.onSurfaceSecondary;
   } else if (received >= total) {
-    text = received > total ? `✔ पूरे मिले · ${formatINR(received - total)} एडवांस रहेगा` : "✔ पूरे पैसे मिले";
+    text = received > total ? `पूरे मिले · ${formatINR(received - total)} एडवांस रहेगा` : "पूरे पैसे मिले";
   } else {
     const due = total - received;
     const fromAdvance = Math.min(advance, due);
@@ -962,9 +977,9 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
             {fullChip > 0 && amt > 0 ? (
               <Text style={[styles.hint, { color: amt >= fullChip ? colors.success : colors.error }]}>
                 {amt > fullChip
-                  ? `✔ हिसाब बराबर · ${formatINR(amt - fullChip)} ${kind === "payment" ? "एडवांस" : "ज़्यादा दिए"}`
+                  ? `हिसाब बराबर · ${formatINR(amt - fullChip)} ${kind === "payment" ? "एडवांस" : "ज़्यादा दिए"}`
                   : amt === fullChip
-                  ? "✔ हिसाब बराबर"
+                  ? "हिसाब बराबर"
                   : `${formatINR(fullChip - amt)} अभी भी ${kind === "payment" ? "लेने" : "देने"} हैं`}
               </Text>
             ) : null}
@@ -1018,7 +1033,6 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
       </Field>
       <PrimaryButton
         label={initial ? "बदलाव सेव करें" : `${ui.title} — सेव करें`}
-        color={ui.color}
         onPress={save}
         disabled={!valid}
         saving={saving}
@@ -1369,7 +1383,7 @@ export function SettleSheet({ work, onClose }: { work: Entry | null; onClose: ()
         <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-settle-notes" />
       </Field>
       <PrimaryButton
-        label={amt >= remaining && remaining > 0 ? "चुकता करें ✔" : payBack ? "चुकाए सेव करें" : "मिले सेव करें"}
+        label={amt >= remaining && remaining > 0 ? "चुकता करें" : payBack ? "चुकाए सेव करें" : "मिले सेव करें"}
         color={colors.success}
         onPress={save}
         disabled={!valid}
@@ -1385,7 +1399,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   const choice = useCustomerChoice(visible, fixedCustomerId);
   const [mode, setMode] = useState<JobMode>(initialMode);
   const [title, setTitle] = useState("");
-  const money = useMoneyInput();
+  const money = useMoneyInput(true);
   const items = useItems((sum) => money.setTotal(sum > 0 ? String(sum) : ""));
   const [payMode, setPayMode] = useState<"cash" | "online">("cash");
   const [govtFee, setGovtFee] = useState("");
@@ -1434,7 +1448,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
 
   const amt = self ? 0 : money.totalNum;
   const advance = choice.existingId ? advanceOf(entries, choice.existingId) : 0;
-  const valid = choice.ready && (itemized ? items.titled : !!title.trim());
+  const valid = choice.ready && (itemized ? items.titled : !!title.trim()) && (mode !== "now" || self || amt <= 0 || money.answered);
   const saveLabel = mode === "later" ? "आगे का काम जोड़ें" : self ? "सेव करें" : amt > 0 ? "काम सेव करें" : "मुफ़्त काम सेव करें";
 
   const save = async () => {
@@ -1627,7 +1641,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
   const jobAdvances = job ? advancesForJob(job, entries) : [];
   const jobAdvance = jobAdvances.reduce((s, p) => s + p.amount, 0);
   const advance = job?.customerId ? advanceOf(entries, job.customerId) : 0;
-  const money = useMoneyInput();
+  const money = useMoneyInput(true);
   const [payMode, setPayMode] = useState<PayMode>("cash");
   const [fee, setFee] = useState("");
   const [feeMode, setFeeMode] = useState<PayMode>("online");
@@ -1703,7 +1717,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
       ) : null}
       <DateField label="काम की तारीख" value={workDay} onChange={(d) => { setWorkDate(d); setCashDate(d); }} testID="input-complete-date" />
       {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDay} onChange={setCashDate} money testID="input-complete-cash-date" /> : null}
-      <PrimaryButton label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"} color={colors.success} onPress={save} saving={saving} testID="save-complete-btn" />
+      <PrimaryButton label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"} onPress={save} disabled={!!job?.customerId && amt > 0 && !money.answered} saving={saving} testID="save-complete-btn" />
     </SheetShell>
   );
 }

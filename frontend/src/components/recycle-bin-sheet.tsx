@@ -49,10 +49,10 @@ export function RecycleBinModal({
         <View style={styles.sheet}>
           <View style={styles.header}>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.title}>🗑️ कचरा पेटी</Text>
+              <Text style={styles.title}>कचरा पेटी</Text>
               <Text style={styles.subtitle}>हाल में हटाए गए आख़िरी 50 रिकॉर्ड (इसी फ़ोन पर)</Text>
             </View>
-            <Pressable onPress={onClose} hitSlop={12} testID="trash-close">
+            <Pressable onPress={onClose} hitSlop={12} accessibilityRole="button" accessibilityLabel="बंद करें" testID="trash-close">
               <MaterialIcon name="close" size={24} color={colors.onSurface} />
             </Pressable>
           </View>
@@ -187,11 +187,11 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
   },
   badgeText: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: "700",
   },
   dateText: {
-    fontSize: 10,
+    fontSize: 12,
     color: colors.muted,
   },
   itemTitle: {

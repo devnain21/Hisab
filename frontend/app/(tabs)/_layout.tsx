@@ -45,7 +45,7 @@ export default function TabsLayout() {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
         },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: "600" },
+        tabBarLabelStyle: { fontSize: 12, fontWeight: "600" },
         tabBarItemStyle: { alignSelf: "center" },
       }}
     >

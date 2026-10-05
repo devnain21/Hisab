@@ -16,7 +16,7 @@ from pathlib import Path
 from pydantic import AfterValidator, BaseModel, Field, model_validator
 from pymongo.errors import DuplicateKeyError, OperationFailure
 from typing import Annotated, List, Optional, Literal
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict, deque
 import math
 import time
@@ -686,23 +686,85 @@ async def restore_archive(payload: RestoreIn, user: dict = Depends(get_current_u
         raise HTTPException(404, "Not in the archive")
     if await db[payload.coll].find_one({"user_id": uid, "id": payload.id}, {"_id": 1}):
         raise HTTPException(409, "Already exists")
+    item_doc = item.get("doc") or {}
+
+    async def aeps_exists(aeps_id: Optional[str]) -> bool:
+        return bool(aeps_id) and bool(await db.aeps.find_one({"user_id": uid, "id": aeps_id}, {"_id": 1}))
+
+    async def customer_exists(customer_id: Optional[str]) -> bool:
+        return bool(customer_id) and bool(await db.customers.find_one({"user_id": uid, "id": customer_id}, {"_id": 1}))
+
+    # A counter due without its counter row would be udhaar with nothing behind it.
+    if payload.coll == "entries" and item_doc.get("type") == "aeps" and not await aeps_exists(item_doc.get("linkId")):
+        raise HTTPException(422, "Counter row is deleted")
+
     group = [item]
+    overrides: dict = {}
     if payload.coll == "customers":
-        group += await db.deleted_items.find(
+        rows = await db.deleted_items.find(
             {"user_id": uid, "coll": {"$in": ["entries", "jobs"]}, "deletedAt": item["deletedAt"], "doc.customerId": payload.id}
         ).to_list(None)
+        for g in rows:
+            d = g.get("doc") or {}
+            if g["coll"] == "entries" and d.get("type") == "aeps" and not await aeps_exists(d.get("linkId")):
+                continue
+            group.append(g)
+    elif payload.coll == "aeps":
+        # removeAeps deletes the row with its due and jama entries in separate calls moments apart.
+        window = timedelta(minutes=5)
+        rows = await db.deleted_items.find(
+            {
+                "user_id": uid,
+                "coll": "entries",
+                "doc.linkId": payload.id,
+                "reason": {"$exists": False},
+                "deletedAt": {"$gte": item["deletedAt"] - window, "$lte": item["deletedAt"] + window},
+            }
+        ).to_list(None)
+        for g in rows:
+            if await customer_exists((g.get("doc") or {}).get("customerId")):
+                group.append(g)
+        if item_doc.get("customerId") and not await customer_exists(item_doc.get("customerId")):
+            overrides[id(item)] = {"customerId": ""}
     now = _now()
     restored = 0
 
     async def work(s):
         nonlocal restored
+        back: list = []
         for g in group:
             doc = {k: v for k, v in (g.get("doc") or {}).items() if k not in ("_id", "user_id")}
+            doc.update(overrides.get(id(g), {}))
             if await db[g["coll"]].find_one({"user_id": uid, "id": doc.get("id")}, {"_id": 1}, session=s):
                 continue
             await db[g["coll"]].insert_one({**doc, "user_id": uid, "updatedAt": now}, session=s)
             await db.deleted_items.delete_one({"_id": g["_id"]}, session=s)
+            back.append((g["coll"], doc))
             restored += 1
+        if payload.coll != "customers":
+            return
+        linked = [d for c, d in back if c == "entries" and d.get("type") in ("aeps", "payment") and d.get("linkId")]
+        # Counter rows unlinked when the customer was deleted belong to them again.
+        await db.aeps.update_many(
+            {"user_id": uid, "id": {"$in": list({d["linkId"] for d in linked})}, "customerId": ""},
+            {"$set": {"customerId": payload.id, "updatedAt": now}},
+            session=s,
+        )
+        # The counter jama is back on the khata, so the stand-in "money added" rows made at delete time go.
+        for d in linked:
+            if d.get("type") != "payment" or not await db.aeps.find_one({"user_id": uid, "id": d["linkId"]}, {"_id": 1}, session=s):
+                continue
+            await db.moves.delete_one(
+                {
+                    "user_id": uid,
+                    "src": "",
+                    "date": d.get("date"),
+                    "amount": d.get("amount"),
+                    "createdAt": d.get("createdAt"),
+                    "note": {"$regex": r"\(खाता हटाया\)$"},
+                },
+                session=s,
+            )
 
     await _atomic(work)
     return {"ok": True, "restored": restored}

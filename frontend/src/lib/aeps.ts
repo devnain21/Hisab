@@ -18,7 +18,13 @@ export type AepsField =
   | "upiId";
 
 // "out": shop hands cash to the customer, "in": customer hands cash to the shop.
-type Meta = { label: string; short: string; icon: string; color: string; soft: string; cash: "in" | "out" | "none"; amountLabel: string; fields: AepsField[] };
+type Meta = {
+  label: string;
+  short: string;
+  /** On-screen names; `label` / `short` stay English for bills, exports and file names. */
+  hi: string;
+  hiLabel: string;
+  icon: string; color: string; soft: string; cash: "in" | "out" | "none"; amountLabel: string; fields: AepsField[] };
 
 /** Services offered when adding; the rest only exist on older rows. */
 export const AEPS_SERVICES: AepsType[] = ["withdrawal", "deposit", "transfer", "bill", "recharge", "other"];
@@ -26,47 +32,47 @@ export const AEPS_TYPES: AepsType[] = [...AEPS_SERVICES, "upi", "cash", "balance
 
 export const AEPS_META: Record<AepsType, Meta> = {
   withdrawal: {
-    label: "Money Withdrawal", short: "Withdrawal", icon: "cash-fast", color: "#C62828", soft: "#FDECEA", cash: "out",
+    label: "Money Withdrawal", short: "Withdrawal", hi: "निकासी", hiLabel: "पैसे निकासी", icon: "cash-fast", color: "#C62828", soft: "#FDECEA", cash: "out",
     amountLabel: "निकासी रकम (₹)",
     fields: ["mobile", "aadhaarLast4", "bankName", "ifsc", "upiId", "amount", "reference", "commission"],
   },
   deposit: {
-    label: "Money Deposit", short: "Deposit", icon: "bank-plus", color: "#2E7D32", soft: "#E8F5E9", cash: "in",
+    label: "Money Deposit", short: "Deposit", hi: "जमा", hiLabel: "पैसे जमा", icon: "bank-plus", color: "#2E7D32", soft: "#E8F5E9", cash: "in",
     amountLabel: "जमा रकम (₹)",
     fields: ["mobile", "beneficiaryName", "bankName", "accountNumber", "ifsc", "upiId", "amount", "reference", "commission"],
   },
   transfer: {
-    label: "Money Transfer", short: "Transfer", icon: "bank-transfer", color: "#1D4ED8", soft: "#E0E9FF", cash: "in",
+    label: "Money Transfer", short: "Transfer", hi: "ट्रांसफ़र", hiLabel: "पैसे भेजे (ट्रांसफ़र)", icon: "bank-transfer", color: "#1D4ED8", soft: "#E0E9FF", cash: "in",
     amountLabel: "भेजी रकम (₹)",
     fields: ["mobile", "beneficiaryName", "bankName", "accountNumber", "ifsc", "upiId", "billerName", "billAccount", "amount", "reference", "commission"],
   },
   bill: {
-    label: "Bill Payment", short: "Bill", icon: "receipt-text-outline", color: "#B45309", soft: "#FEF3E2", cash: "in",
+    label: "Bill Payment", short: "Bill", hi: "बिल", hiLabel: "बिल भरा", icon: "receipt-text-outline", color: "#B45309", soft: "#FEF3E2", cash: "in",
     amountLabel: "बिल रकम (₹)",
     fields: ["mobile", "billerName", "billAccount", "amount", "reference", "commission"],
   },
   recharge: {
-    label: "Mobile / DTH Recharge", short: "Recharge", icon: "cellphone-arrow-down", color: "#7C3AED", soft: "#F1E9FF", cash: "in",
+    label: "Mobile / DTH Recharge", short: "Recharge", hi: "रिचार्ज", hiLabel: "मोबाइल / DTH रिचार्ज", icon: "cellphone-arrow-down", color: "#7C3AED", soft: "#F1E9FF", cash: "in",
     amountLabel: "रिचार्ज रकम (₹)",
     fields: ["operator", "rechargeNumber", "amount", "reference", "commission"],
   },
   other: {
-    label: "Other Service", short: "Other", icon: "dots-horizontal-circle-outline", color: "#2D2D2D", soft: "#EBE4D5", cash: "none",
+    label: "Other Service", short: "Other", hi: "अन्य", hiLabel: "दूसरी सेवा", icon: "dots-horizontal-circle-outline", color: "#2D2D2D", soft: "#EBE4D5", cash: "none",
     amountLabel: "रकम (₹)",
     fields: ["mobile", "billerName", "amount", "reference", "commission"],
   },
   upi: {
-    label: "UPI Transfer", short: "UPI", icon: "qrcode", color: "#5B21B6", soft: "#EDE9FE", cash: "in",
+    label: "UPI Transfer", short: "UPI", hi: "UPI", hiLabel: "UPI ट्रांसफ़र", icon: "qrcode", color: "#5B21B6", soft: "#EDE9FE", cash: "in",
     amountLabel: "नकद रकम (₹)",
     fields: ["mobile", "beneficiaryName", "upiId", "amount", "reference", "commission"],
   },
   cash: {
-    label: "Cash Given", short: "Cash", icon: "cash", color: "#9A3412", soft: "#FFEDD5", cash: "out",
+    label: "Cash Given", short: "Cash", hi: "नकद", hiLabel: "नकद दिए", icon: "cash", color: "#9A3412", soft: "#FFEDD5", cash: "out",
     amountLabel: "दिए गए नकद (₹)",
     fields: ["amount", "reference", "commission"],
   },
   balance: {
-    label: "Balance Enquiry", short: "Balance", icon: "bank-outline", color: "#00796B", soft: "#E0F2F1", cash: "none",
+    label: "Balance Enquiry", short: "Balance", hi: "बैलेंस", hiLabel: "बैलेंस देखा", icon: "bank-outline", color: "#00796B", soft: "#E0F2F1", cash: "none",
     amountLabel: "खाते का बैलेंस (₹, वैकल्पिक)",
     fields: ["mobile", "aadhaarLast4", "bankName", "amount", "reference", "commission"],
   },

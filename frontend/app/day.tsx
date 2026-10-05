@@ -9,7 +9,8 @@ import { isRepayment, useCustomers, type Entry } from "@/src/lib/data";
 import { cleanAmountInput, formatDateShort, formatINR, formatMonth, formatWeekdayDate, isBackdated, monthRange, parseAmount, roundMoney, shiftISO, todayISO, weekRange } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { EditRecordSheet } from "@/src/components/sheets";
-import { AEPS_META, bankLegDate, cashLegDate, moneyLines } from "@/src/lib/aeps";
+import { AEPS_META, bankLegDate, bankOf, cashLegDate, moneyLines } from "@/src/lib/aeps";
+import { Reconcile } from "@/src/components/reconcile";
 import { expensePersona, type Expense } from "@/src/lib/expenses";
 import { CalendarModal } from "@/src/components/calendar-modal";
 import { AddExpenseSheet } from "@/src/components/expense-sheet";
@@ -19,7 +20,7 @@ import { PocketCard } from "@/src/components/pocket-card";
 import { DayCloseModal } from "@/src/components/day-close-modal";
 import { useAuth } from "@/src/context/AuthContext";
 import { usePersona } from "@/src/lib/persona";
-import { accountKey, accountLabel, addMove, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
+import { accountKey, accountLabel, addMove, balanceOf, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
 import type { DaySummaryData } from "@/src/lib/day-close";
 
 // drawer: the day's summary (cash + bank) · work / payment: shop only · txns: every personal entry of the day.
@@ -167,6 +168,11 @@ export default function DayScreen() {
   const bankKey = accountKey(persona, "bank");
   const dayMoves = book.moves.filter((m) => m.date === date);
   const myMoves = dayMoves.filter((m) => [m.from, m.to].some((k) => k === cashKey || k === bankKey));
+  // Likely reason the portal and the app differ: counter rows whose bank side hasn't happened yet.
+  const bankWaiting = isPersonal ? [] : book.aeps.filter((t) => t.status === "pending" && bankOf(t) !== "none" && !bankLegDate(t));
+  const bankHint = bankWaiting.length
+    ? `${bankWaiting.length} पेंडिंग एंट्री (${formatINR(bankWaiting.reduce((s, t) => s + t.amount, 0))}) हिसाब के बैंक में अभी नहीं जुड़ीं — पोर्टल में हो चुकी हों तो काउंटर में उन्हें “हो गया” करें।`
+    : "आज की एंट्री, ऐप कमीशन और खर्च देख लें।";
 
   // A correction move makes the app's galla equal to the counted cash from this day on.
   const matchCounted = () => {
@@ -503,7 +509,11 @@ export default function DayScreen() {
             ) : null}
           </PocketCard>
 
-          <PocketCard persona={persona} pocket="bank" opening={openingBank} flow={flows.bank} dayLabel={dateLabel} onOpen={() => openPocket("bank")} />
+          <PocketCard persona={persona} pocket="bank" opening={openingBank} flow={flows.bank} dayLabel={dateLabel} onOpen={() => openPocket("bank")}>
+            {!isPersonal && date === today ? (
+              <Reconcile label="पोर्टल / बैंक ऐप में असल बैलेंस" pocketKey="business:bank" app={balanceOf(book, "business:bank")} hint={bankHint} testID="day-portal" />
+            ) : null}
+          </PocketCard>
 
           {isPersonal ? null : (
             <Pressable style={[styles.gallaActionBtn, { backgroundColor: "#128C7E", borderColor: "#128C7E", marginBottom: spacing.lg }]} onPress={() => setDayCloseOpen(true)} testID="open-day-close-btn">
@@ -559,7 +569,7 @@ export default function DayScreen() {
               {dayAeps.map((t) => (
                 <View key={t.id} style={styles.aepsRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.aepsName}>{t.customerName || "काउंटर ग्राहक"} · {AEPS_META[t.type].short} {formatINR(t.amount)}</Text>
+                    <Text style={styles.aepsName}>{t.customerName || "काउंटर ग्राहक"} · {AEPS_META[t.type].hi} {formatINR(t.amount)}</Text>
                     <Text style={styles.aepsDesc}>
                       {moneyLines(t).map((r) => `${r.label} ${r.value}`).join("  ·  ")}
                     </Text>

@@ -112,6 +112,30 @@ export const inputStyle = {
   minHeight: 48,
 };
 
+/** Optional fields folded away so the sheet opens with only what every entry needs. */
+export function MoreInfo({ open: forceOpen, hint = "विवरण, नोट", children, testID }: { open?: boolean; hint?: string; children: React.ReactNode; testID?: string }) {
+  const [open, setOpen] = useState(!!forceOpen);
+  useEffect(() => {
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
+  return (
+    <View style={{ marginBottom: spacing.md }}>
+      <Pressable
+        onPress={() => setOpen((v) => !v)}
+        style={styles.moreInfo}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        testID={testID}
+      >
+        <MaterialIcon name={open ? "chevron-up" : "chevron-down"} size={20} color={colors.brandPrimary} />
+        <Text style={styles.moreInfoText}>और जानकारी</Text>
+        {!open ? <Text style={styles.moreInfoHint} numberOfLines={1}>{hint}</Text> : null}
+      </Pressable>
+      {open ? <View style={{ marginTop: spacing.sm }}>{children}</View> : null}
+    </View>
+  );
+}
+
 export function Chip({ label, active, onPress, icon, testID, tone }: { label: string; active: boolean; onPress: () => void; icon?: string; testID?: string; tone?: string }) {
   const bg = active ? tone ?? colors.brandPrimary : colors.surfaceSecondary;
   return (
@@ -144,51 +168,35 @@ export function DateField({
   createdAt?: string;
   testID?: string;
 }) {
-  const [text, setText] = useState(value);
   const [calendar, setCalendar] = useState(false);
   const cashLabel = usePersona().labels.cash;
-  useEffect(() => setText(value), [value]);
   const today = todayISO();
-  const typedOk = isValidISO(text);
   const old = money && isValidISO(value) && isBackdated(value, createdAt ?? new Date().toISOString());
   const ahead = !future && isValidISO(value) && value > today;
   const presets = future
     ? [{ label: "आज", d: today }, { label: "कल", d: todayISO(1) }, { label: "परसों", d: todayISO(2) }, { label: "1 हफ़्ता", d: todayISO(7) }]
     : [{ label: "आज", d: today }, { label: "कल (बीता)", d: todayISO(-1) }];
-  const pick = (d: string) => { setText(d); onChange(d); };
+  const onPreset = presets.some((p) => p.d === value);
   return (
     <Field label={label}>
-      <View style={styles.chipRow}>
+      <View style={styles.chipRow} testID={testID}>
         {presets.map((p) => (
-          <Chip key={p.label} label={p.label} active={value === p.d} onPress={() => pick(p.d)} />
+          <Chip key={p.label} label={p.label} active={value === p.d} onPress={() => onChange(p.d)} />
         ))}
-      </View>
-      <View style={[styles.searchRow, { marginTop: spacing.sm }]}>
-        <TextInput
-          style={[inputStyle, { flex: 1 }, !typedOk && { borderColor: colors.error }]}
-          value={text}
-          onChangeText={(t) => {
-            setText(t);
-            if (isValidISO(t)) onChange(t);
-          }}
-          onBlur={() => { if (!isValidISO(text)) setText(value); }}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor={colors.muted}
-          maxLength={10}
-          testID={testID}
+        <Chip
+          label={onPreset || !isValidISO(value) ? "दूसरी तारीख" : formatDate(value)}
+          icon="calendar-month-outline"
+          active={!onPreset}
+          onPress={() => setCalendar(true)}
+          testID={testID ? `${testID}-cal` : undefined}
         />
-        <Pressable style={styles.contactBtn} onPress={() => setCalendar(true)} hitSlop={4} testID={testID ? `${testID}-cal` : undefined}>
-          <MaterialIcon name="calendar-month-outline" size={22} color={colors.brandPrimary} />
-        </Pressable>
       </View>
-      {!typedOk ? (
-        <Text style={[styles.hint, { color: colors.error, marginTop: 6 }]}>तारीख ऐसे लिखें: {today} (अभी {formatDate(value)} ही रहेगी)</Text>
-      ) : ahead ? (
+      {ahead ? (
         <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>आगे की तारीख है — {formatDate(value)}</Text>
       ) : old ? (
         <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>{OLD_ENTRY_DAYS} दिन से पुरानी तारीख — खाते में जुड़ेगा, पर उस दिन का लेन-देन {cashLabel} / बैंक में नहीं गिना जाएगा</Text>
       ) : null}
-      <CalendarModal visible={calendar} value={value} onPick={pick} onClose={() => setCalendar(false)} max={future ? undefined : today} />
+      <CalendarModal visible={calendar} value={isValidISO(value) ? value : today} onPick={onChange} onClose={() => setCalendar(false)} max={future ? undefined : today} />
     </Field>
   );
 }
@@ -947,7 +955,7 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
           ))}
         </View>
       ) : null}
-      {!initial && !fixedCustomerId && <CustomerPicker choice={choice} label={PICKER_LABEL[kind]} testPrefix="chip-cust" />}
+      {isPurchase && !initial && !fixedCustomerId ? <CustomerPicker choice={choice} label={PICKER_LABEL[kind]} testPrefix="chip-cust" /> : null}
       {isPurchase ? (
         <>
           <ItemsField items={items} label="क्या लिया" placeholder={ui.placeholder} addLabel="और जोड़ें" />
@@ -984,12 +992,15 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
               </Text>
             ) : null}
           </Field>
+          {!initial && !fixedCustomerId && <CustomerPicker choice={choice} label={PICKER_LABEL[kind]} testPrefix="chip-cust" />}
           {kind !== "work" ? (
             <PayModeField label={kind === "payment" ? "कैसे मिले" : "कैसे दिए"} value={payMode} onChange={setPayMode} split={initial ? undefined : split} total={amt} />
           ) : null}
-          <Field label={needsDescription ? "विवरण" : "किस लिए (वैकल्पिक)"}>
-            <TextInput style={inputStyle} value={description} onChangeText={setDescription} placeholder={ui.placeholder} placeholderTextColor={colors.muted} testID="input-entry-desc" />
-          </Field>
+          {needsDescription ? (
+            <Field label="विवरण">
+              <TextInput style={inputStyle} value={description} onChangeText={setDescription} placeholder={ui.placeholder} placeholderTextColor={colors.muted} testID="input-entry-desc" />
+            </Field>
+          ) : null}
         </>
       )}
       {later.length > 0 ? (
@@ -1028,9 +1039,16 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
           ) : null}
         </View>
       ) : null}
-      <Field label="नोट (वैकल्पिक)">
-        <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-entry-notes" />
-      </Field>
+      <MoreInfo open={!!notes || (!needsDescription && !isPurchase && !!description)} hint={!needsDescription && !isPurchase ? "किस लिए, नोट" : "नोट"} testID="entry-more-info">
+        {!needsDescription && !isPurchase ? (
+          <Field label="किस लिए">
+            <TextInput style={inputStyle} value={description} onChangeText={setDescription} placeholder={ui.placeholder} placeholderTextColor={colors.muted} testID="input-entry-desc" />
+          </Field>
+        ) : null}
+        <Field label="नोट">
+          <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-entry-notes" />
+        </Field>
+      </MoreInfo>
       <PrimaryButton
         label={initial ? "बदलाव सेव करें" : `${ui.title} — सेव करें`}
         onPress={save}
@@ -1516,7 +1534,6 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
         <>
           <MoneyFields money={money} advance={advance} freeAllowed hideTotal />
           {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={money.receivedNum} /> : null}
-          <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
         </>
       ) : (
         <Field label="रकम (₹)">
@@ -1540,17 +1557,22 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       {mode === "now" ? (
         <>
           <DateField label="तारीख" value={date} onChange={setDate} money testID="input-job-date" />
-          <Field label="आगे का रिमार्क (वैकल्पिक)">
-            <TextInput style={[inputStyle, { minHeight: 64 }]} value={remark} onChangeText={setRemark} multiline placeholder="जैसे कल प्रिंट देने हैं, बाकी पैसे शनिवार को" placeholderTextColor={colors.muted} testID="input-job-remark" />
-          </Field>
-          {remark.trim() ? <DateField label="रिमार्क कब देखना है" value={remarkDate} onChange={setRemarkDate} future testID="input-remark-date" /> : null}
+          <MoreInfo open={!!remark || !!govtFee} hint={self ? "रिमार्क" : "सरकारी फीस, रिमार्क"} testID="job-more-info">
+            {self ? null : <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />}
+            <Field label="आगे का रिमार्क">
+              <TextInput style={[inputStyle, { minHeight: 64 }]} value={remark} onChangeText={setRemark} multiline placeholder="जैसे कल प्रिंट देने हैं, बाकी पैसे शनिवार को" placeholderTextColor={colors.muted} testID="input-job-remark" />
+            </Field>
+            {remark.trim() ? <DateField label="रिमार्क कब देखना है" value={remarkDate} onChange={setRemarkDate} future testID="input-remark-date" /> : null}
+          </MoreInfo>
         </>
       ) : (
         <>
           <DateField label={self ? "कब करना है" : "डिलीवरी तारीख"} value={date} onChange={setDate} future testID="input-job-date" />
-          <Field label="नोट (वैकल्पिक)">
-            <TextInput style={inputStyle} value={remark} onChangeText={setRemark} placeholderTextColor={colors.muted} testID="input-job-notes" />
-          </Field>
+          <MoreInfo open={!!remark} hint="नोट" testID="job-more-info">
+            <Field label="नोट">
+              <TextInput style={inputStyle} value={remark} onChangeText={setRemark} placeholderTextColor={colors.muted} testID="input-job-notes" />
+            </Field>
+          </MoreInfo>
         </>
       )}
 
@@ -1736,6 +1758,9 @@ const styles = StyleSheet.create({
   primaryBtn: { backgroundColor: colors.brandPrimary, borderRadius: radius.md, paddingVertical: 15, alignItems: "center", marginTop: spacing.md, minHeight: 52, justifyContent: "center" },
   primaryText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "700" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  moreInfo: { flexDirection: "row", alignItems: "center", gap: spacing.xs, minHeight: 44, paddingHorizontal: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border },
+  moreInfoText: { fontSize: 14, fontWeight: "700", color: colors.brandPrimary },
+  moreInfoHint: { flex: 1, fontSize: 12, color: colors.muted, textAlign: "right" },
   resultBox: { marginBottom: spacing.md, paddingVertical: spacing.sm, paddingHorizontal: spacing.md, borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed" },
   resultText: { fontSize: 14, fontWeight: "700" },
   pickedRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 48, paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.border },

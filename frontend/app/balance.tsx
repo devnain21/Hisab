@@ -9,16 +9,13 @@ import { Pressable } from "@/src/components/tap";
 import { usePersona } from "@/src/lib/persona";
 import { accountKey, accountLabel, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
 import { PocketCard, pocketTitle } from "@/src/components/pocket-card";
-import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet";
-import { AddExpenseSheet } from "@/src/components/expense-sheet";
+import { MoneyMoveSheet } from "@/src/components/money-move-sheet";
 export default function BalanceScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { persona } = usePersona();
   const book = useMoneyBook();
   const today = todayISO();
-  const [move, setMove] = useState<MoveKind | null>(null);
-  const [expense, setExpense] = useState(false);
   const [editMove, setEditMove] = useState<Move | null>(null);
   const [shown, setShown] = useState(PAGE);
   const openPocket = (p: "cash" | "bank") => router.push({ pathname: "/pocket" as never, params: { p } });
@@ -32,13 +29,6 @@ export default function BalanceScreen() {
     const keys = [accountKey(persona, "cash"), accountKey(persona, "bank")];
     return book.moves.filter((m) => keys.includes(m.from) || keys.includes(m.to)).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
   }, [book.moves, persona]);
-
-  const actions: { kind: MoveKind | "expense"; label: string; icon: string; color: string }[] = [
-    { kind: "in", label: "जोड़ें", icon: "plus-circle-outline", color: colors.success },
-    { kind: "out", label: "निकालें", icon: "minus-circle-outline", color: colors.error },
-    { kind: "swap", label: "ट्रांसफर", icon: "swap-horizontal", color: colors.brandPrimary },
-    { kind: "expense", label: "खर्च", icon: "coffee-outline", color: colors.warning },
-  ];
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
@@ -73,14 +63,7 @@ export default function BalanceScreen() {
           </View>
         </View>
 
-        <View style={styles.actions}>
-          {actions.map((a) => (
-            <Pressable key={a.kind} style={styles.action} onPress={() => (a.kind === "expense" ? setExpense(true) : setMove(a.kind))} testID={`balance-${a.kind}`}>
-              <MaterialIcon name={a.icon as any} size={22} color={a.color} />
-              <Text style={styles.actionText}>{a.label}</Text>
-            </Pressable>
-          ))}
-        </View>
+        <Text style={styles.hint}>पैसे जोड़ने, निकालने या ट्रांसफर के लिए {pocketTitle(persona, "cash")} या {pocketTitle(persona, "bank")} पर टैप करें</Text>
 
         <PocketCard persona={persona} pocket="cash" opening={pocketNet(before.cash)} flow={todayFlows.cash} showBalance onOpen={() => openPocket("cash")} />
         <PocketCard persona={persona} pocket="bank" opening={pocketNet(before.bank)} flow={todayFlows.bank} showBalance onOpen={() => openPocket("bank")} />
@@ -118,9 +101,7 @@ export default function BalanceScreen() {
         ) : null}
       </ScrollView>
 
-      <MoneyMoveSheet kind={move} onClose={() => setMove(null)} />
       <MoneyMoveSheet kind={null} initial={editMove} onClose={() => setEditMove(null)} />
-      <AddExpenseSheet visible={expense} onClose={() => setExpense(false)} />
     </View>
   );
 }
@@ -138,9 +119,7 @@ const styles = StyleSheet.create({
   splitLabel: { fontSize: 12, fontWeight: "600", color: colors.onBrandPrimary, opacity: 0.85 },
   splitValue: { fontSize: 18, fontWeight: "800", color: colors.onBrandPrimary, marginTop: 2 },
   splitHint: { fontSize: 12, color: colors.onBrandPrimary, opacity: 0.8, marginTop: 4 },
-  actions: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.lg },
-  action: { flex: 1, alignItems: "center", gap: 4, paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
-  actionText: { fontSize: 12, fontWeight: "700", color: colors.onSurface },
+  hint: { fontSize: 12, color: colors.muted, textAlign: "center", marginTop: -spacing.sm, marginBottom: spacing.lg },
   sectionHead: { fontSize: 14, fontWeight: "800", color: colors.onSurface, marginBottom: spacing.sm },
   list: { borderRadius: radius.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.md },
   moveRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.md },

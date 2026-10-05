@@ -384,7 +384,7 @@ function describe(t: WalletTxn, persona: Persona, pocket: Pocket, nameOf: (id: s
     return { title, sub: m.note || (t.key === "moveIn" ? "जोड़े" : "निकाले"), icon: m.from && m.to ? "swap-horizontal" : t.key === "moveIn" ? "plus-circle-outline" : "minus-circle-outline" };
   }
   const x = s.txn;
-  return { title: x.customerName || "AEPS ग्राहक", sub: `${AEPS_META[x.type]?.short ?? "AEPS"} · ${flowLabel(t.key, persona, pocket)}`, icon: "fingerprint" };
+  return { title: x.customerName || "AEPS ग्राहक", sub: `${AEPS_META[x.type]?.hi ?? "AEPS"} · ${flowLabel(t.key, persona, pocket)}`, icon: "fingerprint" };
 }
 
 function TxnRow({ t, after, persona, pocket, nameOf, onPress }: { t: WalletTxn; after: number; persona: Persona; pocket: Pocket; nameOf: (id: string) => string; onPress: () => void }) {

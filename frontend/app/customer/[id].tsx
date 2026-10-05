@@ -4,15 +4,15 @@ import Animated, { FadeInDown } from "react-native-reanimated";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, spacing, radius, semantic } from "@/src/theme";
+import { colors, spacing, radius, semantic, elevation } from "@/src/theme";
 import { computeBalance, isRepayment, itemsOf, useAeps, useCustomers, useEntries, useJobs, type AepsTxn, type Entry, type EntryType, type Job } from "@/src/lib/data";
 import { AEPS_META, STATUS_META, aepsBill, aepsDue, defaultVia, statusLabel, viaBill } from "@/src/lib/aeps";
 import { formatDate, formatINR, formatPhone, monthRange, todayISO } from "@/src/lib/format";
 import { store } from "@/src/lib/store";
 import { buildLedger, type WorkState, type WorkStatus } from "@/src/lib/records";
-import { AddEntrySheet, AddJobSheet, AddCustomerSheet, Chip, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
+import { AddEntrySheet, AddJobSheet, AddCustomerSheet, Chip, CompleteJobSheet, EditRecordSheet, SettleSheet, SheetShell } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
-import { IconButton, IconLabel } from "@/src/components/ui";
+import { Amount, Button, IconButton, IconLabel, type IconName } from "@/src/components/ui";
 import { useAuth } from "@/src/context/AuthContext";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import { aepsReceiptDoc, receiptDoc, statementDoc, reminderDoc, type ShareDoc } from "@/src/lib/receipt";
@@ -56,6 +56,7 @@ export default function CustomerDetail() {
   const [shareDoc, setShareDoc] = useState<ShareDoc | null>(null);
   const [qrModal, setQrModal] = useState(false);
   const [stmt, setStmt] = useState<StmtRange | null>(null);
+  const [more, setMore] = useState(false);
 
   useEffect(() => {
     if (id) void addRecentCustomer(id);
@@ -142,6 +143,31 @@ export default function CustomerDetail() {
   const openStatement = () => setStmt("all");
   const stmtDoc = stmt ? statementDoc(entries, ledger, customer, isCustomer, user ?? {}, stmtRange(stmt)) : null;
   const openReminder = () => setShareDoc(reminderDoc(customer, due, user ?? {}));
+
+  type Action = { key: string; label: string; icon: IconName; color?: string; run: () => void };
+  const actWork: Action = { key: "work", label: "काम लिखें", icon: "plus", run: () => setJobSheet("now") };
+  const actGot: Action = { key: "got", label: "पैसे मिले", icon: "arrow-bottom-left", color: semantic.received, run: () => setEntrySheet("payment") };
+  const actGiven: Action = { key: "given", label: "पैसे दिए", icon: "arrow-top-right", color: semantic.due, run: () => setEntrySheet("given") };
+  const actReturn: Action = { key: "return", label: isCustomer ? "जमा लौटाएँ" : "पैसे चुकाएँ", icon: "cash-refund", run: () => setEntrySheet("given") };
+  const primary = due > 0 ? actGot : due < 0 ? actReturn : isCustomer ? actWork : actGiven;
+  const secondary = isCustomer ? (primary === actWork ? actGot : actWork) : primary === actGot ? actGiven : actGot;
+  const moreActions: Action[] = [];
+  if (isCustomer) moreActions.push(actWork, { key: "later", label: "आगे का काम / रिमार्क", icon: "calendar-clock", run: () => setJobSheet("later") });
+  moreActions.push(actGot, actGiven);
+  if (!isCustomer) moreActions.push({ key: "purchase", label: "सामान / सेवा ली", icon: "cart-outline", color: semantic.pending, run: () => setEntrySheet("purchase") });
+  if (due > 0) {
+    moreActions.push(
+      { key: "remind", label: "तगादा भेजें", icon: "message-alert-outline", color: semantic.pending, run: openReminder },
+      { key: "qr", label: "QR से पेमेंट लें", icon: "qrcode-scan", run: () => setQrModal(true) },
+    );
+  }
+  if (entries.length > 0) moreActions.push({ key: "stmt", label: "पूरा हिसाब भेजें (PDF / WhatsApp)", icon: "file-document-outline", run: openStatement });
+  moreActions.push({ key: "edit", label: "नाम / फ़ोन बदलें", icon: "pencil-outline", run: () => setEditSheet(true) });
+  // Opening the next sheet only after this one has slid away avoids two modals fighting on iOS.
+  const pickMore = (a: Action) => {
+    setMore(false);
+    setTimeout(a.run, 300);
+  };
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.sm, paddingHorizontal: spacing.sm, paddingBottom: spacing.sm, flexDirection: "row", alignItems: "center" }}>
@@ -164,16 +190,16 @@ export default function CustomerDetail() {
             />
           </>
         ) : null}
-        <IconButton icon="share-variant-outline" label="हिसाब शेयर करें" color={colors.brandPrimary} onPress={openStatement} testID="share-whatsapp-btn" />
-        <IconButton icon="pencil-outline" label="विवरण बदलें" onPress={() => setEditSheet(true)} testID="edit-cust-btn" />
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 96 + insets.bottom }}>
         <View style={styles.balanceCard}>
           <Text style={styles.balanceLabel}>{balanceLabel}</Text>
-          <Text style={[styles.balanceValue, { color: due > 0 ? colors.error : due < 0 ? (isCustomer ? colors.success : colors.warning) : colors.onSurface }]}>
-            {due === 0 ? TERMS.settled : formatINR(Math.abs(due))}
-          </Text>
+          {due === 0 ? (
+            <Text style={[styles.balanceValue, { color: colors.onSurface }]}>{TERMS.settled}</Text>
+          ) : (
+            <Amount value={Math.abs(due)} tone={due > 0 ? "due" : isCustomer ? "received" : "pending"} size="display" style={styles.balanceValue} />
+          )}
           {totals.any ? (
             <Text style={styles.breakdown}>
               {[
@@ -186,67 +212,6 @@ export default function CustomerDetail() {
             </Text>
           ) : null}
           {customer.notes ? <Text style={styles.notes}>{customer.notes}</Text> : null}
-          <View style={styles.actionsRow}>
-            {customer.persona === "personal" ? null : (
-              <Pressable style={[styles.actionBtn, { backgroundColor: colors.brandPrimary }]} onPress={() => setJobSheet("now")} testID="add-work-btn">
-                <MaterialIcon name="plus" size={16} color="#fff" />
-                <Text style={styles.actionText}>काम लिखें</Text>
-              </Pressable>
-            )}
-            <Pressable style={[styles.actionBtn, { backgroundColor: colors.success }]} onPress={() => setEntrySheet("payment")} testID="add-jama-btn">
-              <MaterialIcon name="arrow-bottom-left" size={16} color="#fff" />
-              <Text style={styles.actionText}>मिले</Text>
-            </Pressable>
-            <Pressable style={[styles.actionBtn, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.error }]} onPress={() => setEntrySheet("given")} testID="add-given-btn">
-              <MaterialIcon name="arrow-top-right" size={16} color={colors.error} />
-              <Text style={[styles.actionText, { color: colors.error }]}>दिए</Text>
-            </Pressable>
-            {customer.persona === "personal" ? (
-              <Pressable style={[styles.actionBtn, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.warning }]} onPress={() => setEntrySheet("purchase")} testID="add-purchase-btn">
-                <MaterialIcon name="cart-outline" size={16} color={colors.warning} />
-                <Text style={[styles.actionText, { color: colors.warning }]}>सामान</Text>
-              </Pressable>
-            ) : null}
-          </View>
-          {entries.length > 0 ? (
-            <Pressable style={styles.statementBtn} onPress={openStatement} testID="share-statement-btn">
-              <MaterialIcon name="file-document-outline" size={18} color={colors.brandPrimary} />
-              <Text style={styles.statementText}>पूरा हिसाब भेजें</Text>
-              <Text style={styles.statementHint}>PDF / WhatsApp</Text>
-            </Pressable>
-          ) : null}
-
-          {due > 0 ? (
-            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm }}>
-              <Pressable
-                style={[styles.statementBtn, { flex: 1, backgroundColor: "#FFF8F0", borderColor: "#FDBA74", marginTop: 0 }]}
-                onPress={openReminder}
-                testID="share-reminder-btn"
-              >
-                <MaterialIcon name="message-alert-outline" size={18} color="#C2410C" />
-                <Text style={[styles.statementText, { color: "#C2410C" }]}>तगादा भेजें</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.statementBtn, { flex: 1, backgroundColor: "#F0FDF4", borderColor: "#86EFAC", marginTop: 0 }]}
-                onPress={() => setQrModal(true)}
-                testID="open-qr-btn"
-              >
-                <MaterialIcon name="qrcode-scan" size={18} color={colors.success} />
-                <Text style={[styles.statementText, { color: colors.success }]}>QR पेमेंट</Text>
-              </Pressable>
-            </View>
-          ) : null}
-          {due < 0 ? (
-            <Pressable
-              style={[styles.statementBtn, { backgroundColor: colors.infoSoft, borderColor: colors.info, marginTop: spacing.sm }]}
-              onPress={() => setEntrySheet("given")}
-              testID="return-jama-btn"
-            >
-              <MaterialIcon name="cash-refund" size={18} color={colors.info} />
-              <Text style={[styles.statementText, { color: colors.info }]}>{isCustomer ? "जमा लौटाएँ" : "पैसे चुकाएँ"} {formatINR(-due)}</Text>
-              <Text style={styles.statementHint}>{isCustomer ? "ग्राहक का पैसा आपके पास है" : "आपको देने हैं"}</Text>
-            </Pressable>
-          ) : null}
         </View>
 
         {openJobs.length > 0 && (
@@ -342,6 +307,40 @@ export default function CustomerDetail() {
         )}
       </ScrollView>
 
+      <View style={[styles.bottomBar, { paddingBottom: spacing.sm + insets.bottom }]}>
+        <Button
+          label={primary.label}
+          icon={primary.icon}
+          onPress={primary.run}
+          style={{ flex: 1 }}
+          testID="cust-primary-btn"
+        />
+        <Button
+          label={secondary === actWork ? "काम" : secondary === actGot ? "मिले" : "दिए"}
+          icon={secondary.icon}
+          variant="secondary"
+          onPress={secondary.run}
+          style={{ paddingHorizontal: spacing.md }}
+          testID="cust-secondary-btn"
+        />
+        {due > 0 ? <IconButton icon="message-alert-outline" label="तगादा भेजें" color={semantic.pending} background={semantic.pendingSoft} onPress={openReminder} testID="share-reminder-btn" /> : null}
+        <IconButton icon="dots-horizontal" label="और विकल्प" color={colors.brandPrimary} background={colors.brandTertiary} onPress={() => setMore(true)} testID="cust-more-btn" />
+      </View>
+
+      <SheetShell visible={more} onClose={() => setMore(false)} title={customer.name}>
+        <View style={{ gap: spacing.xs }}>
+          {moreActions.map((a) => (
+            <Pressable key={a.key} style={styles.moreRow} onPress={() => pickMore(a)} testID={`cust-more-${a.key}`}>
+              <View style={[styles.iconBadge, { backgroundColor: colors.brandTertiary }]}>
+                <MaterialIcon name={a.icon} size={20} color={a.color ?? colors.brandPrimary} />
+              </View>
+              <Text style={styles.moreText}>{a.label}</Text>
+              <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
+            </Pressable>
+          ))}
+        </View>
+      </SheetShell>
+
       <AddEntrySheet visible={entrySheet !== null} type={entrySheet ?? "work"} onClose={() => setEntrySheet(null)} customerId={customer.id} />
       <EditRecordSheet entry={editing} job={editingJob} onClose={() => { setEditing(null); setEditingJob(null); }} />
       <AddJobSheet visible={jobSheet !== null} initialMode={jobSheet ?? "now"} onClose={() => setJobSheet(null)} customerId={customer.id} />
@@ -429,7 +428,7 @@ function AepsRow({ t, kept, onPress }: { t: AepsTxn; kept: number; onPress: () =
         <MaterialIcon name={m.icon as any} size={18} color={m.color} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={styles.jobTitle} numberOfLines={1}>{t.type === "other" && t.billerName ? t.billerName : m.label}</Text>
+        <Text style={styles.jobTitle} numberOfLines={1}>{t.type === "other" && t.billerName ? t.billerName : m.hiLabel}</Text>
         <Text style={styles.sub} numberOfLines={1}>{[via, t.beneficiaryName, formatDate(t.date)].filter(Boolean).join(" · ")}</Text>
       </View>
       <View style={{ alignItems: "flex-end" }}>
@@ -557,7 +556,7 @@ function JamaCard({ entry, onPress, onReceipt }: { entry: Entry; onPress: () => 
           <Text style={styles.sub}>{formatDate(entry.date)}{entry.notes ? ` · ${entry.notes}` : ""}</Text>
         </View>
         <View style={{ alignItems: "flex-end" }}>
-          <Text style={[styles.amount, { color: colors.success }]}>−{formatINR(entry.amount)}</Text>
+          <Amount value={entry.amount} tone="received" sign="+" size="bodyLg" style={{ fontWeight: "800" }} />
           <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
             {entry.mode === "online" ? (
               <View style={[styles.statePill, { backgroundColor: colors.infoSoft }]}>
@@ -587,12 +586,9 @@ const styles = StyleSheet.create({
   balanceValue: { fontSize: 36, fontWeight: "800", marginTop: spacing.xs },
   notes: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: spacing.sm },
   breakdown: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: spacing.xs, fontWeight: "600" },
-  actionsRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },
-  actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 11, borderRadius: radius.md },
-  actionText: { color: "#fff", fontWeight: "700", fontSize: 13 },
-  statementBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, marginTop: spacing.sm, paddingVertical: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.surface },
-  statementText: { color: colors.brandPrimary, fontWeight: "700", fontSize: 13 },
-  statementHint: { color: colors.muted, fontSize: 12 },
+  bottomBar: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, paddingTop: spacing.sm, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border, ...elevation.high },
+  moreRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 52, paddingHorizontal: spacing.sm, borderRadius: radius.md },
+  moreText: { flex: 1, fontSize: 15, fontWeight: "600", color: colors.onSurface },
   sectionHead: { fontSize: 17, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xl, marginBottom: spacing.md },
   sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xl, marginBottom: spacing.md },  jobRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   jobTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },

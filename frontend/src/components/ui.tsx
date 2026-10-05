@@ -9,7 +9,7 @@ import { HIDDEN, usePrefs } from "@/src/lib/prefs";
 import { formatINR } from "@/src/lib/format";
 import { TAP, colors, elevation, radius, semantic, spacing, type, weight } from "@/src/theme";
 
-type IconName = React.ComponentProps<typeof MaterialIcon>["name"];
+export type IconName = React.ComponentProps<typeof MaterialIcon>["name"];
 
 export type AmountTone = "due" | "received" | "pending" | "bank" | "neutral" | "muted";
 const TONE: Record<AmountTone, string> = {

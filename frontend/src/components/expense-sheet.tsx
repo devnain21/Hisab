@@ -6,7 +6,7 @@ import { Pressable } from "@/src/components/tap";
 import { addExpense, deleteExpense, expensePersona, EXPENSE_CATEGORIES, PERSONAL_EXPENSE_CATEGORIES, type Expense, type ExpenseMode } from "@/src/lib/expenses";
 import { usePersona } from "@/src/lib/persona";
 import { OLD_ENTRY_DAYS, dateOnSave, formatDateShort, formatINR, isBackdated, isValidISO, parseAmount, todayISO } from "@/src/lib/format";
-import { DangerLink, DateField, SheetShell } from "@/src/components/sheets";
+import { DangerLink, DateField, MoreInfo, SheetShell } from "@/src/components/sheets";
 import { store } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
 
@@ -173,21 +173,22 @@ export function AddExpenseSheet({
             </View>
           </View>
 
-          {/* Optional Note */}
-          <View style={styles.field}>
-            <Text style={styles.label}>नोट (वैकल्पिक)</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder=""
-              placeholderTextColor={colors.muted}
-              value={notes}
-              onChangeText={setNotes}
-              testID="expense-notes-input"
-            />
-          </View>
-
           <DateField label="तारीख" value={date} onChange={setDate} money={!initial} testID="expense-date" />
           {nowOld ? <Text style={styles.oldNote}>{OLD_ENTRY_DAYS} दिन से पुरानी तारीख — अब {labels.cash} / बैंक में नहीं गिना जाएगा</Text> : null}
+
+          <MoreInfo open={!!notes} hint="नोट" testID="expense-more-info">
+            <View style={styles.field}>
+              <Text style={styles.label}>नोट</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder=""
+                placeholderTextColor={colors.muted}
+                value={notes}
+                onChangeText={setNotes}
+                testID="expense-notes-input"
+              />
+            </View>
+          </MoreInfo>
 
           {/* Save Button */}
           <Pressable

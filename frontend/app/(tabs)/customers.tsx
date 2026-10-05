@@ -10,7 +10,10 @@ import { entryDelta, useCustomers, useEntries } from "@/src/lib/data";
 import { buildAllLedgers } from "@/src/lib/records";
 import { formatDateShort, formatINR, formatPhone, initials, roundMoney, todayISO } from "@/src/lib/format";
 import { HIDDEN, usePrefs } from "@/src/lib/prefs";
-import { AddCustomerSheet } from "@/src/components/sheets";
+import { AddCustomerSheet, AddEntrySheet } from "@/src/components/sheets";
+import { ReceiptSheet } from "@/src/components/receipt-sheet";
+import { reminderDoc, type ShareDoc } from "@/src/lib/receipt";
+import { useAuth } from "@/src/context/AuthContext";
 import { Amount, EmptyState } from "@/src/components/ui";
 import { usePersona } from "@/src/lib/persona";
 import { TERMS, balanceTerm, totalTerm } from "@/src/lib/terms";
@@ -35,6 +38,9 @@ export default function CustomersScreen() {
   const [filter, setFilter] = useState<Filter>("due");
   const [sort, setSort] = useState<Sort>("recent");
   const [adding, setAdding] = useState(false);
+  const [paying, setPaying] = useState<string | null>(null);
+  const [shareDoc, setShareDoc] = useState<ShareDoc | null>(null);
+  const { user } = useAuth();
   const { hideAmounts } = usePrefs();
   const today = todayISO();
   const daysSince = (d: string) => Math.round((new Date(today).getTime() - new Date(d).getTime()) / 86400000);
@@ -209,7 +215,33 @@ export default function CustomersScreen() {
                 ) : (
                   <Amount value={Math.abs(item.due)} tone={item.due > 0 ? "due" : isPersonal ? "pending" : "received"} size="bodyLg" style={{ textAlign: "right" }} />
                 )}
-                {item.due !== 0 ? <Text style={styles.dueTag}>{balanceTerm(item.due, isPersonal, true)}</Text> : null}
+                {item.due > 0 ? (
+                  <View style={styles.rowActs}>
+                    <Pressable
+                      onPress={() => setShareDoc(reminderDoc(item.c, item.due, user ?? {}))}
+                      hitSlop={6}
+                      style={[styles.rowBtn, { backgroundColor: semantic.pendingSoft }]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${item.c.name} को तगादा भेजें`}
+                      testID={`row-remind-${item.c.id}`}
+                    >
+                      <MaterialIcon name="message-alert-outline" size={18} color={semantic.pending} />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setPaying(item.c.id)}
+                      hitSlop={6}
+                      style={[styles.rowBtn, styles.gotBtn]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${item.c.name} से पैसे मिले`}
+                      testID={`row-got-${item.c.id}`}
+                    >
+                      <MaterialIcon name="arrow-bottom-left" size={16} color={semantic.received} />
+                      <Text style={styles.gotText}>मिले</Text>
+                    </Pressable>
+                  </View>
+                ) : item.due < 0 ? (
+                  <Text style={styles.dueTag}>{balanceTerm(item.due, isPersonal, true)}</Text>
+                ) : null}
               </View>
             </Pressable>
           )}
@@ -227,6 +259,8 @@ export default function CustomersScreen() {
         <MaterialIcon name="account-plus" size={26} color={colors.onBrandPrimary} />
       </Pressable>
       <AddCustomerSheet visible={adding} onClose={() => setAdding(false)} />
+      <AddEntrySheet visible={paying !== null} type="payment" onClose={() => setPaying(null)} customerId={paying ?? undefined} />
+      <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
     </View>
   );
 }
@@ -253,5 +287,9 @@ const styles = StyleSheet.create({
   dupe: { ...type.caption, color: colors.warning, fontWeight: "700", flexShrink: 1 },
   dueAmt: { ...type.bodyLg, fontWeight: "700" },
   dueTag: { ...type.caption, color: colors.muted },
+  rowActs: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs },
+  rowBtn: { minHeight: 36, minWidth: 36, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
+  gotBtn: { flexDirection: "row", gap: 4, paddingHorizontal: spacing.md, backgroundColor: semantic.receivedSoft },
+  gotText: { ...type.caption, color: semantic.received, fontWeight: "800" },
   fab: { position: "absolute", right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center", ...elevation.high },
 });

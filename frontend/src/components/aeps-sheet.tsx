@@ -491,7 +491,7 @@ function ServiceLine({
           return (
             <Pressable key={t} onPress={() => pickType(t)} style={[styles.serviceTile, active && { backgroundColor: m.color, borderColor: m.color }]} testID={`aeps-type-${t}`}>
               <MaterialIcon name={m.icon as any} size={20} color={active ? "#fff" : m.color} />
-              <Text style={[styles.serviceText, active && { color: "#fff" }]} numberOfLines={1}>{m.short}</Text>
+              <Text style={[styles.serviceText, active && { color: "#fff" }]} numberOfLines={1}>{m.hi}</Text>
             </Pressable>
           );
         })}

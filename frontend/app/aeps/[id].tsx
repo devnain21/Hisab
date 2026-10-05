@@ -96,7 +96,7 @@ export default function AepsDetail() {
   const remove = () => {
     const paidOnKhata = khataPaid(t.id);
     const note = paidOnKhata > 0 ? `\nग्राहक ने खाते में ${formatINR(paidOnKhata)} दिए हैं, वो उनके खाते में जमा रहेंगे।` : "";
-    confirmAction("एंट्री हटाएँ?", `${t.customerName} · ${meta.short}${t.amount > 0 ? ` · ${formatINR(t.amount)}` : ""}${note}`, "हटा दें", () => {
+    confirmAction("एंट्री हटाएँ?", `${t.customerName} · ${meta.hi}${t.amount > 0 ? ` · ${formatINR(t.amount)}` : ""}${note}`, "हटा दें", () => {
       removeAeps(t);
       router.back();
     });
@@ -122,7 +122,7 @@ export default function AepsDetail() {
           <View style={[styles.heroIcon, { backgroundColor: meta.soft }]}>
             <MaterialIcon name={meta.icon as any} size={28} color={meta.color} />
           </View>
-          <Text style={[styles.heroType, { color: meta.color }]}>{t.type === "other" && t.billerName ? t.billerName : meta.label}</Text>
+          <Text style={[styles.heroType, { color: meta.color }]}>{t.type === "other" && t.billerName ? t.billerName : meta.hiLabel}</Text>
           {via ? <Text style={styles.heroVia}>via {viaBill(via)}</Text> : null}
           {t.amount > 0 ? <Text style={styles.heroAmount}>{formatINR(t.amount)}</Text> : bill.total > 0 ? <Text style={styles.heroAmount}>{formatINR(bill.total)}</Text> : null}
           <View style={[styles.statusPill, { backgroundColor: later ? colors.infoSoft : st.soft }]}>

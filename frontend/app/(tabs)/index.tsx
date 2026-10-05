@@ -6,7 +6,7 @@ import { useState, useMemo, useCallback } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, spacing, radius, semantic, type } from "@/src/theme";
+import { colors, spacing, radius, semantic, type, elevation } from "@/src/theme";
 import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, isRepayment, type Entry, type Job } from "@/src/lib/data";
 import { buildAllLedgers, workForJob } from "@/src/lib/records";
 import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
@@ -161,18 +161,6 @@ export default function Home() {
   const { hideAmounts } = usePrefs();
   const money = (n: number) => (hideAmounts ? HIDDEN : formatINR(n));
   const signedINR = (n: number) => (hideAmounts ? HIDDEN : `${n < 0 ? "−" : "+"}${formatINR(Math.abs(n))}`);
-  // Today's change of cash + bank together; the day screen breaks it down.
-  const todayMoneyCard = (
-    <StatCard
-      label="आज का हिसाब"
-      value={signedINR(todayNet)}
-      hint={`${labels.cash} ${signedINR(todayCash)} · बैंक ${signedINR(todayBank)}`}
-      icon="scale-balance"
-      tone={todayNet < 0 ? "due" : "ok"}
-      onPress={() => router.push({ pathname: "/day", params: { type: "drawer" } })}
-      testID="stat-today-money"
-    />
-  );
 
   const upcoming = useMemo(
     () => jobs.filter((j) => j.status !== "done").sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 8),
@@ -226,7 +214,7 @@ export default function Home() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <ScrollView
-        contentContainerStyle={{ padding: spacing.lg, paddingTop: insets.top + spacing.md, paddingBottom: spacing.xxl }}
+        contentContainerStyle={{ padding: spacing.lg, paddingTop: insets.top + spacing.md, paddingBottom: 96 }}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.topRow}>
@@ -361,111 +349,65 @@ export default function Home() {
           </View>
         ) : (
           <Animated.View entering={FadeInDown.duration(300)}>
-            <View style={styles.statsGrid}>
-              {isPersonal ? (
-                <>
-                  <StatCard
-                    label={TERMS.get}
-                    value={money(Math.max(stats.totalDue, 0))}
-                    hint={`${stats.dueCustomers} लोग`}
-                    icon="account-arrow-left-outline"
-                    tone="due"
-                    onPress={() => go("/(tabs)/customers", { filter: "due" })}
-                    testID="stat-total-due"
-                  />
-                  <StatCard
-                    label={TERMS.give}
-                    value={money(Math.max(stats.totalWeOwe, 0))}
-                    hint={`${stats.weOweCount} लोग`}
-                    icon="account-arrow-right-outline"
-                    tone="warn"
-                    onPress={() => go("/(tabs)/customers", { filter: "owe" })}
-                    testID="stat-total-we-owe"
-                  />
-                  <StatCard
-                    label="काम बाकी"
-                    value={String(taskStats.open)}
-                    hint={taskStats.late > 0 ? `${taskStats.late} देर से` : taskStats.today > 0 ? `${taskStats.today} आज` : "सब समय पर"}
-                    icon="clipboard-check-outline"
-                    tone={taskStats.late > 0 ? "warn" : "neutral"}
-                    onPress={() => router.navigate("/(tabs)/tasks" as never)}
-                    testID="stat-pending-tasks"
-                  />
-                  {todayMoneyCard}
-                </>
-              ) : (
-                <>
-                  <StatCard
-                    label={TERMS.get}
-                    value={money(Math.max(stats.totalDue, 0))}
-                    hint={`${stats.dueCustomers} ग्राहक`}
-                    icon="account-cash-outline"
-                    tone="due"
-                    onPress={() => go("/(tabs)/customers", { filter: "due" })}
-                    testID="stat-total-due"
-                  />
-                  <StatCard
-                    label="काम बाकी"
-                    value={String(stats.openJobs)}
-                    hint={stats.overdue > 0 ? `${stats.overdue} देर से` : "सब समय पर"}
-                    icon="briefcase-clock-outline"
-                    tone={stats.overdue > 0 ? "warn" : "neutral"}
-                    onPress={() => go("/(tabs)/work", { filter: "open" })}
-                    testID="stat-pending-jobs"
-                  />
-                  <StatCard
-                    label="आज का काम"
-                    value={money(stats.todayWork)}
-                    hint={`${stats.todayWorkCount} एंट्री`}
-                    icon="clipboard-text-outline"
-                    tone="neutral"
-                    onPress={() => router.push({ pathname: "/day", params: { type: "work" } })}
-                    testID="stat-today-work"
-                  />
-                  {todayMoneyCard}
-                </>
-              )}
-            </View>
+            <View style={styles.hero}>
+              <Pressable style={styles.heroTop} onPress={() => router.push({ pathname: "/day", params: { type: "drawer" } })} testID="stat-today-money">
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text style={styles.heroLabel}>आज का हिसाब</Text>
+                  <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
+                </View>
+                <Text
+                  style={[styles.heroValue, { color: todayNet < 0 ? semantic.due : todayNet > 0 ? semantic.received : colors.onSurface }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                >
+                  {signedINR(todayNet)}
+                </Text>
+                <Text style={styles.heroHint} numberOfLines={1}>{labels.cash} {signedINR(todayCash)} · बैंक {signedINR(todayBank)}</Text>
+              </Pressable>
 
-            <View style={styles.walletLine}>
-              <Pressable style={styles.walletCell} onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "cash" } })} testID="home-wallet-cash">
-                <MaterialIcon name="cash" size={16} color={colors.success} />
-                <Text style={styles.walletLabel}>{labels.cash}</Text>
-                <Text style={[styles.walletValue, cashBal < 0 && { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(cashBal)}</Text>
-              </Pressable>
-              <View style={styles.walletDivider} />
-              <Pressable style={styles.walletCell} onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "bank" } })} testID="home-wallet-bank">
-                <MaterialIcon name="bank-outline" size={16} color={colors.info} />
-                <Text style={styles.walletLabel}>बैंक</Text>
-                <Text style={[styles.walletValue, bankBal < 0 && { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(bankBal)}</Text>
-              </Pressable>
-              <Pressable onPress={() => router.push("/balance" as never)} hitSlop={10} style={styles.walletMore} testID="home-wallet">
-                <Text style={styles.walletMoreText}>कुल</Text>
-                <MaterialIcon name="chevron-right" size={18} color={colors.brandPrimary} />
-              </Pressable>
-            </View>
+              <View style={styles.heroSplit}>
+                <Pressable style={styles.heroCell} onPress={() => go("/(tabs)/customers", { filter: "due" })} testID="stat-total-due">
+                  <Text style={styles.heroCellLabel}>{TERMS.get}</Text>
+                  <Text style={[styles.heroCellValue, { color: stats.totalDue > 0 ? semantic.due : colors.onSurface }]} numberOfLines={1} adjustsFontSizeToFit>
+                    {money(Math.max(stats.totalDue, 0))}
+                  </Text>
+                  <Text style={styles.heroHint}>{stats.dueCustomers} {isPersonal ? "लोग" : "ग्राहक"}</Text>
+                </Pressable>
+                <View style={styles.heroDivider} />
+                {isPersonal ? (
+                  <Pressable style={styles.heroCell} onPress={() => go("/(tabs)/customers", { filter: "owe" })} testID="stat-total-we-owe">
+                    <Text style={styles.heroCellLabel}>{TERMS.give}</Text>
+                    <Text style={[styles.heroCellValue, { color: stats.totalWeOwe > 0 ? semantic.pending : colors.onSurface }]} numberOfLines={1} adjustsFontSizeToFit>
+                      {money(Math.max(stats.totalWeOwe, 0))}
+                    </Text>
+                    <Text style={styles.heroHint}>{stats.weOweCount} लोग</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable style={styles.heroCell} onPress={() => router.push({ pathname: "/day", params: { type: "work" } })} testID="stat-today-work">
+                    <Text style={styles.heroCellLabel}>आज का काम</Text>
+                    <Text style={styles.heroCellValue} numberOfLines={1} adjustsFontSizeToFit>{money(stats.todayWork)}</Text>
+                    <Text style={styles.heroHint}>{stats.todayWorkCount} एंट्री</Text>
+                  </Pressable>
+                )}
+              </View>
 
-            <View style={styles.actionRow}>
-              <Pressable style={styles.primaryAction} onPress={() => (isPersonal ? setMoneySheet(true) : setJobSheet(true))} testID="quick-work">
-                <MaterialIcon name={isPersonal ? "swap-vertical" : "briefcase-plus-outline"} size={17} color={colors.onBrandPrimary} />
-                <Text style={styles.primaryActionText}>{labels.newWork}</Text>
-              </Pressable>
-              {isPersonal ? null : (
-                <Pressable style={styles.gotAction} onPress={() => setMoneySheet(true)} accessibilityRole="button" accessibilityLabel="पैसे मिले" testID="quick-payment">
-                  <MaterialIcon name="arrow-bottom-left" size={17} color={colors.success} />
-                  <Text style={styles.gotActionText}>पैसे मिले</Text>
+              <View style={styles.walletLine}>
+                <Pressable style={styles.walletCell} onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "cash" } })} testID="home-wallet-cash">
+                  <MaterialIcon name="cash" size={16} color={semantic.cash} />
+                  <Text style={styles.walletLabel}>{labels.cash}</Text>
+                  <Text style={[styles.walletValue, cashBal < 0 && { color: semantic.due }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(cashBal)}</Text>
                 </Pressable>
-              )}
-              <Pressable style={styles.expenseAction} onPress={() => setExpenseSheet(true)} accessibilityRole="button" accessibilityLabel="खर्च" testID="quick-expense">
-                <MaterialIcon name="coffee-outline" size={17} color={colors.warning} />
-                <Text style={styles.expenseActionText}>खर्च</Text>
-              </Pressable>
-              {isPersonal ? (
-                <Pressable style={styles.taskAction} onPress={() => setTaskSheet({})} testID="quick-task">
-                  <MaterialIcon name="clipboard-plus-outline" size={17} color={colors.brandPrimary} />
-                  <Text style={styles.taskActionText}>काम लिखें</Text>
+                <View style={styles.walletDivider} />
+                <Pressable style={styles.walletCell} onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "bank" } })} testID="home-wallet-bank">
+                  <MaterialIcon name="bank-outline" size={16} color={semantic.bank} />
+                  <Text style={styles.walletLabel}>बैंक</Text>
+                  <Text style={[styles.walletValue, bankBal < 0 && { color: semantic.due }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(bankBal)}</Text>
                 </Pressable>
-              ) : null}
+                <Pressable onPress={() => router.push("/balance" as never)} hitSlop={10} style={styles.walletMore} accessibilityRole="button" accessibilityLabel="कुल पैसे देखें" testID="home-wallet">
+                  <Text style={styles.walletMoreText}>कुल</Text>
+                  <MaterialIcon name="chevron-right" size={18} color={colors.brandPrimary} />
+                </Pressable>
+              </View>
             </View>
 
             {counter.on ? (
@@ -485,7 +427,10 @@ export default function Home() {
               <>
                 <BudgetCard />
                 <View style={styles.sectionRow}>
-                  <Text style={styles.sectionHead}>मेरे काम</Text>
+                  <Text style={styles.sectionHead} testID="stat-pending-tasks">
+                    मेरे काम{taskStats.open > 0 ? ` (${taskStats.open})` : ""}
+                    {taskStats.late > 0 ? <Text style={styles.lateTag}>  {taskStats.late} देर से</Text> : null}
+                  </Text>
                   {taskStats.open > 0 ? (
                     <Pressable onPress={() => router.navigate("/(tabs)/tasks" as never)} hitSlop={8} testID="home-tasks-more">
                       <Text style={styles.link}>सभी देखें</Text>
@@ -556,7 +501,10 @@ export default function Home() {
             {isPersonal ? null : (
             <>
             <View style={styles.sectionRow}>
-              <Text style={styles.sectionHead}>आने वाला काम</Text>
+              <Text style={styles.sectionHead} testID="stat-pending-jobs">
+                आने वाला काम{stats.openJobs > 0 ? ` (${stats.openJobs})` : ""}
+                {stats.overdue > 0 ? <Text style={styles.lateTag}>  {stats.overdue} देर से</Text> : null}
+              </Text>
               {stats.openJobs > upcoming.length ? (
                 <Pressable onPress={() => go("/(tabs)/work", { filter: "open" })} hitSlop={8}>
                   <Text style={styles.link}>सभी देखें</Text>
@@ -623,6 +571,31 @@ export default function Home() {
         )}
       </ScrollView>
 
+      {loading || loadFailed ? null : (
+        <View style={styles.actionBar}>
+          <Pressable style={styles.primaryAction} onPress={() => (isPersonal ? setMoneySheet(true) : setJobSheet(true))} accessibilityRole="button" accessibilityLabel={labels.newWork} testID="quick-work">
+            <MaterialIcon name={isPersonal ? "swap-vertical" : "briefcase-plus-outline"} size={18} color={colors.onBrandPrimary} />
+            <Text style={styles.primaryActionText} numberOfLines={1}>{labels.newWork}</Text>
+          </Pressable>
+          {isPersonal ? null : (
+            <Pressable style={styles.gotAction} onPress={() => setMoneySheet(true)} accessibilityRole="button" accessibilityLabel="पैसे मिले" testID="quick-payment">
+              <MaterialIcon name="arrow-bottom-left" size={18} color={semantic.received} />
+              <Text style={styles.gotActionText} numberOfLines={1}>पैसे मिले</Text>
+            </Pressable>
+          )}
+          <Pressable style={styles.expenseAction} onPress={() => setExpenseSheet(true)} accessibilityRole="button" accessibilityLabel="खर्च" testID="quick-expense">
+            <MaterialIcon name="coffee-outline" size={18} color={semantic.pending} />
+            <Text style={styles.expenseActionText} numberOfLines={1}>खर्च</Text>
+          </Pressable>
+          {isPersonal ? (
+            <Pressable style={styles.taskAction} onPress={() => setTaskSheet({})} accessibilityRole="button" accessibilityLabel="काम लिखें" testID="quick-task">
+              <MaterialIcon name="clipboard-plus-outline" size={18} color={colors.brandPrimary} />
+              <Text style={styles.taskActionText} numberOfLines={1}>काम</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      )}
+
       <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />
       <AddEntrySheet visible={moneySheet} type={isPersonal ? "given" : "payment"} kinds={isPersonal ? ["given", "payment", "purchase"] : ["payment", "given"]} onClose={() => setMoneySheet(false)} />
       <AddExpenseSheet visible={expenseSheet} onClose={() => setExpenseSheet(false)} />
@@ -630,25 +603,6 @@ export default function Home() {
       <TaskSheet visible={taskSheet !== null} initial={taskSheet?.initial} onClose={() => setTaskSheet(null)} />
       <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
     </View>
-  );
-}
-
-type Tone = "due" | "ok" | "neutral" | "warn";
-
-function StatCard({ label, value, hint, icon, tone, onPress, testID }: { label: string; value: string; hint: string; icon: string; tone: Tone; onPress: () => void; testID: string }) {
-  const c = tone === "due" ? colors.error : tone === "ok" ? colors.success : tone === "warn" ? colors.warning : colors.onSurface;
-  return (
-    <Pressable style={styles.statCard} onPress={onPress} testID={testID}>
-      <View style={styles.statTop}>
-        <Text style={styles.statLabel}>{label}</Text>
-        <MaterialIcon name={icon as any} size={18} color={c} />
-      </View>
-      <Text style={[styles.statValue, { color: c }]} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
-      <View style={styles.statBottom}>
-        <Text style={styles.statHint} numberOfLines={1}>{hint}</Text>
-        <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
-      </View>
-    </Pressable>
   );
 }
 
@@ -660,15 +614,19 @@ const styles = StyleSheet.create({
   sub: { fontSize: 13, color: colors.muted, marginTop: spacing.xs },
   pendingPill: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", marginTop: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.errorSoft },
   pendingText: { fontSize: 12, fontWeight: "600", color: colors.warning },
-  statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.xl },
-  statCard: { flexBasis: "48%", flexGrow: 1, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
-  statTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  statLabel: { fontSize: 12, color: colors.muted, fontWeight: "600" },
-  statValue: { fontSize: 22, fontWeight: "700", marginTop: spacing.xs },
-  statBottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xs },
-  statHint: { fontSize: 12, color: colors.muted, flexShrink: 1 },
-  actionRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg },
-  walletLine: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm, paddingVertical: spacing.md, paddingHorizontal: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+  hero: { marginTop: spacing.lg, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, overflow: "hidden", ...elevation.low },
+  heroTop: { padding: spacing.lg, paddingBottom: spacing.md },
+  heroLabel: { ...type.caption, color: colors.muted, fontWeight: "700" },
+  heroValue: { ...type.display, fontWeight: "800", fontVariant: ["tabular-nums"], marginTop: 2 },
+  heroHint: { ...type.caption, color: colors.muted },
+  heroSplit: { flexDirection: "row", borderTopWidth: 1, borderTopColor: colors.border },
+  heroCell: { flex: 1, minWidth: 0, paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
+  heroCellLabel: { ...type.caption, color: colors.muted, fontWeight: "700" },
+  heroCellValue: { ...type.title, fontWeight: "800", color: colors.onSurface, fontVariant: ["tabular-nums"] },
+  heroDivider: { width: 1, backgroundColor: colors.border },
+  lateTag: { ...type.caption, color: semantic.due, fontWeight: "700" },
+  actionBar: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
+  walletLine: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface },
   walletCell: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 6 },
   walletLabel: { fontSize: 13, color: colors.muted, fontWeight: "600" },
   walletValue: { fontSize: 16, fontWeight: "800", color: colors.onSurface, flexShrink: 1 },

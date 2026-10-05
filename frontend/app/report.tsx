@@ -9,7 +9,8 @@ import { Pressable } from "@/src/components/tap";
 import { usePersona, type Persona } from "@/src/lib/persona";
 import { computeBalance, isRepayment } from "@/src/lib/data";
 import { expensePersona } from "@/src/lib/expenses";
-import { computeFlows, personaOfEntry, useMoneyBook } from "@/src/lib/wallet";
+import { personaOfEntry, useMoneyBook } from "@/src/lib/wallet";
+import { commissionDate } from "@/src/lib/aeps";
 import { useBudget } from "@/src/lib/budget";
 import { useAuth } from "@/src/context/AuthContext";
 import { pdfSupported, reportDoc, sharePdf, type Line } from "@/src/lib/receipt";
@@ -57,8 +58,14 @@ function monthStats(book: Book, persona: Persona, from: string, to: string): Mon
     expense += x.amount;
     cats.set(x.title, (cats.get(x.title) ?? 0) + x.amount);
   }
-  const flows = persona === "business" ? computeFlows(book, persona, inMonth) : null;
-  const commission = flows ? flows.cash.commission + flows.bank.commission : 0;
+  // By its day like the work and expenses above; galla flows would leave out late-typed rows.
+  let commission = 0;
+  if (persona === "business") {
+    for (const t of book.aeps) {
+      const day = t.commission > 0 ? commissionDate(t) : null;
+      if (day && inMonth(day)) commission += t.commission;
+    }
+  }
   const result = persona === "business" ? billed + commission - expense - fee : collected - given - paidOut - expense;
   return {
     billed: roundMoney(billed),

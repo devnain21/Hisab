@@ -1125,6 +1125,8 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
         items: items.saved(),
       });
       extras.forEach((e) => store.deleteEntry(e.id));
+      // Money taken on the work day (online part of a split, other-mode advance) moves with the work's date.
+      if (date !== entry.date) later.filter((p) => p.date === entry.date && p.linkId === entry.id).forEach((p) => store.updateEntry(p.id, { date }));
       bookAdvance(entry.customerId, taken - amt, date, t, entry.id, payMode);
       // Old two-row cash records: the same-day jama is now carried by `paid`.
       if (legacyLink) store.deleteEntry(legacyLink.id);
@@ -1457,6 +1459,10 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
           items: itemized ? items.saved() : [],
           split: splitOf(split, money.receivedNum),
         });
+        // Free work books no row, but money taken with it still came in and stays with the customer as advance.
+        if (!entryId && !self && customerId && money.receivedNum > 0) {
+          createPaid({ customerId, type: "payment", date: day, description: ADVANCE, notes: `${t} के साथ` }, money.receivedNum, payMode, splitOf(split, money.receivedNum));
+        }
         store.createJob({ customerId, title: t, dueDate: day, status: "done", estimatedAmount: amt, notes: remark.trim(), entryId });
         if (remark.trim()) {
           await store.createJob({ customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });

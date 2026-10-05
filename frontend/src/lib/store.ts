@@ -332,8 +332,28 @@ export const store = {
   deleteCustomer(id: string) {
     const list = queryClient.getQueryData<Customer[]>(["customers"]);
     const target = list?.find((x) => x.id === id);
-    if (target) void putInTrash("customers", target, bundleFor(id));
+    // Counter rows stay (unlinked) with their galla / bank movement, so the cash a customer left on
+    // them must stay too: it is carried over as money added, same day and typed-on time.
+    const aepsIds = new Set((queryClient.getQueryData<AepsTxn[]>(["aeps"]) ?? []).map((t) => t.id));
+    const jama = (queryClient.getQueryData<Entry[]>(["entries"]) ?? []).filter(
+      (e) => e.customerId === id && e.type === "payment" && !!e.linkId && aepsIds.has(e.linkId),
+    );
+    const moves: Move[] = jama.map((e) => ({
+      id: Crypto.randomUUID(),
+      date: e.date,
+      from: "",
+      to: e.mode === "online" ? "business:bank" : "business:cash",
+      amount: e.amount,
+      note: `${target?.name ?? "ग्राहक"} · काउंटर जमा (खाता हटाया)`,
+      createdAt: e.createdAt,
+    }));
+    if (target) void putInTrash("customers", target, { ...bundleFor(id), jamaMoveIds: moves.map((m) => m.id) });
     enqueue({ kind: "delete", coll: "customers", itemId: id });
+    moves.forEach((m) => enqueue({ kind: "create", coll: "moves", item: m }));
+  },
+  /** Removes a row without putting it in the recycle bin (undoing a row the app itself added). */
+  dropRaw(coll: Coll, itemId: string) {
+    enqueue({ kind: "delete", coll, itemId });
   },
   /** `createdAt` only for rows that must share another row's typed-on time (galla skips late-typed rows by it). */
   createEntry(b: Omit<Entry, "id" | "createdAt"> & { createdAt?: string }): Entry {

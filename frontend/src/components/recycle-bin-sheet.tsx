@@ -5,7 +5,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { clearTrashItems, describeTrash, getTrashList, restoreTrashItem, subscribeTrash, trashPersona, type TrashItem } from "@/src/lib/trash";
-import { formatDateShort } from "@/src/lib/format";
+import { formatDateShort, localDay } from "@/src/lib/format";
 import { confirmAction, showNotice } from "@/src/lib/confirm";
 import { usePersona } from "@/src/lib/persona";
 
@@ -99,7 +99,7 @@ export function RecycleBinModal({
                         <View style={[styles.badge, { backgroundColor: collBadge.color + "18" }]}>
                           <Text style={[styles.badgeText, { color: collBadge.color }]}>{collBadge.label}</Text>
                         </View>
-                        <Text style={styles.dateText}>{formatDateShort(item.deletedAt.slice(0, 10))}</Text>
+                        <Text style={styles.dateText}>{formatDateShort(localDay(item.deletedAt) ?? item.deletedAt.slice(0, 10))}</Text>
                       </View>
                       <Text style={styles.itemTitle} numberOfLines={1}>{label.title}</Text>
                       {label.subtitle ? <Text style={styles.itemSub}>{label.subtitle}</Text> : null}

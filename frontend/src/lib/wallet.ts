@@ -205,7 +205,8 @@ export function useMoneyBook() {
   const { all: expenses } = useExpenses();
   const moves = useMoves();
   return useMemo<Book>(
-    () => ({ entries: entries ?? [], customers: customers ?? [], aeps: aeps ?? [], expenses, moves }),
+    // An entry's book is known from its customer; until customers load, personal rows would count as shop money.
+    () => ({ entries: customers ? (entries ?? []) : [], customers: customers ?? [], aeps: aeps ?? [], expenses, moves }),
     [entries, customers, aeps, expenses, moves]
   );
 }

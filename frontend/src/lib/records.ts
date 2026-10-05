@@ -3,7 +3,7 @@
 // recordWork used to name them.
 import { useEffect, useRef } from "react";
 import { store } from "@/src/lib/store";
-import { isDebt, isRepayment, useEntries, type Entry, type Job } from "@/src/lib/data";
+import { isDebt, isRepayment, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
 import { roundMoney, todayISO } from "@/src/lib/format";
 
 const isLegacyPairFor = (work: Entry, e: Entry) =>
@@ -79,6 +79,8 @@ function legacyAdvancesForWork(work: Entry, entries: Entry[]): Entry[] {
  */
 function dropOrKeep(rows: Entry[], day: string) {
   rows.forEach((p) => {
+    // An old advance found only by its note may belong to another job of the same name; it stays on the khata.
+    if (!p.linkId && p.description === ADVANCE) return;
     if (p.date === day) store.deleteEntry(p.id);
     else if (p.linkId) store.updateEntry(p.id, { linkId: "" });
   });
@@ -173,6 +175,43 @@ export function foldLegacyCashRows(entries: Entry[]): number {
   return folded;
 }
 
+const FOR_JOB = " के लिए";
+const WITH_WORK = " के साथ";
+
+/**
+ * Older versions tied an advance to its job / work only by the note ("<title> के लिए / के साथ").
+ * Link each one by id where exactly one job or work fits, the way current versions save them,
+ * so two jobs with the same name can never share (or delete) each other's advance.
+ */
+export function linkLegacyAdvances(entries: Entry[], jobs: Job[]): number {
+  let linked = 0;
+  for (const e of entries) {
+    if (e.type !== "payment" || e.linkId || e.description !== ADVANCE) continue;
+    const forJob = e.notes.endsWith(FOR_JOB) ? e.notes.slice(0, -FOR_JOB.length) : null;
+    const withWork = e.notes.endsWith(WITH_WORK) ? e.notes.slice(0, -WITH_WORK.length) : null;
+    const title = forJob ?? withWork;
+    if (!title) continue;
+    const works = entries.filter((w) => w.type === "work" && w.customerId === e.customerId && w.description === title);
+    let target = "";
+    if (forJob !== null) {
+      const hits = jobs.filter((j) => j.customerId === e.customerId && j.title === title);
+      if (hits.length === 1) {
+        const job = hits[0];
+        // A finished job's advance belongs to its work row, as "काम पूरा करें" links it today.
+        if (job.status !== "done") target = job.id;
+        else if (job.entryId && works.some((w) => w.id === job.entryId)) target = job.entryId;
+      } else if (hits.length === 0 && works.length === 1) target = works[0].id;
+    } else {
+      const sameDay = works.filter((w) => w.date === e.date);
+      if (sameDay.length === 1) target = sameDay[0].id;
+    }
+    if (!target) continue;
+    store.updateEntry(e.id, { linkId: target });
+    linked += 1;
+  }
+  return linked;
+}
+
 /**
  * Runs the fold once per app session after entries load. Every row from a server that
  * understands `paid` carries the field, so if any row lacks it the backend is still the old
@@ -180,19 +219,23 @@ export function foldLegacyCashRows(entries: Entry[]): number {
  */
 export function useFoldLegacyCashRows() {
   const q = useEntries();
+  const jq = useJobs();
   const done = useRef(false);
   useEffect(() => {
     if (done.current || !q.data || q.isFetching || !q.isFetchedAfterMount) return;
+    if (!jq.data || jq.isFetching) return;
     if (q.data.length === 0 || q.data.some((e) => e.paid === undefined)) return;
     const rows = q.data;
+    const jobs = jq.data;
     // After the first screen has drawn, so opening the app never waits on this check.
     const t = setTimeout(() => {
       if (done.current) return;
       done.current = true;
       foldLegacyCashRows(rows);
+      linkLegacyAdvances(rows, jobs);
     }, 1500);
     return () => clearTimeout(t);
-  }, [q.data, q.isFetching, q.isFetchedAfterMount]);
+  }, [q.data, q.isFetching, q.isFetchedAfterMount, jq.data, jq.isFetching]);
 }
 
 // --- Ledger status ---------------------------------------------------------

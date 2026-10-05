@@ -6,7 +6,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius } from "@/src/theme";
 import { useAeps, type AepsTxn, type AepsType } from "@/src/lib/data";
 import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, bankLegDate, bankOf, cashLegDate, cashOf, commissionDate, isLater } from "@/src/lib/aeps";
-import { cleanAmountInput, formatDateShort, formatINR, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
+import { cleanAmountInput, formatDateShort, formatINR, localDay, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
 import { AepsSheet } from "@/src/components/aeps-sheet";
@@ -75,7 +75,7 @@ function Reconcile({ label, pocketKey, app, hint, testID }: { label: string; poc
       },
     );
   };
-  const lastText = last ? `आख़िरी मिलान: ${formatDateShort(last.slice(0, 10))} ${new Date(last).toTimeString().slice(0, 5)}` : "अभी तक मिलान नहीं किया";
+  const lastText = last ? `आख़िरी मिलान: ${formatDateShort(localDay(last) ?? last.slice(0, 10))} ${new Date(last).toTimeString().slice(0, 5)}` : "अभी तक मिलान नहीं किया";
   return (
     <View style={styles.reconcileRow} testID={testID}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>

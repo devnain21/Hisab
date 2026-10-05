@@ -10,7 +10,7 @@ import type { AepsTxn, Customer, Entry, Job } from "./data";
 export type TrashColl = "customers" | "entries" | "jobs" | "aeps" | "expenses" | "moves";
 
 /** Rows the server removes (or unlinks) together with a customer, so a restore brings the whole khata back. */
-export type CustomerBundle = { entries: Entry[]; jobs: Job[]; aepsIds: string[] };
+export type CustomerBundle = { entries: Entry[]; jobs: Job[]; aepsIds: string[]; jamaMoveIds?: string[] };
 
 export type TrashItem = {
   id: string;
@@ -188,6 +188,8 @@ function restoreCustomer(item: TrashItem) {
   // A counter due whose counter row was deleted meanwhile would be udhaar with nothing behind it.
   for (const e of b.entries) if (e.type !== "aeps" || (e.linkId && aepsIds.has(e.linkId))) store.restoreRaw("entries", e as any);
   for (const j of b.jobs) store.restoreRaw("jobs", j as any);
+  // The counter jama comes back on the khata, so the stand-in "money added" rows go.
+  for (const id of b.jamaMoveIds ?? []) store.dropRaw("moves", id);
   for (const id of b.aepsIds) {
     const row = aeps.find((t) => t.id === id);
     // Only rows still unlinked; one moved to another customer since then stays there.

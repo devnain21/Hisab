@@ -10,6 +10,8 @@ export type Customer = {
   address: string;
   notes: string;
   persona?: "business" | "personal";
+  /** Udhaar ceiling in rupees; 0 / missing = no limit. */
+  creditLimit?: number;
   createdAt: string;
 };
 // work: service done · payment: money received from them · given: money handed to them (loan, or

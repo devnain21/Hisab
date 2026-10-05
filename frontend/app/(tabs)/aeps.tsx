@@ -114,6 +114,22 @@ export default function AepsScreen() {
   }, [inRange, type, search, typesInRange.length]);
 
   const totals = useMemo(() => aepsTotals(txns, inRangeDate), [txns, inRangeDate]);
+  // Commission per day it was earned, newest first; same day rule as the totals.
+  const commByDay = useMemo(() => {
+    const m = new Map<string, { sum: number; count: number }>();
+    for (const t of txns) {
+      if (!(t.commission > 0)) continue;
+      const d = commissionDate(t);
+      if (!d || !inRangeDate(d)) continue;
+      const s = m.get(d) ?? { sum: 0, count: 0 };
+      s.sum += t.commission;
+      s.count += 1;
+      m.set(d, s);
+    }
+    return [...m].sort((a, b) => b[0].localeCompare(a[0]));
+  }, [txns, inRangeDate]);
+  const [showDays, setShowDays] = useState(false);
+  const multiDay = range === "month" || range === "all" || (range === "custom" && custom.from !== custom.to);
   const signed = (n: number) => `${n < 0 ? "−" : "+"}${formatINR(Math.abs(n))}`;
   const { hideAmounts } = usePrefs();
   const hide = (s: string) => (hideAmounts ? HIDDEN : s);
@@ -152,6 +168,24 @@ export default function AepsScreen() {
           <View style={styles.statDivider} />
           <Stat label="कमीशन" value={hide(formatINR(totals.commission))} sub={`कैश ${hide(formatINR(totals.commissionCash))} · बैंक ${hide(formatINR(totals.commissionBank))}`} tone={colors.brandSecondary} />
         </View>
+        {multiDay && commByDay.length > 0 ? (
+          <View style={styles.daysBox}>
+            <Pressable style={styles.daysHead} onPress={() => setShowDays((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: showDays }} testID="aeps-comm-days">
+              <MaterialIcon name="calendar-text-outline" size={16} color={colors.brandPrimary} />
+              <Text style={styles.daysTitle}>रोज़ का कमीशन · {commByDay.length} दिन · औसत {hide(formatINR(Math.round(totals.commission / commByDay.length)))}</Text>
+              <MaterialIcon name={showDays ? "chevron-up" : "chevron-down"} size={18} color={colors.muted} />
+            </Pressable>
+            {showDays
+              ? commByDay.map(([d, s]) => (
+                  <View key={d} style={styles.dayRow}>
+                    <Text style={styles.dayDate}>{d === today ? "आज" : formatDateShort(d)}</Text>
+                    <Text style={styles.dayCount}>{s.count} एंट्री</Text>
+                    <Text style={styles.dayComm}>{hide(formatINR(s.sum))}</Text>
+                  </View>
+                ))
+              : null}
+          </View>
+        ) : null}
         <Pressable style={styles.reconcileLink} onPress={() => router.push({ pathname: "/day", params: { type: "drawer" } })} testID="aeps-portal">
           <MaterialIcon name="scale-balance" size={16} color={colors.brandPrimary} />
           <Text style={styles.reconcileLinkText}>पोर्टल / गल्ला मिलान — दिन के हिसाब में</Text>
@@ -300,6 +334,13 @@ const styles = StyleSheet.create({
   statStrip: { flexDirection: "row", marginTop: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   stat: { flex: 1, minWidth: 0, paddingHorizontal: spacing.sm },
   statDivider: { width: 1, backgroundColor: colors.border },
+  daysBox: { marginTop: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, paddingHorizontal: spacing.md },
+  daysHead: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 44 },
+  daysTitle: { flex: 1, fontSize: 13, fontWeight: "700", color: colors.onSurface },
+  dayRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  dayDate: { width: 72, fontSize: 13, fontWeight: "700", color: colors.onSurface },
+  dayCount: { flex: 1, fontSize: 12, color: colors.muted },
+  dayComm: { fontSize: 14, fontWeight: "800", color: colors.brandSecondary, fontVariant: ["tabular-nums"] },
   reconcileLink: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm, minHeight: 44, paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary },
   reconcileLinkText: { flex: 1, fontSize: 13, fontWeight: "700", color: colors.brandSecondary },
   statLabel: { fontSize: 12, fontWeight: "700", color: colors.muted },

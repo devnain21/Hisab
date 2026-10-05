@@ -27,6 +27,7 @@ import {
   moneyLines,
   type AepsField,
   type CashFlow,
+  WALK_IN,
 } from "@/src/lib/aeps";
 import { aepsDueEntry, aepsJamaEntry, createAeps, jamaKindOf, saveAeps, type Jama } from "@/src/lib/aeps-due";
 import { dateOnSave, formatINR, nowHM, parseAmount, todayISO } from "@/src/lib/format";
@@ -264,17 +265,20 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
   const [openedOn, setOpenedOn] = useState(todayISO());
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
   const [saving, setSaving] = useState(false);
+  const [walkIn, setWalkIn] = useState(false);
   const entries = useEntries().data;
 
   useEffect(() => {
     if (!visible) return;
+    const wasWalkIn = !!initial && !initial.customerId && initial.customerName === WALK_IN;
+    setWalkIn(wasWalkIn);
     setMobile(initial?.mobile ?? "");
     setDate(initial?.date ?? todayISO());
     setTime(initial?.time || nowHM());
     setOpenedOn(todayISO());
     setLines([initial ? lineFrom(initial, aepsJamaEntry(initial.id, entries ?? [])) : emptyLine()]);
     // Older rows only carry a name and mobile: find that customer, or offer them as new.
-    if (initial && !initial.customerId) {
+    if (initial && !initial.customerId && !wasWalkIn) {
       const m = initial.mobile.replace(/\D/g, "").slice(-10);
       const known =
         (m.length === 10 && choice.recent.find((c) => c.phone.replace(/\D/g, "").slice(-10) === m)) ||
@@ -290,15 +294,15 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initial?.id]);
 
-  const picked = choice.recent.find((c) => c.id === choice.customerId);
-  const name = picked ? picked.name : choice.query.trim();
+  const picked = walkIn ? undefined : choice.recent.find((c) => c.id === choice.customerId);
+  const name = walkIn ? WALK_IN : picked ? picked.name : choice.query.trim();
   // The customer's khata before this entry (its own due / jama left out when editing).
   const oldDue = useMemo(() => {
     if (!picked) return 0;
     const own = new Set(initial ? [aepsDueEntry(initial.id, entries ?? [])?.id, aepsJamaEntry(initial.id, entries ?? [])?.id] : []);
     return computeBalance((entries ?? []).filter((e) => !own.has(e.id)), picked.id);
   }, [picked, entries, initial]);
-  const finalMobile = (picked ? picked.phone || mobile : choice.isNew ? choice.newPhone : "").replace(/\D/g, "").slice(-10);
+  const finalMobile = (walkIn ? mobile : picked ? picked.phone || mobile : choice.isNew ? choice.newPhone : "").replace(/\D/g, "").slice(-10);
 
   const patch = (key: string, partial: Partial<Line>) => setLines((rows) => rows.map((r) => (r.key === key ? { ...r, ...partial } : r)));
   const pickType = (key: string, type: AepsType) =>
@@ -311,7 +315,10 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
     if (flowOf(l) === "out" && l.handed !== null && num(l.handed) > owedNum(l)) return false;
     return true;
   };
-  const valid = choice.ready && !choice.isSelf && lines.every(lineValid);
+  // Without a khata nothing can be left owing or kept: the money has to settle on the spot.
+  const walkInOk = (l: Line) => l.status === "failed" || (lineJama(l) === null && !commOwed(l) && !(flowOf(l) === "in" && collectedNum(l) < num(l.amount)));
+  const walkInBlocked = walkIn && !lines.every(walkInOk);
+  const valid = (walkIn ? !walkInBlocked : choice.ready && !choice.isSelf) && lines.every(lineValid);
 
   /** Status fields for the server. Editing keeps the days a side already settled on. */
   const statusFields = (line: Line, i: number, date: string) => {
@@ -339,7 +346,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
     if (!valid) return;
     setSaving(true);
     try {
-      const customerId = await choice.resolve();
+      const customerId = walkIn ? "" : await choice.resolve();
       if (picked && !picked.phone && finalMobile) {
         store.updateCustomer(picked.id, { name: picked.name, phone: finalMobile, address: picked.address, notes: picked.notes, persona: picked.persona ?? "business" });
       }
@@ -388,8 +395,12 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
 
   return (
     <SheetShell visible={visible} onClose={onClose} title={initial ? "एंट्री बदलें" : "काउंटर एंट्री"} testID="sheet-aeps">
-      <CustomerPicker choice={choice} label="ग्राहक" testPrefix="aeps-cust" />
-      {picked && !picked.phone ? (
+      <View style={[styles.chipRow, { marginBottom: spacing.md }]}>
+        <Chip label="ग्राहक का नाम" icon="account-outline" active={!walkIn} onPress={() => setWalkIn(false)} testID="aeps-named" />
+        <Chip label="बिना नाम (वॉक-इन)" icon="walk" active={walkIn} onPress={() => setWalkIn(true)} testID="aeps-walkin" />
+      </View>
+      {walkIn ? null : <CustomerPicker choice={choice} label="ग्राहक" testPrefix="aeps-cust" />}
+      {walkIn || (picked && !picked.phone) ? (
         <Field label={FIELD_LABEL.mobile}>
           <TextInput style={inputStyle} value={mobile} onChangeText={(v) => setMobile(digits(v, 10))} placeholder="10 अंक (वैकल्पिक)" placeholderTextColor={colors.muted} keyboardType="phone-pad" maxLength={10} testID="aeps-input-mobile" />
         </Field>
@@ -406,7 +417,7 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
           pickType={(t) => pickType(line.key, t)}
           onRemove={() => setLines((rows) => rows.filter((r) => r.key !== line.key))}
           oldDue={index === 0 ? oldDue : 0}
-          hasCustomer={!!choice.customerId}
+          hasCustomer={!walkIn && !!choice.customerId}
         />
       ))}
 
@@ -424,6 +435,11 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
         <TextInput style={inputStyle} value={time} onChangeText={setTime} placeholder="HH:MM" placeholderTextColor={colors.muted} maxLength={5} testID="aeps-input-time" />
       </Field>
 
+      {walkInBlocked ? (
+        <Text style={[styles.warn, { marginBottom: spacing.sm }]} testID="aeps-walkin-warn">
+          बिना नाम वाली एंट्री में उधार या जमा नहीं रह सकता — पूरे पैसे चुनें, या ग्राहक का नाम लिखें
+        </Text>
+      ) : null}
       <PrimaryButton label={initial ? "बदलाव सेव करें" : lines.length > 1 ? `${lines.length} सेवाएँ सेव करें` : "एंट्री सेव करें"} onPress={save} disabled={!valid} saving={saving} testID="aeps-save-btn" />
     </SheetShell>
   );

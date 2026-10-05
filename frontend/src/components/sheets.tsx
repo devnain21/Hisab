@@ -16,7 +16,7 @@ import { advanceOf, computeBalance, itemsOf, useCustomers, useEntries, useJobs, 
 import { ADVANCE, advancesForJob, buildLedger, jobForWork, linkedPayment, olderAdvances, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
-import { OLD_ENTRY_DAYS, dateOnSave, formatDate, formatINR, isBackdated, isValidISO, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
+import { OLD_ENTRY_DAYS, cleanAmountInput, dateOnSave, formatDate, formatINR, isBackdated, isValidISO, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
 import { CalendarModal } from "@/src/components/calendar-modal";
 import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
@@ -111,6 +111,24 @@ export const inputStyle = {
   color: colors.onSurface,
   minHeight: 48,
 };
+
+/** Shown while typing new udhaar that would take the customer past their credit limit. */
+export function LimitWarning({ customerId, extra }: { customerId?: string; extra: number }) {
+  const customers = useCustomers().data ?? [];
+  const entries = useEntries().data ?? [];
+  const limit = (customerId && customers.find((c) => c.id === customerId)?.creditLimit) || 0;
+  if (!limit || !(extra > 0)) return null;
+  const after = roundMoney(computeBalance(entries, customerId!) + extra);
+  if (after <= limit) return null;
+  return (
+    <View style={styles.limitBox} testID="credit-limit-warning">
+      <MaterialIcon name="alert-octagon-outline" size={18} color={colors.error} />
+      <Text style={styles.limitText}>
+        उधार सीमा {formatINR(limit)} पार हो जाएगी — कुल बाकी {formatINR(after)} होगा
+      </Text>
+    </View>
+  );
+}
 
 /** Optional fields folded away so the sheet opens with only what every entry needs. */
 export function MoreInfo({ open: forceOpen, hint = "विवरण, नोट", children, testID }: { open?: boolean; hint?: string; children: React.ReactNode; testID?: string }) {
@@ -740,6 +758,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [notes, setNotes] = useState("");
+  const [limit, setLimit] = useState("");
   const [targetPersona, setTargetPersona] = useState<"business" | "personal">("business");
   const [saving, setSaving] = useState(false);
   const contacts = useContactPicker((n, p) => {
@@ -753,6 +772,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
       setPhone(initial?.phone ?? "");
       setAddress(initial?.address ?? "");
       setNotes(initial?.notes ?? "");
+      setLimit(initial?.creditLimit ? String(initial.creditLimit) : "");
       // Rows saved before personas existed belong to the shop.
       setTargetPersona(initial ? (initial.persona === "personal" ? "personal" : "business") : isPersonal ? "personal" : "business");
     }
@@ -775,6 +795,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
         address: address.trim(),
         notes: notes.trim(),
         persona: targetPersona,
+        creditLimit: targetPersona === "personal" ? 0 : parseAmount(limit) || 0,
       };
       if (initial?.id) await store.updateCustomer(initial.id, body);
       else await store.createCustomer(body);
@@ -826,12 +847,24 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
           </View>
         ) : null}
       </Field>
-      <Field label="पता (वैकल्पिक)">
-        <TextInput style={inputStyle} value={address} onChangeText={setAddress} placeholder="मोहल्ला, गली या गांव" placeholderTextColor={colors.muted} testID="input-cust-address" />
-      </Field>
-      <Field label="नोट (वैकल्पिक)">
-        <TextInput style={[inputStyle, { minHeight: 72 }]} value={notes} onChangeText={setNotes} multiline placeholderTextColor={colors.muted} testID="input-cust-notes" />
-      </Field>
+      <MoreInfo
+        open={!!address || !!notes || !!limit}
+        hint={targetPersona === "personal" ? "पता, नोट" : "पता, नोट, उधार सीमा"}
+        testID="cust-more-info"
+      >
+        <Field label="पता">
+          <TextInput style={inputStyle} value={address} onChangeText={setAddress} placeholder="मोहल्ला, गली या गांव" placeholderTextColor={colors.muted} testID="input-cust-address" />
+        </Field>
+        <Field label="नोट">
+          <TextInput style={[inputStyle, { minHeight: 72 }]} value={notes} onChangeText={setNotes} multiline placeholderTextColor={colors.muted} testID="input-cust-notes" />
+        </Field>
+        {targetPersona === "personal" ? null : (
+          <Field label="उधार सीमा (₹)">
+            <TextInput style={inputStyle} value={limit} onChangeText={(v) => setLimit(cleanAmountInput(v))} placeholder="खाली = कोई सीमा नहीं" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-cust-limit" />
+            <Text style={styles.hint}>इससे ज़्यादा उधार होने पर एंट्री लिखते समय चेतावनी दिखेगी</Text>
+          </Field>
+        )}
+      </MoreInfo>
       <PrimaryButton label={initial ? "बदलाव सेव करें" : targetPersona === "personal" ? "व्यक्ति जोड़ें" : "ग्राहक जोड़ें"} onPress={save} disabled={!name.trim()} saving={saving} testID="save-customer-btn" />
       {initial?.id && onDelete ? (
         <DangerLink
@@ -1049,6 +1082,7 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
           <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-entry-notes" />
         </Field>
       </MoreInfo>
+      {kind === "work" || kind === "given" ? <LimitWarning customerId={personId} extra={amt} /> : null}
       <PrimaryButton
         label={initial ? "बदलाव सेव करें" : `${ui.title} — सेव करें`}
         onPress={save}
@@ -1576,6 +1610,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
         </>
       )}
 
+      {mode === "now" && !self ? <LimitWarning customerId={choice.existingId} extra={roundMoney(amt - money.receivedNum)} /> : null}
       <PrimaryButton label={saveLabel} onPress={save} disabled={!valid} saving={saving} testID="save-job-btn" />
     </SheetShell>
   );
@@ -1739,6 +1774,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
       ) : null}
       <DateField label="काम की तारीख" value={workDay} onChange={(d) => { setWorkDate(d); setCashDate(d); }} testID="input-complete-date" />
       {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDay} onChange={setCashDate} money testID="input-complete-cash-date" /> : null}
+      {job?.customerId ? <LimitWarning customerId={job.customerId} extra={roundMoney(amt - got)} /> : null}
       <PrimaryButton label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"} onPress={save} disabled={!!job?.customerId && amt > 0 && !money.answered} saving={saving} testID="save-complete-btn" />
     </SheetShell>
   );
@@ -1758,6 +1794,8 @@ const styles = StyleSheet.create({
   primaryBtn: { backgroundColor: colors.brandPrimary, borderRadius: radius.md, paddingVertical: 15, alignItems: "center", marginTop: spacing.md, minHeight: 52, justifyContent: "center" },
   primaryText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "700" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  limitBox: { flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.md, marginBottom: spacing.md, borderRadius: radius.md, backgroundColor: colors.errorSoft, borderWidth: 1, borderColor: colors.error },
+  limitText: { flex: 1, fontSize: 13, fontWeight: "700", color: colors.error },
   moreInfo: { flexDirection: "row", alignItems: "center", gap: spacing.xs, minHeight: 44, paddingHorizontal: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border },
   moreInfoText: { fontSize: 14, fontWeight: "700", color: colors.brandPrimary },
   moreInfoHint: { flex: 1, fontSize: 12, color: colors.muted, textAlign: "right" },

@@ -26,6 +26,9 @@ type Meta = {
   hiLabel: string;
   icon: string; color: string; soft: string; cash: "in" | "out" | "none"; amountLabel: string; fields: AepsField[] };
 
+/** Name stored on a counter row taken without a customer; such a row never touches a khata. */
+export const WALK_IN = "वॉक-इन ग्राहक";
+
 /** Services offered when adding; the rest only exist on older rows. */
 export const AEPS_SERVICES: AepsType[] = ["withdrawal", "deposit", "transfer", "bill", "recharge", "other"];
 export const AEPS_TYPES: AepsType[] = [...AEPS_SERVICES, "upi", "cash", "balance"];

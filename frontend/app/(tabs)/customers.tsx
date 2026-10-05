@@ -116,6 +116,12 @@ export default function CustomersScreen() {
       <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.md, backgroundColor: colors.surface }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
           <Text style={styles.h1}>{labels.customers}</Text>
+          {counts.due > 1 ? (
+            <Pressable style={styles.bulkBtn} onPress={() => router.push("/remind" as never)} accessibilityRole="button" accessibilityLabel="सबको तगादा भेजें" testID="open-bulk-remind">
+              <MaterialIcon name="whatsapp" size={18} color={semantic.whatsapp} />
+              <Text style={styles.bulkText}>सबको तगादा</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         <View style={styles.searchWrap}>
@@ -287,6 +293,8 @@ const styles = StyleSheet.create({
   dupe: { ...type.caption, color: colors.warning, fontWeight: "700", flexShrink: 1 },
   dueAmt: { ...type.bodyLg, fontWeight: "700" },
   dueTag: { ...type.caption, color: colors.muted },
+  bulkBtn: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 40, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: semantic.whatsappSoft },
+  bulkText: { ...type.caption, fontWeight: "800", color: semantic.whatsapp },
   rowActs: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs },
   rowBtn: { minHeight: 36, minWidth: 36, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
   gotBtn: { flexDirection: "row", gap: 4, paddingHorizontal: spacing.md, backgroundColor: semantic.receivedSoft },

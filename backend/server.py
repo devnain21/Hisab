@@ -129,6 +129,7 @@ class Customer(BaseModel):
     address: str = ""
     notes: str = ""
     persona: Optional[str] = "business"
+    creditLimit: float = 0
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updatedAt: Optional[str] = None
 
@@ -142,6 +143,8 @@ class CustomerCreate(BaseModel):
     address: Short = ""
     notes: Notes = ""
     persona: Optional[str] = "business"
+    # Udhaar ceiling; 0 = none. Left out by older app builds, which must not wipe it.
+    creditLimit: Optional[Money] = None
 
 
 def _check_paid(m):
@@ -648,6 +651,8 @@ async def update_customer(customer_id: str, payload: CustomerCreate, user: dict 
         raise HTTPException(404, "Not found")
     _check_base(existing, base)
     patch = payload.dict(exclude={"id", "createdAt"})
+    if patch.get("creditLimit") is None:
+        patch.pop("creditLimit", None)
     patch["updatedAt"] = _now()
     await db.customers.update_one({"id": customer_id, "user_id": user["user_id"]}, {"$set": patch})
     return _rows(Customer, [{**existing, **patch}])[0]

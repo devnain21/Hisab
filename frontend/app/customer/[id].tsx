@@ -211,6 +211,14 @@ export default function CustomerDetail() {
               ].filter(Boolean).join(" · ")}
             </Text>
           ) : null}
+          {isCustomer && (customer.creditLimit ?? 0) > 0 ? (
+            <IconLabel
+              icon={due > customer.creditLimit! ? "alert-octagon-outline" : "shield-check-outline"}
+              color={due > customer.creditLimit! ? semantic.due : colors.onSurfaceSecondary}
+              label={`उधार सीमा ${formatINR(customer.creditLimit!)}${due > customer.creditLimit! ? ` · ${formatINR(due - customer.creditLimit!)} पार` : ""}`}
+              style={[styles.breakdown, { marginTop: spacing.sm }]}
+            />
+          ) : null}
           {customer.notes ? <Text style={styles.notes}>{customer.notes}</Text> : null}
         </View>
 

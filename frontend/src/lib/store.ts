@@ -4,7 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Crypto from "expo-crypto";
 import { useSyncExternalStore } from "react";
 import { AppState } from "react-native";
-import { api } from "@/src/lib/api";
+import { api, serverIsUp } from "@/src/lib/api";
 import { queryClient } from "@/src/query-client";
 import type { AepsTxn, Customer, Entry, Job } from "@/src/lib/data";
 import type { Expense } from "@/src/lib/expenses";
@@ -117,9 +117,10 @@ function isRetryable(e: unknown, op: Op) {
 }
 
 /** Changes the server refused, kept so the user is told instead of losing them silently. */
-export type RejectedChange = { coll: Coll; kind: Op["kind"]; status: number | undefined; at: string; label: string };
+export type RejectedChange = { coll: Coll; kind: Op["kind"]; status: number | undefined; at: string; label: string; op?: Op };
 const REJECTED_KEY = "hisab_rejected_v1";
 const MAX_SERVER_FAILS = 5;
+const MAX_REJECTED = 100;
 let rejected: RejectedChange[] = [];
 let rejectedLoaded = false;
 let serverFails = 0;
@@ -145,12 +146,33 @@ function describe(op: Op): string {
 }
 
 function reject(op: Op, status: number | undefined) {
-  rejected = [{ coll: op.coll, kind: op.kind, status, at: new Date().toISOString(), label: describe(op) }, ...rejected].slice(0, 30);
+  rejected = [{ coll: op.coll, kind: op.kind, status, at: new Date().toISOString(), label: describe(op), op }, ...rejected].slice(0, MAX_REJECTED);
   if (rejectedLoaded) AsyncStorage.setItem(REJECTED_KEY, JSON.stringify(rejected)).catch(() => {});
 }
 
 export function rejectedChanges() {
   return rejected;
+}
+
+/** Changes set aside whose full data was kept and can be sent again. */
+export function retryableRejectedCount() {
+  return rejected.filter((r) => r.op).length;
+}
+
+/** Queue the set-aside changes again, oldest first; ones saved without their data stay listed. */
+export async function retryRejected() {
+  await ensureLoaded();
+  const again = rejected.filter((r) => r.op).reverse().map((r) => r.op as Op);
+  if (again.length === 0) return;
+  rejected = rejected.filter((r) => !r.op);
+  await AsyncStorage.setItem(REJECTED_KEY, JSON.stringify(rejected)).catch(() => {});
+  for (const op of again) {
+    ops.push(op);
+    for (const coll of COLLS) queryClient.setQueryData<any[]>([coll], (old) => (old === undefined ? old : applyOp(coll, old, op)));
+  }
+  persist();
+  notify();
+  void flush();
 }
 
 export async function clearRejected() {
@@ -175,9 +197,17 @@ function touchedBy(op: Op): Coll[] {
   return [op.coll];
 }
 
+// Off until sign-in has confirmed whose changes are queued, so they never go out under another account's token.
+let syncEnabled = false;
+
+export function setSyncEnabled(on: boolean) {
+  syncEnabled = on;
+  if (on) void flush();
+}
+
 export async function flush() {
   await ensureLoaded();
-  if (flushing || ops.length === 0) return;
+  if (!syncEnabled || flushing || ops.length === 0) return;
   flushing = true;
   if (retryTimer) {
     clearTimeout(retryTimer);
@@ -188,14 +218,16 @@ export async function flush() {
   const touched = new Set<Coll>();
   try {
     while (ops.length > 0) {
+      if (!syncEnabled) return;
       const op = ops[0];
       try {
         await send(op);
         serverFails = 0;
       } catch (e) {
         const status = statusOf(e);
-        // One change the server keeps crashing on must not hold back everything queued after it.
-        const stuck = status !== undefined && status >= 500 && ++serverFails >= MAX_SERVER_FAILS;
+        // One change the server keeps crashing on must not hold back everything queued after it,
+        // but while the whole server is down nothing is set aside.
+        const stuck = status !== undefined && status >= 500 && ++serverFails >= MAX_SERVER_FAILS && (await serverIsUp());
         if (isRetryable(e, op) && !stuck) {
           retryTimer = setTimeout(() => void flush(), RETRY_MS);
           return;

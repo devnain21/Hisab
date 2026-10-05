@@ -865,7 +865,8 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
       items.reset();
       money.reset("", "0");
     }
-    setPayMode(initial?.mode ?? getPrefs().defaultMode);
+    // Rows saved before the mode field existed were cash; the default only applies to new entries.
+    setPayMode(initial ? (initial.mode ?? "cash") : getPrefs().defaultMode);
     setDate(initial?.date ?? todayISO());
     setOpenedOn(todayISO());
     setNotes(initial?.notes ?? "");

@@ -11,7 +11,7 @@ import {
 } from "firebase/auth";
 import { api, setTokenProvider } from "@/src/lib/api";
 import { getFirebaseAuth, getGoogleClientIds, isFirebaseConfigured } from "@/src/lib/firebase";
-import { clearOutbox, flush, parkOutbox, unparkOutbox } from "@/src/lib/store";
+import { clearOutbox, parkOutbox, setSyncEnabled, unparkOutbox } from "@/src/lib/store";
 import { clearFileStore } from "@/src/lib/file-store";
 import { resetTrashMemory } from "@/src/lib/trash";
 import { resetRecentCustomers } from "@/src/lib/recent";
@@ -59,6 +59,25 @@ function writeCachedProfile(uid: string, user: User) {
   AsyncStorage.setItem(PROFILE_KEY, JSON.stringify({ uid, user })).catch(() => {});
 }
 
+// Account the data on this phone belongs to; under the "hisab_" prefix so a wipe clears it too.
+const OWNER_KEY = "hisab_owner_uid";
+
+/** The next person to sign in on this device must not see this khata or inherit its PIN. */
+async function wipeLocalData() {
+  await clearOutbox();
+  queryClient.clear();
+  // Profile, recycle bin, recent customers, mode, counted cash and old local copies all belong to this account.
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const mine = keys.filter((k) => k.startsWith("hisab_") && !k.startsWith("hisab_applock_"));
+    if (mine.length) await AsyncStorage.multiRemove(mine);
+  } catch {}
+  await clearFileStore();
+  resetTrashMemory();
+  resetRecentCustomers();
+  await disableLock().catch(() => {});
+}
+
 function mapFirebaseUser(u: { uid: string; email: string | null; displayName: string | null; photoURL: string | null }): User {
   return {
     user_id: u.uid,
@@ -88,15 +107,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      setSyncEnabled(false);
       if (!fbUser) {
         setState({ status: "unauthenticated", user: null });
         return;
       }
+      // A session can end without signOut() (expired / revoked); then another account's leftovers are still here.
+      const owner = await AsyncStorage.getItem(OWNER_KEY).catch(() => null);
+      if (owner && owner !== fbUser.uid) {
+        await parkOutbox(owner);
+        await wipeLocalData();
+      }
+      await AsyncStorage.setItem(OWNER_KEY, fbUser.uid).catch(() => {});
       // The free backend can take up to a minute to wake up (or we may be offline), so don't block on it.
       const cached = await readCachedProfile(fbUser.uid);
       await unparkOutbox(fbUser.uid);
       setState({ status: "authenticated", user: cached ?? mapFirebaseUser(fbUser) });
-      void flush();
+      setSyncEnabled(true);
       try {
         const token = await fbUser.getIdToken();
         const me = await api.login(token);
@@ -171,20 +198,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await firebaseSignOut(getFirebaseAuth());
       }
     } catch {}
-    // The next person to sign in on this device must not see this khata or inherit its PIN.
-    await clearOutbox();
-    queryClient.clear();
-    await AsyncStorage.removeItem(PROFILE_KEY).catch(() => {});
-    // Recycle bin, recent customers, mode, counted cash and old local copies all belong to this account.
-    try {
-      const keys = await AsyncStorage.getAllKeys();
-      const mine = keys.filter((k) => k.startsWith("hisab_") && !k.startsWith("hisab_applock_"));
-      if (mine.length) await AsyncStorage.multiRemove(mine);
-    } catch {}
-    await clearFileStore();
-    resetTrashMemory();
-    resetRecentCustomers();
-    await disableLock().catch(() => {});
+    await wipeLocalData();
     setState({ status: "unauthenticated", user: null });
   }, []);
 

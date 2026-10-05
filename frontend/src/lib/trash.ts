@@ -40,6 +40,15 @@ function save(list: TrashItem[]) {
   return fileStore.setItem(TRASH_KEY, JSON.stringify(list)).catch(() => {});
 }
 
+let writeChain: Promise<unknown> = Promise.resolve();
+
+/** Bin writes run one after another; several deletes at once would otherwise each save over the others. */
+function mutateTrash<T>(fn: (list: TrashItem[]) => Promise<T> | T): Promise<T> {
+  const run = writeChain.then(async () => fn(await getTrashList()));
+  writeChain = run.catch(() => {});
+  return run;
+}
+
 export async function getTrashList(): Promise<TrashItem[]> {
   if (trashMemory) return trashMemory;
   try {
@@ -109,18 +118,19 @@ function describe(coll: TrashColl, data: Record<string, any>, bundle?: CustomerB
   return { title: `${accountLabel(m.from)} → ${accountLabel(m.to)}`, subtitle: `${formatINR(m.amount || 0)} (${m.date || ""})` };
 }
 
-export async function putInTrash(coll: TrashColl, data: Record<string, any>, bundle?: CustomerBundle): Promise<TrashItem> {
-  const list = await getTrashList();
-  const trashItem: TrashItem = {
-    id: `trash_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-    coll,
-    ...describe(coll, data, bundle),
-    deletedAt: new Date().toISOString(),
-    data,
-    ...(bundle ? { bundle } : {}),
-  };
-  await save([trashItem, ...list].slice(0, MAX_TRASH_ITEMS));
-  return trashItem;
+export function putInTrash(coll: TrashColl, data: Record<string, any>, bundle?: CustomerBundle): Promise<TrashItem> {
+  return mutateTrash(async (list) => {
+    const trashItem: TrashItem = {
+      id: `trash_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      coll,
+      ...describe(coll, data, bundle),
+      deletedAt: new Date().toISOString(),
+      data,
+      ...(bundle ? { bundle } : {}),
+    };
+    await save([trashItem, ...list].slice(0, MAX_TRASH_ITEMS));
+    return trashItem;
+  });
 }
 
 /** Forget the cached list (sign-out); the stored copy is removed by the caller. */
@@ -136,10 +146,11 @@ export async function clearAllTrash(): Promise<void> {
 }
 
 /** Permanently drop just these items (the bin shows one account at a time). */
-export async function clearTrashItems(ids: string[]): Promise<void> {
+export function clearTrashItems(ids: string[]): Promise<void> {
   const drop = new Set(ids);
-  const list = await getTrashList();
-  await save(list.filter((t) => !drop.has(t.id)));
+  return mutateTrash(async (list) => {
+    await save(list.filter((t) => !drop.has(t.id)));
+  });
 }
 
 /** Which account a binned row belongs to; null when it can't be told (shown in both). */
@@ -189,14 +200,19 @@ function restoreCustomer(item: TrashItem) {
 }
 
 export async function restoreTrashItem(trashId: string): Promise<RestoreResult> {
-  const list = await getTrashList();
-  const item = list.find((t) => t.id === trashId);
-  if (!item || !item.data) return "missing";
+  const taken = await mutateTrash(async (list) => {
+    const found = list.find((t) => t.id === trashId);
+    if (!found || !found.data) return "missing" as const;
+    const ownerId = (found.data as { customerId?: string }).customerId;
+    if ((found.coll === "entries" || found.coll === "jobs") && ownerId && !cached<Customer>("customers").some((c) => c.id === ownerId)) {
+      return "no-customer" as const;
+    }
+    await save(list.filter((t) => t.id !== trashId));
+    return found;
+  });
+  if (typeof taken === "string") return taken;
+  const item = taken;
   const customerId = (item.data as { customerId?: string }).customerId;
-  if ((item.coll === "entries" || item.coll === "jobs") && customerId && !cached<Customer>("customers").some((c) => c.id === customerId)) {
-    return "no-customer";
-  }
-  await save(list.filter((t) => t.id !== trashId));
   if (item.coll === "customers") {
     restoreCustomer(item);
   } else {

@@ -516,7 +516,7 @@ async def update_customer(customer_id: str, payload: CustomerCreate, user: dict 
     existing = await db.customers.find_one({"id": customer_id, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not existing:
         raise HTTPException(404, "Not found")
-    patch = payload.dict(exclude={"id"})
+    patch = payload.dict(exclude={"id", "createdAt"})
     await db.customers.update_one({"id": customer_id, "user_id": user["user_id"]}, {"$set": patch})
     return Customer(**{**existing, **patch})
 
@@ -715,6 +715,17 @@ async def startup():
     await db.moves.create_index([("user_id", 1), ("id", 1)])
     await db.deleted_items.create_index([("user_id", 1), ("coll", 1), ("id", 1)])
     await db.deleted_items.create_index("deletedAt", expireAfterSeconds=60 * 60 * 24 * 180)
+    await _repair_null_created_at()
+
+
+async def _repair_null_created_at():
+    """Customer edits once wrote createdAt: null, which made GET /customers fail; the ObjectId keeps the real insert time."""
+    try:
+        async for doc in db.customers.find({"createdAt": None}, {"_id": 1}):
+            when = doc["_id"].generation_time.isoformat()
+            await db.customers.update_one({"_id": doc["_id"]}, {"$set": {"createdAt": when}})
+    except Exception:
+        logger.exception("createdAt repair failed")
 
 
 @app.on_event("shutdown")

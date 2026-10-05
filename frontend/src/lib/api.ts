@@ -14,6 +14,19 @@ async function authHeaders(): Promise<Record<string, string>> {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
+// The free server can take most of a minute to wake up; past that a request is treated as lost and retried.
+const REQUEST_TIMEOUT_MS = 60_000;
+
+async function fetchWithTimeout(url: string, opts: RequestInit, ms: number) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function req(path: string, opts: RequestInit = {}) {
   if (!BASE) {
     throw new Error("EXPO_PUBLIC_BACKEND_URL set nahi hai");
@@ -23,7 +36,7 @@ async function req(path: string, opts: RequestInit = {}) {
     ...(await authHeaders()),
     ...((opts.headers as Record<string, string>) || {}),
   };
-  const res = await fetch(`${BASE}/api${path}`, { ...opts, headers });
+  const res = await fetchWithTimeout(`${BASE}/api${path}`, { ...opts, headers }, REQUEST_TIMEOUT_MS);
   if (res.status === 401) {
     const err: Error & { status?: number } = new Error("Unauthorized");
     err.status = 401;
@@ -42,6 +55,16 @@ async function req(path: string, opts: RequestInit = {}) {
 
 export function wakeBackend() {
   if (BASE) fetch(`${BASE}/api/`).catch(() => {});
+}
+
+/** True when the server answers at all, so one failing change can be told apart from an outage. */
+export async function serverIsUp() {
+  if (!BASE) return false;
+  try {
+    return (await fetchWithTimeout(`${BASE}/api/`, {}, 20_000)).ok;
+  } catch {
+    return false;
+  }
 }
 
 export const api = {

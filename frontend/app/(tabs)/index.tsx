@@ -16,7 +16,7 @@ import { aepsTotals } from "@/src/lib/aeps";
 import { formatDateShort, formatINR, formatPhone, formatWeekdayDate, todayISO } from "@/src/lib/format";
 import { AddEntrySheet, AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
 import { useAuth } from "@/src/context/AuthContext";
-import { clearRejected, flush, rejectedChanges, store, usePendingCount, useRejectedCount } from "@/src/lib/store";
+import { clearRejected, flush, rejectedChanges, retryRejected, retryableRejectedCount, store, usePendingCount, useRejectedCount } from "@/src/lib/store";
 import { computeFlows, pocketNet, useMoneyBook } from "@/src/lib/wallet";
 import { useCounterMode } from "@/src/lib/counter";
 import { accountName, usePersona } from "@/src/lib/persona";
@@ -46,12 +46,18 @@ export default function Home() {
   const { isUpdatePending } = Updates.useUpdates();
   const pending = usePendingCount();
   const rejectedCount = useRejectedCount();
-  const showRejected = () =>
+  const showRejected = () => {
+    const canRetry = retryableRejectedCount() > 0;
     Alert.alert(
       "ये बदलाव सेव नहीं हुए",
-      `${rejectedChanges().map((r) => `• ${r.label}`).join("\n")}\n\nइन्हें दोबारा लिख दें।`,
-      [{ text: "बाद में" }, { text: "ठीक है, हटाएँ", onPress: () => void clearRejected() }],
+      `${rejectedChanges().map((r) => `• ${r.label}`).join("\n")}\n\n${canRetry ? "दोबारा भेज कर देखें। फिर भी न हों तो इन्हें दोबारा लिख दें।" : "इन्हें दोबारा लिख दें।"}`,
+      [
+        { text: "बाद में" },
+        ...(canRetry ? [{ text: "दोबारा भेजें", onPress: () => void retryRejected() }] : []),
+        { text: "हटाएँ", style: "destructive" as const, onPress: () => void clearRejected() },
+      ],
     );
+  };
   // Back on Home would close the app; ask first instead of exiting straight away.
   useFocusEffect(
     useCallback(() => {

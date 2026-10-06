@@ -245,7 +245,7 @@ function HomeBody() {
   const sendReceipt = (work: Entry) => {
     const c = customers.find((x) => x.id === work.customerId);
     if (!c) return;
-    setShareDoc(receiptDoc(work, buildAllLedgers(entries).get(work.id), c, computeBalance(entries, c.id), true, user ?? {}, { entries }));
+    setShareDoc(receiptDoc(work, buildAllLedgers(entries).get(work.id), c, computeBalance(entries, c.id), true, user ?? {}, { jobs, entries }));
   };
 
   const loading = customersQ.isLoading || entriesQ.isLoading || jobsQ.isLoading;

@@ -2284,7 +2284,8 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
         amount: amt,
         received: sameDay ? got : 0,
         date: workDate,
-        notes: notes.trim() || "काम पूरा",
+        // The job's own notes are internal (vendor, cost); the work row prints on the customer's bill.
+        notes: "काम पूरा",
         mode: payMode,
         fee: parseAmount(fee),
         feeMode,

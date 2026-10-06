@@ -4,7 +4,8 @@ import * as Sharing from "expo-sharing";
 import { File, Paths } from "expo-file-system";
 import { itemsOf, type Customer, type Entry, type AepsTxn, type Job } from "@/src/lib/data";
 import type { Ledger, WorkStatus } from "@/src/lib/records";
-import { formatDate, formatDateShort, formatINR, formatPhone, roundMoney, todayISO } from "@/src/lib/format";
+import { formatDate, formatDateShort, formatINR, formatPhone, localDay, roundMoney, todayISO } from "@/src/lib/format";
+import { jobStart } from "@/src/lib/records";
 import type { ShopProfile } from "@/src/context/AuthContext";
 import { AEPS_META, aepsBill, customerCharge, defaultVia, maskAccount, statusLabel, viaBill } from "@/src/lib/aeps";
 import { accountName } from "@/src/lib/persona";
@@ -96,6 +97,19 @@ function workParts(entry: Entry, status: WorkStatus | undefined): Line[] {
 }
 
 /**
+ * Day the work was handed to the shop: its job card's day, or an advance taken before that; a walk-in
+ * job is booked and finished the same day.
+ */
+function bookedOn(entry: Entry, ctx: { jobs?: Job[]; entries?: Entry[] }): string {
+  const job = ctx.jobs?.find((j) => j.entryId === entry.id);
+  let day = (job && localDay(job.createdAt)) || entry.date;
+  for (const p of ctx.entries ?? []) {
+    if (p.type === "payment" && (p.linkId === entry.id || (!!job && p.linkId === job.id)) && p.date < day) day = p.date;
+  }
+  return day < entry.date ? day : entry.date;
+}
+
+/**
  * Receipt for one ledger row. `balance` is the customer's whole-account balance
  * (positive = they owe us) so dues from other entries are shown too.
  * `ctx` lets a payment be worded as an एडवांस when it came before its work (or the job is still open).
@@ -124,6 +138,15 @@ export function receiptDoc(
   let titleEn = "RECEIPT";
   let seal: { text: string; color: string };
   let advanceBanner: Banner | undefined;
+  /** Work and job advances: when the job was given, and when it was finished (null = still in progress). */
+  let dates: { booked: string; done: string | null } | null = null;
+  const dateRows = (): CardRow[] =>
+    dates
+      ? [
+          { icon: "cal", tint: DUE, label: "तारीख / दिया", value: formatDate(dates.booked) },
+          { icon: "cal", tint: dates.done ? OK : AMBER, label: "पूर्ण तारीख", value: dates.done ? formatDate(dates.done) : "प्रगति पर", tone: dates.done ? "ok" : undefined },
+        ]
+      : [];
 
   if (entry.type === "payment") {
     const job = entry.linkId ? ctx.jobs?.find((j) => j.id === entry.linkId && j.status !== "done") : undefined;
@@ -142,7 +165,8 @@ export function receiptDoc(
       itemDue = est > 0 ? Math.max(0, roundMoney(est - before - entry.amount)) : 0;
       if (itemDue > 0) lines.push({ label: TERMS.docDueShort, value: formatINR(itemDue), tone: "due" });
       itemBalance = itemDue;
-      rows.push(itemsRow(items, "कार्य विवरण", job.notes));
+      dates = { booked: jobStart(job, ctx.entries ?? []), done: null };
+      rows.push(itemsRow(items, "कार्य विवरण", ""), ...dateRows());
       if (est > 0) rows.push({ icon: "rupee", tint: DUE, label: "तय राशि", value: formatINR(est) });
       if (before > 0) rows.push({ icon: "paid", tint: OK, label: "पहले एडवांस", value: formatINR(before), tone: "ok" });
       rows.push({ icon: "paid", tint: OK, label: "एडवांस राशि", value: formatINR(entry.amount), tone: "ok" }, { icon: "card", tint: BLUE, label: "Payment Mode", value: payMode(entry.mode) });
@@ -165,8 +189,10 @@ export function receiptDoc(
     lines.push({ label: "कुल", value: formatINR(entry.amount) }, ...parts);
     if (itemDue > 0) lines.push({ label: TERMS.docDueShort, value: formatINR(itemDue), tone: "due" });
     itemBalance = itemDue;
+    dates = { booked: bookedOn(entry, ctx), done: entry.date };
     rows.push(
       itemsRow(items, "कार्य विवरण", entry.notes),
+      ...dateRows(),
       { icon: "rupee", tint: DUE, label: "तय राशि", value: formatINR(entry.amount) },
       { icon: "paid", tint: OK, label: "भुगतान की गई राशि", value: formatINR(roundMoney(entry.amount - itemDue)), tone: "ok", list: parts.length > 1 ? parts.map((p) => `${p.label} — ${p.value}`) : undefined },
       ...(parts.length === 1 ? [{ icon: "card" as IconKey, tint: BLUE, label: "Payment Mode", value: modeOf(parts[0].label) }] : []),
@@ -195,7 +221,9 @@ export function receiptDoc(
 
   const message = [
     `*${shop.shop_name}*`,
-    `📅 ${formatDate(entry.date)}`,
+    ...(dates
+      ? [`📅 तारीख / दिया: ${formatDate(dates.booked)}`, `✅ पूर्ण तारीख: ${dates.done ? formatDate(dates.done) : "प्रगति पर"}`]
+      : [`📅 ${formatDate(entry.date)}`]),
     "",
     `*${customer.name}*`,
     ...items.map((it, i) => `${many ? `${i + 1}. ` : ""}${it.title}${it.amount > 0 ? ` — ${formatINR(it.amount)}` : ""}`),

@@ -13,9 +13,9 @@ import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import * as Updates from "expo-updates";
 import { formatDateShort, formatINR, formatPhone, formatWeekdayDate, todayISO } from "@/src/lib/format";
-import { AddEntrySheet, AddJobSheet, EditRecordSheet, SettleSheet, SheetShell } from "@/src/components/sheets";
+import { AddEntrySheet, AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSheet, SheetShell } from "@/src/components/sheets";
 import { useAuth } from "@/src/context/AuthContext";
-import { clearRejected, flush, rejectedChanges, retryRejected, retryableRejectedCount, usePendingCount, useRejectedCount } from "@/src/lib/store";
+import { clearRejected, flush, rejectedChanges, retryRejected, retryableRejectedCount, store, usePendingCount, useRejectedCount } from "@/src/lib/store";
 import { cashTotals, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
 import { FlowTile, NetRow } from "@/src/components/money-flow";
 import { useCounterMode } from "@/src/lib/counter";
@@ -57,6 +57,7 @@ function HomeBody() {
   const [vendorMenu, setVendorMenu] = useState(false);
   const [vendorOrder, setVendorOrder] = useState(false);
   const [settling, setSettling] = useState<Entry | null>(null);
+  const [completing, setCompleting] = useState<Job | null>(null);
   const { user } = useAuth();
   const { isUpdatePending } = Updates.useUpdates();
   const pending = usePendingCount();
@@ -515,7 +516,7 @@ function HomeBody() {
             <>
             <View style={styles.sectionRow}>
               <Text style={styles.sectionHead} testID="stat-pending-jobs">
-                आने वाला काम{stats.openJobs > 0 ? ` (${stats.openJobs})` : ""}
+                पेंडिंग काम{stats.openJobs > 0 ? ` (${stats.openJobs})` : ""}
                 {stats.overdue > 0 ? <Text style={styles.lateTag}>  {stats.overdue} देर से</Text> : null}
               </Text>
               {stats.openJobs > upcoming.length ? (
@@ -541,55 +542,31 @@ function HomeBody() {
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.rowTitle} numberOfLines={1}>{j.title}</Text>
                         <Text style={styles.rowSub} numberOfLines={1}>
-                          {nameOf(j.customerId)}{j.estimatedAmount > 0 ? ` · ${money(j.estimatedAmount)}` : ""}{jobVendor.has(j.id) ? ` · Vendor: ${nameOf(jobVendor.get(j.id)!)}` : ""}{late ? " · देर" : ""}
+                          {nameOf(j.customerId)}{j.estimatedAmount > 0 ? ` · ${money(j.estimatedAmount)}` : ""}{late ? " · देर" : ""}
                         </Text>
+                        {jobVendor.has(j.id) ? (
+                          <View style={styles.vendorTag}>
+                            <MaterialIcon name="truck-outline" size={12} color={colors.info} />
+                            <Text style={styles.vendorTagText} numberOfLines={1}>{nameOf(jobVendor.get(j.id)!)}</Text>
+                          </View>
+                        ) : null}
                       </View>
-                      <MaterialIcon name="pencil-outline" size={18} color={colors.muted} />
+                      <Pressable
+                        style={styles.doneBtn}
+                        onPress={() => (j.customerId ? setCompleting(j) : store.updateJob(j.id, { status: "done", dueDate: today }))}
+                        hitSlop={6}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${j.title} पूरा करें`}
+                        testID={`home-complete-${j.id}`}
+                      >
+                        <MaterialIcon name="check" size={16} color={colors.onBrandPrimary} />
+                        <Text style={styles.doneBtnText}>पूरा करें</Text>
+                      </Pressable>
                     </Pressable>
                   );
                 })}
               </View>
             )}
-            {vendorOrders.pending.length > 0 ? (
-              <>
-                <View style={styles.sectionRow}>
-                  <Text style={styles.sectionHead}>
-                    Vendor ऑर्डर ({vendorOrders.pending.length})
-                    {vendorOrders.late > 0 ? <Text style={styles.lateTag}>  {vendorOrders.late} देर से</Text> : null}
-                  </Text>
-                  <Pressable onPress={() => go("/(tabs)/customers", { filter: "all", book: "vendor" })} hitSlop={8} testID="home-vendor-all">
-                    <Text style={styles.link}>सभी Vendor</Text>
-                  </Pressable>
-                </View>
-                <View style={{ gap: spacing.sm }}>
-                  {vendorOrders.pending.slice(0, 5).map((o) => {
-                    const late = !!o.dueDate && o.dueDate < today;
-                    const left = vendorOrders.remaining.get(o.id) ?? 0;
-                    return (
-                      <Pressable key={o.id} style={styles.jobCard} onPress={() => setEditEntry(o)} testID={`home-vorder-${o.id}`}>
-                        <View style={[styles.dateBadge, late && { backgroundColor: colors.errorSoft }]}>
-                          <Text style={[styles.dateBadgeText, late && { color: colors.error }]}>{!o.dueDate ? "—" : o.dueDate === today ? "आज" : formatDateShort(o.dueDate)}</Text>
-                        </View>
-                        <View style={{ flex: 1, minWidth: 0 }}>
-                          <Text style={styles.rowTitle} numberOfLines={1}>{o.description || "Vendor ऑर्डर"}</Text>
-                          <Text style={styles.rowSub} numberOfLines={1}>
-                            {nameOf(o.customerId)} · {left > 0 ? `${money(left)} देने हैं` : "पूरा भुगतान"}{late ? " · देर" : ""}
-                          </Text>
-                        </View>
-                        {left > 0 ? (
-                          <Pressable style={styles.receiptBtn} onPress={() => setSettling(o)} hitSlop={6} accessibilityRole="button" accessibilityLabel="Vendor को भुगतान" testID={`home-vpay-${o.id}`}>
-                            <MaterialIcon name="cash-fast" size={16} color={colors.brandPrimary} />
-                            <Text style={styles.receiptBtnText}>भुगतान</Text>
-                          </Pressable>
-                        ) : (
-                          <MaterialIcon name="pencil-outline" size={18} color={colors.muted} />
-                        )}
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </>
-            ) : null}
             </>
             )}
 
@@ -662,6 +639,7 @@ function HomeBody() {
       <AddEntrySheet visible={moneySheet} type={isPersonal ? "given" : "payment"} kinds={isPersonal ? ["given", "payment", "purchase"] : ["payment", "given"]} onClose={() => setMoneySheet(false)} />
       <AddExpenseSheet visible={expenseSheet} onClose={() => setExpenseSheet(false)} />
       <EditRecordSheet job={editingJob} onClose={() => setEditingJob(null)} />
+      <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
       <TaskSheet visible={taskSheet !== null} initial={taskSheet?.initial} onClose={() => setTaskSheet(null)} />
       <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
       <MoneyMoveSheet kind={moveSheet} onClose={() => setMoveSheet(null)} />
@@ -871,6 +849,10 @@ const styles = StyleSheet.create({
   link: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
   receiptBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md, minHeight: 40, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandPrimary },
   receiptBtnText: { fontSize: 12, fontWeight: "700", color: colors.brandPrimary },
+  doneBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md, minHeight: 40, borderRadius: radius.pill, backgroundColor: colors.brandPrimary },
+  doneBtnText: { fontSize: 13, fontWeight: "700", color: colors.onBrandPrimary },
+  vendorTag: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", marginTop: 4, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm, backgroundColor: colors.infoSoft },
+  vendorTagText: { fontSize: 11, fontWeight: "700", color: colors.info, maxWidth: 160 },
   rowTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   rowSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   emptyRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.lg, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },

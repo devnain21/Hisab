@@ -8,9 +8,9 @@ export type Dir = "in" | "out" | "net";
 
 /** The one In / Out / Net vocabulary for every money summary. */
 export const FLOW: Record<Dir, { title: string; hi: string; icon: "arrow-down-circle" | "arrow-up-circle" | "scale-balance"; color: string; soft: string }> = {
-  in: { title: "Cash In", hi: "पैसे आए", icon: "arrow-down-circle", color: semantic.received, soft: semantic.receivedSoft },
-  out: { title: "Cash Out", hi: "पैसे गए", icon: "arrow-up-circle", color: semantic.due, soft: semantic.dueSoft },
-  net: { title: "Net", hi: "", icon: "scale-balance", color: colors.info, soft: colors.infoSoft },
+  in: { title: "पैसे आए", hi: "पैसे आए", icon: "arrow-down-circle", color: semantic.received, soft: semantic.receivedSoft },
+  out: { title: "पैसे गए", hi: "पैसे गए", icon: "arrow-up-circle", color: semantic.due, soft: semantic.dueSoft },
+  net: { title: "बचत", hi: "", icon: "scale-balance", color: colors.info, soft: colors.infoSoft },
 };
 
 /** Big tappable tile: icon, title, amount. */
@@ -28,13 +28,13 @@ export function FlowTile({ dir, value, onPress, testID, style }: { dir: Dir; val
   );
 }
 
-/** Section heading inside a breakdown: ⬇ Cash In · पैसे आए … total. */
+/** Section heading inside a breakdown: ⬇ पैसे आए … total. */
 export function FlowHead({ dir, total }: { dir: Exclude<Dir, "net">; total?: string }) {
   const f = FLOW[dir];
   return (
     <View style={styles.head}>
       <MaterialIcon name={f.icon} size={16} color={f.color} />
-      <Text style={[styles.headText, { color: f.color }]}>{f.title} · {f.hi}</Text>
+      <Text style={[styles.headText, { color: f.color }]}>{f.title}</Text>
       {total ? <Text style={[styles.headTotal, { color: f.color }]}>{total}</Text> : null}
     </View>
   );
@@ -74,7 +74,7 @@ export function FlowRow({
 }
 
 /** ⚖ Net line with its sign and colour. */
-export function NetRow({ value, label = "Net", onPress, testID, fmt }: { value: number; label?: string; onPress?: () => void; testID?: string; fmt?: (n: number) => string }) {
+export function NetRow({ value, label = "बचत", onPress, testID, fmt }: { value: number; label?: string; onPress?: () => void; testID?: string; fmt?: (n: number) => string }) {
   return <FlowRow label={label} value={signedINR(value, fmt)} color={value < 0 ? semantic.due : FLOW.net.color} bold onPress={onPress} testID={testID} />;
 }
 

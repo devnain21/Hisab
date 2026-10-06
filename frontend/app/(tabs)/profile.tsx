@@ -493,7 +493,7 @@ export default function Profile() {
           <View style={{ flex: 1 }}>
             <Text style={styles.rowValue}>Reports</Text>
             <Text style={styles.rowLabel} numberOfLines={1}>
-              {prefs.hideAmounts ? "Cash In / Out · दिन, हफ़्ता, महीना" : `${labels.cash} ${formatINR(cashBal)} · बैंक ${formatINR(bankBal)}`}
+              {prefs.hideAmounts ? "पैसे आए / गए · दिन, हफ़्ता, महीना" : `${labels.cash} ${formatINR(cashBal)} · बैंक ${formatINR(bankBal)}`}
             </Text>
           </View>
           <MaterialIcon name="chevron-right" size={20} color={colors.muted} />

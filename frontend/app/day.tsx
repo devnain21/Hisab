@@ -155,12 +155,12 @@ export default function DayScreen() {
 
   const segments: { id: Kind; label: string; value?: string }[] = isPersonal
     ? [
-        { id: "drawer", label: "Net", value: signedINR(dayNet) },
+        { id: "drawer", label: "बचत", value: signedINR(dayNet) },
         { id: "txns", label: "लेन-देन", value: String(personalDay.count) },
         { id: "expense", label: "खर्च", value: formatINR(expenseTotal) },
       ]
     : [
-        { id: "drawer", label: "Net", value: signedINR(dayNet) },
+        { id: "drawer", label: "बचत", value: signedINR(dayNet) },
         { id: "work", label: "काम", value: formatINR(sum("work")) },
         { id: "payment", label: "⬇ ग्राहकों से", value: formatINR(sum("payment")) },
         { id: "expense", label: "खर्च", value: formatINR(expenseTotal) },

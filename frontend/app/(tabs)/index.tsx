@@ -8,16 +8,16 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, semantic, type, elevation } from "@/src/theme";
 import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, isVendor, type Entry, type Job } from "@/src/lib/data";
-import { buildAllLedgers, vendorByJob, workForJob } from "@/src/lib/records";
+import { buildAllLedgers, isWorkVendorCost, vendorByJob, workForJob } from "@/src/lib/records";
 import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import * as Updates from "expo-updates";
-import { formatDateShort, formatINR, formatPhone, formatWeekdayDate, todayISO } from "@/src/lib/format";
+import { formatDateShort, formatINR, formatPhone, formatWeekdayDate, roundMoney, todayISO } from "@/src/lib/format";
 import { AddEntrySheet, AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSheet, SheetShell } from "@/src/components/sheets";
 import { useAuth } from "@/src/context/AuthContext";
 import { clearRejected, flush, rejectedChanges, retryRejected, retryableRejectedCount, store, usePendingCount, useRejectedCount } from "@/src/lib/store";
 import { cashTotals, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
-import { FlowTile, NetRow } from "@/src/components/money-flow";
+import { FlowTile, signedINR } from "@/src/components/money-flow";
 import { useCounterMode } from "@/src/lib/counter";
 import { accountName, usePersona } from "@/src/lib/persona";
 import { TERMS, balanceTerm } from "@/src/lib/terms";
@@ -148,9 +148,12 @@ function HomeBody() {
     const bals = customers.filter((c) => !isVendor(c)).map((c) => computeBalance(entries, c.id));
     const dues = bals.filter((d) => d > 0);
     const owes = bals.filter((d) => d < 0);
-    const payables = isPersonal ? [] : customers.filter(isVendor).map((c) => computeBalance(entries, c.id)).filter((d) => d < 0);
+    const vendorBals = isPersonal ? [] : customers.filter(isVendor).map((c) => computeBalance(entries, c.id));
+    const payables = vendorBals.filter((d) => d < 0);
+    const receivables = vendorBals.filter((d) => d > 0);
     const open = jobs.filter((j) => j.status !== "done");
     return {
+      vendorReceivable: receivables.reduce((s, d) => s + d, 0),
       totalDue: dues.reduce((s, d) => s + d, 0),
       dueCustomers: dues.length,
       totalOwe: -owes.reduce((s, d) => s + d, 0),
@@ -180,6 +183,26 @@ function HomeBody() {
   const bankBal = pocketNet(pockets.bank);
   const todayTotals = useMemo(() => cashTotals(book, persona, (d) => d === today), [book, persona, today]);
   const todaySpend = todayTotals.byKey.get("expense") ?? 0;
+  // Same as the day screen's work profit: today's work, less govt fees and the vendor cost of that work.
+  const todayProfit = useMemo(() => {
+    if (isPersonal) return 0;
+    const workIds = new Set(entries.filter((e) => e.type === "work").map((e) => e.id));
+    let p = 0;
+    for (const e of entries) {
+      if (e.date !== today || !personaCustIds.has(e.customerId)) continue;
+      if (e.type === "work") p += e.amount - (e.fee ?? 0);
+      else if (isWorkVendorCost(e, workIds)) p -= e.amount;
+    }
+    return roundMoney(p);
+  }, [entries, today, personaCustIds, isPersonal]);
+  const pendingSum = useMemo(() => {
+    const open = jobs.filter((j) => j.status !== "done" && j.customerId);
+    const ids = new Set(open.map((j) => j.id));
+    return {
+      total: open.reduce((s, j) => s + (j.estimatedAmount || 0), 0),
+      advance: entries.filter((e) => e.type === "payment" && !!e.linkId && ids.has(e.linkId)).reduce((s, e) => s + e.amount, 0),
+    };
+  }, [jobs, entries]);
   const openToday = (dir: "in" | "out") => router.push({ pathname: "/pocket" as never, params: { p: "all", dir, period: "day", date: today } });
 
   const aepsDue = useMemo(() => aeps.filter((t) => t.status === "pending" && (t.dueDate || t.date) <= today).length, [aeps, today]);
@@ -306,7 +329,8 @@ function HomeBody() {
                     style={styles.searchResultRow}
                     onPress={() => {
                       setSearchQuery("");
-                      setEditingJob(j);
+                      if (j.status !== "done" && j.customerId) setCompleting(j);
+                      else setEditingJob(j);
                     }}
                   >
                     <MaterialIcon name="briefcase-outline" size={18} color={colors.warning} />
@@ -377,7 +401,7 @@ function HomeBody() {
           <Animated.View entering={FadeInDown.duration(300)}>
             <View style={styles.hero}>
               <Pressable style={styles.heroHead} onPress={() => router.push("/report" as never)} accessibilityRole="button" testID="home-snapshot">
-                <Text style={styles.heroLabel}>Today&apos;s Snapshot</Text>
+                <Text style={styles.heroLabel}>आज का हिसाब</Text>
                 <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
               </Pressable>
               {isPersonal ? (
@@ -403,11 +427,24 @@ function HomeBody() {
                   <FlowTile dir="out" value={money(todayTotals.outs)} onPress={() => openToday("out")} testID="home-cash-out" />
                 </View>
               )}
-              <View style={styles.heroNet}>
-                <NetRow value={todayTotals.net} label="Net today" fmt={money} onPress={() => router.push({ pathname: "/day", params: { type: "drawer" } })} testID="stat-today-money" />
+              <View style={styles.kpiRow}>
+                <Pressable style={styles.kpiCell} onPress={() => router.push({ pathname: "/day", params: { type: "drawer" } })} accessibilityRole="button" testID="stat-today-money">
+                  <Text style={styles.kpiLabel}>आज बचत</Text>
+                  <Text style={[styles.kpiValue, { color: todayTotals.net < 0 ? semantic.due : colors.info }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{signedINR(todayTotals.net, money)}</Text>
+                </Pressable>
+                {isPersonal ? null : (
+                  <>
+                    <View style={styles.walletDivider} />
+                    <Pressable style={styles.kpiCell} onPress={() => router.push({ pathname: "/day", params: { type: "work" } })} accessibilityRole="button" testID="stat-today-profit">
+                      <Text style={styles.kpiLabel}>आज मुनाफ़ा</Text>
+                      <Text style={[styles.kpiValue, { color: todayProfit < 0 ? semantic.due : colors.success }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(todayProfit)}</Text>
+                    </Pressable>
+                  </>
+                )}
               </View>
 
               <View style={styles.walletLine}>
+                <Text style={styles.walletNow}>अभी</Text>
                 <Pressable style={styles.walletCell} onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "cash" } })} testID="home-wallet-cash">
                   <MaterialIcon name="cash" size={16} color={semantic.cash} />
                   <Text style={styles.walletLabel}>{labels.cash}</Text>
@@ -425,13 +462,20 @@ function HomeBody() {
             {!isPersonal && (stats.totalDue > 0 || stats.vendorPayable > 0) ? (
               <View style={styles.duesStrip}>
                 <Pressable style={styles.duesCell} onPress={() => go("/(tabs)/customers", { filter: "due", book: "customer" })} accessibilityRole="button" testID="stat-total-due">
-                  <Text style={styles.duesLabel} numberOfLines={1}>⬇ मिलेंगे</Text>
+                  <View style={styles.duesHead}>
+                    <Text style={styles.duesLabel} numberOfLines={1}>मिलेंगे</Text>
+                    {stats.totalDue > 0 ? (
+                      <Pressable onPress={() => router.push("/remind" as never)} hitSlop={10} accessibilityRole="button" accessibilityLabel="उधार याद दिलाएँ" testID="home-remind">
+                        <MaterialIcon name="bell-ring-outline" size={18} color={colors.brandPrimary} />
+                      </Pressable>
+                    ) : null}
+                  </View>
                   <Text style={[styles.duesValue, { color: stats.totalDue > 0 ? semantic.received : colors.muted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(stats.totalDue)}</Text>
                   <Text style={styles.duesSub} numberOfLines={1}>{stats.dueCustomers} ग्राहक</Text>
                 </Pressable>
                 <View style={styles.walletDivider} />
                 <Pressable style={styles.duesCell} onPress={() => go("/(tabs)/customers", { filter: "owe", book: "vendor" })} accessibilityRole="button" testID="stat-vendor-payable">
-                  <Text style={styles.duesLabel} numberOfLines={1}>⬆ देने हैं</Text>
+                  <Text style={styles.duesLabel} numberOfLines={1}>देने हैं</Text>
                   <Text style={[styles.duesValue, { color: stats.vendorPayable > 0 ? semantic.due : colors.muted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(stats.vendorPayable)}</Text>
                   <Text style={styles.duesSub} numberOfLines={1}>{stats.vendorCount} Vendor</Text>
                 </Pressable>
@@ -452,9 +496,15 @@ function HomeBody() {
                   <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
                 </Pressable>
               ) : null}
-              {isPersonal && stats.totalOwe > 0 ? (
-                <Pressable style={styles.chip} onPress={() => go("/(tabs)/customers", { filter: "owe" })} testID="stat-total-owe">
-                  <Text style={styles.chipText} numberOfLines={1}>{TERMS.give} {money(stats.totalOwe)} · {stats.oweCount}</Text>
+              {stats.totalOwe > 0 ? (
+                <Pressable style={styles.chip} onPress={() => go("/(tabs)/customers", isPersonal ? { filter: "owe" } : { filter: "owe", book: "customer" })} testID="stat-total-owe">
+                  <Text style={styles.chipText} numberOfLines={1}>{isPersonal ? TERMS.give : "ग्राहकों का एडवांस"} {money(stats.totalOwe)} · {stats.oweCount}</Text>
+                  <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
+                </Pressable>
+              ) : null}
+              {stats.vendorReceivable > 0 ? (
+                <Pressable style={styles.chip} onPress={() => go("/(tabs)/customers", { filter: "due", book: "vendor" })} testID="stat-vendor-receivable">
+                  <Text style={styles.chipText} numberOfLines={1}>Vendor से लेने {money(stats.vendorReceivable)}</Text>
                   <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
                 </Pressable>
               ) : null}
@@ -515,10 +565,19 @@ function HomeBody() {
             {isPersonal ? null : (
             <>
             <View style={styles.sectionRow}>
-              <Text style={styles.sectionHead} testID="stat-pending-jobs">
-                पेंडिंग काम{stats.openJobs > 0 ? ` (${stats.openJobs})` : ""}
-                {stats.overdue > 0 ? <Text style={styles.lateTag}>  {stats.overdue} देर से</Text> : null}
-              </Text>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.sectionHead} testID="stat-pending-jobs">
+                  पेंडिंग काम{stats.openJobs > 0 ? ` (${stats.openJobs})` : ""}
+                  {stats.overdue > 0 ? <Text style={styles.lateTag}>  {stats.overdue} देर से</Text> : null}
+                </Text>
+                {pendingSum.total > 0 || pendingSum.advance > 0 ? (
+                  <Text style={styles.sectionSub} numberOfLines={1}>
+                    {pendingSum.total > 0 ? `कुल ${money(pendingSum.total)}` : ""}
+                    {pendingSum.total > 0 && pendingSum.advance > 0 ? " · " : ""}
+                    {pendingSum.advance > 0 ? `एडवांस ${money(pendingSum.advance)}` : ""}
+                  </Text>
+                ) : null}
+              </View>
               {stats.openJobs > upcoming.length ? (
                 <Pressable onPress={() => go("/(tabs)/work", { filter: "open" })} hitSlop={8}>
                   <Text style={styles.link}>सभी देखें</Text>
@@ -623,13 +682,17 @@ function HomeBody() {
             <MaterialIcon name="briefcase-plus-outline" size={18} color={colors.onBrandPrimary} />
             <Text style={styles.primaryActionText} numberOfLines={1}>{labels.newWork}</Text>
           </Pressable>
-          <Pressable style={styles.expenseAction} onPress={() => setExpenseSheet(true)} accessibilityRole="button" accessibilityLabel="खर्च" testID="quick-expense">
-            <MaterialIcon name="coffee-outline" size={18} color={semantic.pending} />
-            <Text style={styles.expenseActionText} numberOfLines={1}>खर्च</Text>
+          <Pressable style={styles.miniAction} onPress={() => setMoneySheet(true)} accessibilityRole="button" accessibilityLabel="पैसे मिले" testID="quick-got">
+            <MaterialIcon name="hand-coin-outline" size={20} color={semantic.received} />
+            <Text style={[styles.miniActionText, { color: semantic.received }]} numberOfLines={1}>पैसे मिले</Text>
           </Pressable>
-          <Pressable style={styles.taskAction} onPress={() => setVendorMenu(true)} accessibilityRole="button" accessibilityLabel="Vendor" testID="quick-vendor">
-            <MaterialIcon name="truck-outline" size={18} color={colors.brandPrimary} />
-            <Text style={styles.taskActionText} numberOfLines={1}>Vendor</Text>
+          <Pressable style={styles.miniAction} onPress={() => setExpenseSheet(true)} accessibilityRole="button" accessibilityLabel="खर्च" testID="quick-expense">
+            <MaterialIcon name="coffee-outline" size={20} color={semantic.pending} />
+            <Text style={[styles.miniActionText, { color: semantic.pending }]} numberOfLines={1}>खर्च</Text>
+          </Pressable>
+          <Pressable style={styles.miniAction} onPress={() => setVendorMenu(true)} accessibilityRole="button" accessibilityLabel="Vendor" testID="quick-vendor">
+            <MaterialIcon name="truck-outline" size={20} color={colors.brandPrimary} />
+            <Text style={styles.miniActionText} numberOfLines={1}>Vendor</Text>
           </Pressable>
         </View>
         )
@@ -849,6 +912,15 @@ const styles = StyleSheet.create({
   link: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
   receiptBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md, minHeight: 40, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandPrimary },
   receiptBtnText: { fontSize: 12, fontWeight: "700", color: colors.brandPrimary },
+  sectionSub: { fontSize: 12, fontWeight: "600", color: colors.muted, marginTop: 2, fontVariant: ["tabular-nums"] },
+  kpiRow: { flexDirection: "row", alignItems: "stretch", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
+  kpiCell: { flex: 1, minWidth: 0, paddingVertical: 4 },
+  kpiLabel: { fontSize: 12, fontWeight: "700", color: colors.muted },
+  kpiValue: { fontSize: 18, fontWeight: "800", fontVariant: ["tabular-nums"] },
+  walletNow: { fontSize: 11, fontWeight: "800", color: colors.muted, textTransform: "uppercase" },
+  duesHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.xs },
+  miniAction: { flex: 1.3, alignItems: "center", justifyContent: "center", gap: 2, paddingVertical: 6, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+  miniActionText: { fontSize: 11, fontWeight: "700", color: colors.brandPrimary },
   doneBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md, minHeight: 40, borderRadius: radius.pill, backgroundColor: colors.brandPrimary },
   doneBtnText: { fontSize: 13, fontWeight: "700", color: colors.onBrandPrimary },
   vendorTag: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", marginTop: 4, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm, backgroundColor: colors.infoSoft },

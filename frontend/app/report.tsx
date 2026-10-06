@@ -203,9 +203,9 @@ export default function ReportScreen() {
     setSharing(true);
     try {
       const lines: Line[] = [
-        { label: `${FLOW.in.title} · ${FLOW.in.hi}`, value: formatINR(flow.ins), tone: "ok" },
-        { label: `${FLOW.out.title} · ${FLOW.out.hi}`, value: formatINR(flow.outs), tone: "due" },
-        { label: "Net", value: signedINR(flow.net), tone: flow.net < 0 ? "due" : "ok" },
+        { label: FLOW.in.title, value: formatINR(flow.ins), tone: "ok" },
+        { label: FLOW.out.title, value: formatINR(flow.outs), tone: "due" },
+        { label: FLOW.net.title, value: signedINR(flow.net), tone: flow.net < 0 ? "due" : "ok" },
         ...profitRows.map((r) => ({ label: r.label, value: `${r.sign}${formatINR(r.value)}` })),
       ];
       const account: Line = { label: resultLabel, value: formatINR(now.result), tone: now.result < 0 ? "due" : "ok" };
@@ -294,11 +294,11 @@ export default function ReportScreen() {
                 <Text style={styles.cardTitle}>{pocketTitle(persona, a.p)}</Text>
                 <MaterialIcon name="chevron-right" size={16} color={colors.muted} style={{ marginLeft: "auto" }} />
               </View>
-              <Text style={styles.small}>Opening {money(a.opening)}</Text>
+              <Text style={styles.small}>शुरू में {money(a.opening)}</Text>
               <Text style={[styles.small, { color: FLOW.in.color }]}>⬇ +{money(a.ins)}</Text>
               <Text style={[styles.small, { color: FLOW.out.color }]}>⬆ −{money(a.outs)}</Text>
               <Text style={[styles.closing, a.closing < 0 && { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit>{money(a.closing)}</Text>
-              <Text style={styles.small}>Closing</Text>
+              <Text style={styles.small}>अंत में</Text>
             </Pressable>
           ))}
         </View>

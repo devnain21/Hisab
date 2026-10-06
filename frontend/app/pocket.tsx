@@ -215,10 +215,10 @@ export default function PocketScreen() {
           <FlowTile dir="in" value={`+${formatINR(data.ins)}`} onPress={() => setDir(dir === "in" ? "all" : "in")} testID="pocket-sum-in" style={dir === "in" ? styles.tileOn : undefined} />
           <FlowTile dir="out" value={`−${formatINR(data.outs)}`} onPress={() => setDir(dir === "out" ? "all" : "out")} testID="pocket-sum-out" style={dir === "out" ? styles.tileOn : undefined} />
         </View>
-        <FlowRow label={period === "all" ? "Opening" : `Opening · ${formatDateShort(range.from)}`} value={formatINR(data.opening)} color={data.opening < 0 ? colors.error : undefined} />
+        <FlowRow label={period === "all" ? "शुरू में" : `शुरू में · ${formatDateShort(range.from)}`} value={formatINR(data.opening)} color={data.opening < 0 ? colors.error : undefined} />
         <NetRow value={roundMoney(data.ins - data.outs)} />
         <View style={styles.totalRow}>
-          <Text style={styles.totalLabel}>{to === today ? "Closing" : `Closing · ${formatDateShort(to)}`}</Text>
+          <Text style={styles.totalLabel}>{to === today ? "अब" : `अंत में · ${formatDateShort(to)}`}</Text>
           <Text style={[styles.totalValue, data.closing < 0 && { color: colors.error }]}>{formatINR(data.closing)}</Text>
         </View>
       </View>
@@ -249,8 +249,8 @@ export default function PocketScreen() {
         {(
           [
             { id: "all", label: "सब" },
-            { id: "in", label: "⬇ Cash In" },
-            { id: "out", label: "⬆ Cash Out" },
+            { id: "in", label: "पैसे आए" },
+            { id: "out", label: "पैसे गए" },
           ] as const
         ).map((f) => (
           <Pressable key={f.id} onPress={() => setDir(f.id)} style={[styles.periodChip, dir === f.id && styles.periodOn]} testID={`pocket-dir-${f.id}`}>

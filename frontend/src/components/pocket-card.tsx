@@ -82,7 +82,7 @@ export function PocketCard({
       </Pressable>
 
       <View style={styles.row}>
-        <Text style={styles.label}>Opening</Text>
+        <Text style={styles.label}>शुरू में</Text>
         <Text style={[styles.value, opening < 0 && { color: colors.error }]}>{formatINR(opening)}</Text>
       </View>
 
@@ -104,11 +104,11 @@ export function PocketCard({
 
       <View style={styles.divider} />
       <View style={styles.row}>
-        <Text style={styles.label}>Net {dayLabel}</Text>
+        <Text style={styles.label}>बचत {dayLabel}</Text>
         <Text style={[styles.value, { color: net < 0 ? FLOW.out.color : FLOW.net.color }]}>{signed(net)}</Text>
       </View>
       <View style={[styles.row, styles.closingRow]}>
-        <Text style={styles.totalLabel}>Closing</Text>
+        <Text style={styles.totalLabel}>अंत में</Text>
         <Text style={[styles.totalValue, closing < 0 && { color: colors.error }]}>{formatINR(closing)}</Text>
       </View>
       {children}

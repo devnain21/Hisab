@@ -8,7 +8,7 @@ import { colors, spacing, radius, semantic } from "@/src/theme";
 import { Pill } from "@/src/components/ui";
 import { isPersonalTask, useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
 import { formatDate, formatINR, todayISO } from "@/src/lib/format";
-import { buildAllLedgers, workForJobs, type WorkStatus } from "@/src/lib/records";
+import { buildAllLedgers, vendorByJob, workForJobs, type WorkStatus } from "@/src/lib/records";
 import { store } from "@/src/lib/store";
 import { AddEntrySheet, AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
@@ -65,6 +65,7 @@ function ShopWork() {
 
   const nameById = useMemo(() => new Map(customers.map((c) => [c.id, c.name])), [customers]);
   const nameOf = (id: string) => (id ? nameById.get(id) ?? "ग्राहक" : "खुद का काम");
+  const jobVendor = useMemo(() => vendorByJob(entries), [entries]);
   // Own tasks have no money side, so finishing one is a single tap.
   const complete = (j: Job) => (j.customerId ? setCompleting(j) : store.updateJob(j.id, { status: "done", dueDate: today }));
 
@@ -160,6 +161,7 @@ function ShopWork() {
                   <Text style={[styles.jobSub, overdue && { color: colors.error }]}>
                     {nameOf(j.customerId)} · {j.dueDate === today ? "आज" : formatDate(j.dueDate)}{overdue ? " (देर)" : ""}
                     {j.estimatedAmount > 0 ? ` · ${formatINR(j.estimatedAmount)}` : ""}
+                    {j.status !== "done" && jobVendor.has(j.id) ? ` · Vendor: ${nameById.get(jobVendor.get(j.id)!) ?? "—"}` : ""}
                   </Text>
                   {notes ? <Text style={styles.notes}>{notes}</Text> : null}
                   {pay && work && pay.remaining > 0 ? (

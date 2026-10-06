@@ -50,6 +50,8 @@ function periodStats(book: Book, persona: Persona, from: string, to: string): St
   const inRange = (d: string) => d >= from && d <= to;
   const byId = new Map(book.customers.map((c) => [c.id, c]));
   let billed = 0, billedCount = 0, collected = 0, fee = 0, given = 0, paidOut = 0, vendorCost = 0;
+  // A vendor order of a job still pending is not a cost yet; it counts on the day the job is finished.
+  const workIds = new Set(book.entries.filter((e) => e.type === "work").map((e) => e.id));
   for (const e of book.entries) {
     if (!inRange(e.date) || personaOfEntry(e, byId) !== persona) continue;
     if (e.type === "work") {
@@ -60,7 +62,7 @@ function periodStats(book: Book, persona: Persona, from: string, to: string): St
     } else if (e.type === "payment") collected += e.amount;
     else if (e.type === "purchase") {
       paidOut += e.paid ?? 0;
-      if (persona === "business" && isVendor(byId.get(e.customerId))) vendorCost += e.amount;
+      if (persona === "business" && isVendor(byId.get(e.customerId)) && (!e.refId || workIds.has(e.refId))) vendorCost += e.amount;
     }
     else if (e.type === "given") {
       if (isRepayment(e)) paidOut += e.amount;

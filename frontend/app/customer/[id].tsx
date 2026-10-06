@@ -9,7 +9,7 @@ import { computeBalance, isRepayment, isVendor, itemsOf, useAeps, useCustomers, 
 import { AEPS_META, STATUS_META, aepsBill, aepsDue, defaultVia, statusLabel, viaBill } from "@/src/lib/aeps";
 import { formatDate, formatINR, formatPhone, monthRange, todayISO } from "@/src/lib/format";
 import { store } from "@/src/lib/store";
-import { buildLedger, type WorkState, type WorkStatus } from "@/src/lib/records";
+import { buildLedger, vendorByJob, type WorkState, type WorkStatus } from "@/src/lib/records";
 import { AddEntrySheet, AddJobSheet, AddCustomerSheet, Chip, CompleteJobSheet, EditRecordSheet, SettleSheet, SheetShell } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
 import { Amount, Button, IconButton, IconLabel, type IconName } from "@/src/components/ui";
@@ -46,6 +46,8 @@ export default function CustomerDetail() {
   const entries = useMemo(() => (entriesQ.data ?? []).filter((e) => e.customerId === id), [entriesQ.data, id]);
   const jobs = useMemo(() => (jobsQ.data ?? []).filter((j) => j.customerId === id), [jobsQ.data, id]);
   const ledger = useMemo(() => buildLedger(entries), [entries]);
+  const jobVendor = useMemo(() => vendorByJob(entriesQ.data ?? []), [entriesQ.data]);
+  const vendorName = (vid: string) => (customersQ.data ?? []).find((c) => c.id === vid)?.name ?? "—";
   const phone10 = (customer?.phone ?? "").replace(/\D/g, "").slice(-10);
   // Counter rows belong to the shop book only.
   const aepsList = (customer?.persona === "personal" ? [] : aepsQ.data ?? [])
@@ -278,7 +280,7 @@ export default function CustomerDetail() {
                   <MaterialIcon name="calendar-clock" size={20} color={colors.brandPrimary} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.jobTitle}>{j.title}</Text>
-                    <Text style={styles.sub}>{formatDate(j.dueDate)}{j.estimatedAmount > 0 ? ` · ${formatINR(j.estimatedAmount)}` : ""}</Text>
+                    <Text style={styles.sub}>{formatDate(j.dueDate)}{j.estimatedAmount > 0 ? ` · ${formatINR(j.estimatedAmount)}` : ""}{jobVendor.has(j.id) ? ` · Vendor: ${vendorName(jobVendor.get(j.id)!)}` : ""}</Text>
                     {j.notes ? <Text style={styles.sub}>{j.notes}</Text> : null}
                   </View>
                   <Pressable style={styles.pillBtn} onPress={() => setCompleting(j)} testID={`cust-complete-${j.id}`}>

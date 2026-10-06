@@ -8,7 +8,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, semantic, type, elevation } from "@/src/theme";
 import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, isVendor, type Entry, type Job } from "@/src/lib/data";
-import { buildAllLedgers, workForJob } from "@/src/lib/records";
+import { buildAllLedgers, vendorByJob, workForJob } from "@/src/lib/records";
 import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import * as Updates from "expo-updates";
@@ -113,6 +113,7 @@ function HomeBody() {
   }, [recentIds, customers]);
 
   const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? labels.customer : "खुद का काम");
+  const jobVendor = useMemo(() => vendorByJob(entries), [entries]);
   const feed = useMemo(
     () => (isPersonal ? activityFeed(book, "personal", (id) => customers.find((c) => c.id === id)?.name ?? "व्यक्ति", 12) : []),
     [book, customers, isPersonal],
@@ -540,7 +541,7 @@ function HomeBody() {
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.rowTitle} numberOfLines={1}>{j.title}</Text>
                         <Text style={styles.rowSub} numberOfLines={1}>
-                          {nameOf(j.customerId)}{j.estimatedAmount > 0 ? ` · ${money(j.estimatedAmount)}` : ""}{late ? " · देर" : ""}
+                          {nameOf(j.customerId)}{j.estimatedAmount > 0 ? ` · ${money(j.estimatedAmount)}` : ""}{jobVendor.has(j.id) ? ` · Vendor: ${nameOf(jobVendor.get(j.id)!)}` : ""}{late ? " · देर" : ""}
                         </Text>
                       </View>
                       <MaterialIcon name="pencil-outline" size={18} color={colors.muted} />

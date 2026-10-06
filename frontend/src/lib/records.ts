@@ -109,10 +109,13 @@ export function vendorCostsFor(work: Entry, entries: Entry[]): Entry[] {
   return entries.filter((e) => e.type === "purchase" && e.refId === work.id);
 }
 
-/** Drops a vendor cost row; a payment made to them on another day stays as their advance. */
+/**
+ * Drops a vendor cost row; a payment made to them on another day stays as their advance. For an open
+ * order of a pending job only today's advance goes (earlier ones already left the drawer that day).
+ */
 export function removeVendorCost(row: Entry, entries: Entry[]) {
   store.deleteEntry(row.id);
-  dropOrKeep(settlementsFor(row, entries), row.date);
+  dropOrKeep(settlementsFor(row, entries), row.status === "ordered" ? todayISO() : row.date);
 }
 
 /** Removes a khata entry together with the rows that were booked with it. */
@@ -144,7 +147,23 @@ export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]
  */
 export function removeJobWithAdvances(job: Job, entries: Entry[]) {
   dropOrKeep(advancesForJob(job, entries), todayISO());
+  vendorOrdersForJob(job, entries).forEach((v) => removeVendorCost(v, entries));
   store.deleteJob(job.id);
+}
+
+/** Open vendor order of a pending job ("वेंडर को दिया"); it moves onto the work row when the job is done. */
+/** Pending job id → the vendor it was handed to. */
+export function vendorByJob(entries: Entry[]): Map<string, string> {
+  return new Map(entries.filter((e) => e.type === "purchase" && e.status === "ordered" && !!e.refId).map((e) => [e.refId as string, e.customerId]));
+}
+
+export function vendorOrdersForJob(job: Job, entries: Entry[]): Entry[] {
+  return entries.filter((e) => e.type === "purchase" && e.refId === job.id);
+}
+
+/** Vendor cost that belongs to finished work: plain vendor purchases, or job-linked ones once the job is done. */
+export function isWorkVendorCost(e: Entry, workIds: Set<string>): boolean {
+  return e.type === "purchase" && !!e.refId && workIds.has(e.refId);
 }
 
 /** Advance rows of this job that were taken before today (they stay when the job is removed). */

@@ -18,6 +18,7 @@ import { confirmAction } from "@/src/lib/confirm";
 import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet";
 import { PocketCard } from "@/src/components/pocket-card";
 import { DayCloseModal } from "@/src/components/day-close-modal";
+import { isWorkVendorCost } from "@/src/lib/records";
 import { useAuth } from "@/src/context/AuthContext";
 import { usePersona } from "@/src/lib/persona";
 import { accountKey, accountLabel, addMove, balanceOf, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
@@ -113,9 +114,10 @@ export default function DayScreen() {
   const expectedBank = openingBank + pocketNet(flows.bank);
 
   const workEntries = useMemo(() => dayEntries.filter((e) => e.type === "work"), [dayEntries]);
+  const workIds = useMemo(() => new Set(book.entries.filter((e) => e.type === "work").map((e) => e.id)), [book.entries]);
   const workTotal = workEntries.reduce((s, e) => s + e.amount, 0);
   const workFees = workEntries.reduce((s, e) => s + (e.fee ?? 0), 0);
-  const workVendor = dayEntries.reduce((s, e) => s + (e.type === "purchase" && e.refId ? e.amount : 0), 0);
+  const workVendor = dayEntries.reduce((s, e) => s + (isWorkVendorCost(e, workIds) ? e.amount : 0), 0);
   const workProfit = workTotal - workFees - workVendor;
   // Khata totals include old (backdated) rows; only the galla / bank cards leave them out.
   const workCash = workEntries.filter((e) => e.mode !== "online").reduce((s, e) => s + (e.paid ?? 0), 0);
@@ -698,6 +700,7 @@ function RangeView({
     const inRange = (d: string) => d >= from && d <= to;
     const flows = computeFlows(book, persona, inRange);
     const entries = book.entries.filter((e) => inRange(e.date) && mineIds.has(e.customerId));
+    const workIds = new Set(book.entries.filter((e) => e.type === "work").map((e) => e.id));
     const expenses = book.expenses.filter((x) => inRange(x.date) && expensePersona(x) === persona);
     // Personal: money lent out (not paying back goods); shop: work done.
     const out = (e: Entry) => (isPersonal ? (e.type === "given" && !isRepayment(e) ? e.amount : 0) : e.type === "work" ? e.amount : 0);
@@ -712,7 +715,7 @@ function RangeView({
     const byTitle = new Map<string, number>();
     expenses.forEach((x) => byTitle.set(x.title, (byTitle.get(x.title) ?? 0) + x.amount));
     const work = entries.reduce((s, e) => s + out(e), 0);
-    const fees = isPersonal ? 0 : entries.reduce((s, e) => s + (e.type === "work" ? e.fee ?? 0 : e.type === "purchase" && e.refId ? e.amount : 0), 0);
+    const fees = isPersonal ? 0 : entries.reduce((s, e) => s + (e.type === "work" ? e.fee ?? 0 : isWorkVendorCost(e, workIds) ? e.amount : 0), 0);
     const exp = expenses.reduce((s, x) => s + x.amount, 0);
     const commission = flows.cash.commission + flows.bank.commission;
     return {

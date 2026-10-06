@@ -4,25 +4,52 @@ import { useLocalSearchParams } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, spacing, radius, semantic } from "@/src/theme";
-import { Pill } from "@/src/components/ui";
+import { colors, spacing, radius, semantic, elevation } from "@/src/theme";
 import { isPersonalTask, useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
-import { formatDate, formatINR, todayISO } from "@/src/lib/format";
-import { buildAllLedgers, vendorByJob, workForJobs, type WorkStatus } from "@/src/lib/records";
+import { formatDate, formatDateShort, formatINR, roundMoney, todayISO } from "@/src/lib/format";
+import { advancesForJob, buildAllLedgers, workForJobs, type WorkStatus } from "@/src/lib/records";
 import { store } from "@/src/lib/store";
 import { AddEntrySheet, AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
 import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
 import { usePersona } from "@/src/lib/persona";
-type Filter = "open" | "today" | "late" | "unpaid" | "all";
-const FILTERS: Filter[] = ["open", "today", "late", "unpaid", "all"];
-const FILTER_LABEL: Record<Filter, string> = { open: "काम बाकी", today: "आज", late: "देर", unpaid: "पैसे बाकी", all: "सभी" };
+import { HIDDEN, usePrefs } from "@/src/lib/prefs";
 
-function matches(j: Job, f: Filter, today: string, pay?: WorkStatus) {
-  if (f === "open") return j.status !== "done";
-  if (f === "today") return j.status !== "done" && j.dueDate === today;
-  if (f === "late") return j.status !== "done" && j.dueDate < today;
-  if (f === "unpaid") return j.status === "done" && !!pay && pay.remaining > 0;
+type Filter = "open" | "vendor" | "done" | "all" | "today" | "late" | "unpaid";
+const FILTERS: Filter[] = ["open", "vendor", "done", "all", "today", "late", "unpaid"];
+/** The segmented control; today / late / unpaid are reached from the summary tiles. */
+const TABS: { key: Filter; label: string }[] = [
+  { key: "open", label: "बाकी" },
+  { key: "vendor", label: "Vendor पर" },
+  { key: "done", label: "पूरे" },
+  { key: "all", label: "सभी" },
+];
+const TILE_FILTER_LABEL: Partial<Record<Filter, string>> = { today: "आज देने हैं", late: "देर से", unpaid: "पैसे बाकी" };
+
+/** The vendor side of a job: who has it, what they charge, and what has been given to them so far. */
+type VendorSide = { name: string; cost: number; given: number; due: string; back: boolean };
+
+type JobInfo = {
+  job: Job;
+  vendor?: VendorSide;
+  /** Customer advance on a job still open. */
+  advance: number;
+  work?: Entry;
+  pay?: WorkStatus;
+};
+
+type Row = { kind: "head"; key: string; label: string; count: number; tone: string } | { kind: "job"; key: string; info: JobInfo };
+
+const daysFrom = (a: string, b: string) => Math.round((Date.parse(`${b}T12:00:00`) - Date.parse(`${a}T12:00:00`)) / 86400000);
+
+function matches(i: JobInfo, f: Filter, today: string) {
+  const open = i.job.status !== "done";
+  if (f === "open") return open;
+  if (f === "vendor") return open && !!i.vendor;
+  if (f === "done") return !open;
+  if (f === "today") return open && i.job.dueDate === today;
+  if (f === "late") return open && i.job.dueDate < today;
+  if (f === "unpaid") return !open && !!i.pay && i.pay.remaining > 0;
   return true;
 }
 
@@ -37,6 +64,8 @@ function ShopWork() {
   const customersQ = useCustomers();
   const jobsQ = useJobs();
   const entriesQ = useEntries();
+  const { hideAmounts } = usePrefs();
+  const money = (n: number) => (hideAmounts ? HIDDEN : formatINR(n));
   const allCustomers = customersQ.data;
   const customers = useMemo(() => (allCustomers ?? []).filter((c) => c.persona !== "personal"), [allCustomers]);
   const allJobs = jobsQ.data;
@@ -44,21 +73,16 @@ function ShopWork() {
     const mine = new Set(customers.map((c) => c.id));
     return (allJobs ?? []).filter((j) => (!j.customerId && !isPersonalTask(j)) || mine.has(j.customerId));
   }, [allJobs, customers]);
-  const entries = entriesQ.data ?? [];
+  const allEntries = entriesQ.data;
+  const entries = useMemo(() => allEntries ?? [], [allEntries]);
   const [filter, setFilter] = useState<Filter>("open");
   const [q, setQ] = useState("");
+  const [searching, setSearching] = useState(false);
   const [open, setOpen] = useState(false);
   const [completing, setCompleting] = useState<Job | null>(null);
   const [editing, setEditing] = useState<Job | null>(null);
   const [settling, setSettling] = useState<Entry | null>(null);
   const today = todayISO();
-
-  const ledger = useMemo(() => buildAllLedgers(entries), [entries]);
-  const workOf = useMemo(() => workForJobs(jobs.filter((j) => j.status === "done"), entries), [jobs, entries]);
-  const payOf = (j: Job) => {
-    const w = workOf.get(j.id);
-    return w ? ledger.get(w.id) : undefined;
-  };
 
   useEffect(() => {
     if (params.filter && FILTERS.includes(params.filter)) setFilter(params.filter);
@@ -66,71 +90,138 @@ function ShopWork() {
 
   const nameById = useMemo(() => new Map(customers.map((c) => [c.id, c.name])), [customers]);
   const nameOf = (id: string) => (id ? nameById.get(id) ?? "ग्राहक" : "खुद का काम");
-  const jobVendor = useMemo(() => vendorByJob(entries), [entries]);
+
+  // Everything a card shows, worked out once per data change.
+  const infos = useMemo(() => {
+    const ledger = buildAllLedgers(entries);
+    const workOf = workForJobs(jobs.filter((j) => j.status === "done"), entries);
+    const orderByRef = new Map<string, Entry>();
+    const givenByLink = new Map<string, number>();
+    for (const e of entries) {
+      if (e.type === "purchase" && e.refId) orderByRef.set(e.refId, e);
+      else if (e.type === "given" && e.linkId) givenByLink.set(e.linkId, (givenByLink.get(e.linkId) ?? 0) + e.amount);
+    }
+    const vendorOf = (row: Entry | undefined): VendorSide | undefined =>
+      row
+        ? {
+            name: nameById.get(row.customerId) ?? "Vendor",
+            cost: row.amount,
+            given: roundMoney(Math.min(row.amount, (row.paid ?? 0) + (givenByLink.get(row.id) ?? 0))),
+            due: row.status === "ordered" ? row.dueDate ?? "" : "",
+            back: row.status !== "ordered",
+          }
+        : undefined;
+    return jobs.map((job): JobInfo => {
+      if (job.status !== "done") {
+        return { job, vendor: vendorOf(orderByRef.get(job.id)), advance: roundMoney(advancesForJob(job, entries).reduce((s, p) => s + p.amount, 0)) };
+      }
+      const work = workOf.get(job.id);
+      return { job, work, pay: work ? ledger.get(work.id) : undefined, vendor: vendorOf(work ? orderByRef.get(work.id) : undefined), advance: 0 };
+    });
+  }, [jobs, entries, nameById]);
+
+  const stats = useMemo(() => {
+    const open = infos.filter((i) => i.job.status !== "done");
+    const unpaid = infos.filter((i) => matches(i, "unpaid", today));
+    return {
+      open: open.length,
+      value: roundMoney(open.reduce((s, i) => s + (i.job.estimatedAmount || 0), 0)),
+      advance: roundMoney(open.reduce((s, i) => s + i.advance, 0)),
+      today: open.filter((i) => i.job.dueDate === today).length,
+      late: open.filter((i) => i.job.dueDate < today).length,
+      vendor: open.filter((i) => !!i.vendor).length,
+      vendorDue: roundMoney(open.reduce((s, i) => s + (i.vendor ? Math.max(0, i.vendor.cost - i.vendor.given) : 0), 0)),
+      unpaid: unpaid.length,
+      unpaidSum: roundMoney(unpaid.reduce((s, i) => s + (i.pay?.remaining ?? 0), 0)),
+    };
+  }, [infos, today]);
+
+  const rows = useMemo((): Row[] => {
+    const needle = q.trim().toLowerCase();
+    const hit = (i: JobInfo) =>
+      !needle ||
+      i.job.title.toLowerCase().includes(needle) ||
+      nameOf(i.job.customerId).toLowerCase().includes(needle) ||
+      i.job.notes.toLowerCase().includes(needle) ||
+      (i.vendor?.name.toLowerCase().includes(needle) ?? false);
+    const list = infos.filter((i) => matches(i, filter, today) && hit(i));
+    const openList = list.filter((i) => i.job.status !== "done").sort((a, b) => a.job.dueDate.localeCompare(b.job.dueDate));
+    const doneList = list
+      .filter((i) => i.job.status === "done")
+      .sort((a, b) => Number((b.pay?.remaining ?? 0) > 0) - Number((a.pay?.remaining ?? 0) > 0) || b.job.dueDate.localeCompare(a.job.dueDate));
+    const out: Row[] = [];
+    const group = (key: string, label: string, tone: string, items: JobInfo[]) => {
+      if (!items.length) return;
+      out.push({ kind: "head", key: `h-${key}`, label, count: items.length, tone });
+      items.forEach((info) => out.push({ kind: "job", key: info.job.id, info }));
+    };
+    const tomorrow = todayISO(1);
+    group("late", "देर से", colors.warning, openList.filter((i) => i.job.dueDate < today));
+    group("today", "आज", colors.brandPrimary, openList.filter((i) => i.job.dueDate === today));
+    group("tomorrow", "कल", colors.info, openList.filter((i) => i.job.dueDate === tomorrow));
+    group("later", "आगे", colors.muted, openList.filter((i) => i.job.dueDate > tomorrow));
+    group("unpaid", "पूरे · पैसे बाकी", colors.error, doneList.filter((i) => (i.pay?.remaining ?? 0) > 0));
+    group("done", "पूरे", colors.success, doneList.filter((i) => (i.pay?.remaining ?? 0) <= 0));
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [infos, filter, today, q, nameById]);
+
   // Own tasks have no money side, so finishing one is a single tap.
   const complete = (j: Job) => (j.customerId ? setCompleting(j) : store.updateJob(j.id, { status: "done", dueDate: today }));
 
-  const counts = useMemo(() => {
-    const c = {} as Record<Filter, number>;
-    FILTERS.forEach((f) => { c[f] = jobs.filter((j) => matches(j, f, today, payOf(j))).length; });
-    return c;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs, today, ledger, workOf]);
-
-  const todayCount = useMemo(() => jobs.filter((j) => j.status !== "done" && j.dueDate === today).length, [jobs, today]);
-
-  const rows = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return jobs
-      .filter((j) => matches(j, filter, today, payOf(j)))
-      .filter((j) => !needle || j.title.toLowerCase().includes(needle) || nameOf(j.customerId).toLowerCase().includes(needle) || j.notes.toLowerCase().includes(needle))
-      .sort((a, b) => {
-        if (a.status === "done" && b.status !== "done") return 1;
-        if (a.status !== "done" && b.status === "done") return -1;
-        return a.status === "done" ? b.dueDate.localeCompare(a.dueDate) : a.dueDate.localeCompare(b.dueDate);
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs, filter, today, ledger, workOf, q, customers]);
-
-  const openValue = useMemo(() => jobs.filter((j) => j.status !== "done").reduce((s, j) => s + (j.estimatedAmount || 0), 0), [jobs]);
-
   const loading = jobsQ.isLoading;
   const loadFailed = !loading && ((jobsQ.isError && jobsQ.data == null) || (customersQ.isError && customersQ.data == null) || (entriesQ.isError && entriesQ.data == null));
+  const tileFilter = TILE_FILTER_LABEL[filter];
+
+  const header = (
+    <View>
+      <View style={styles.hero} testID="work-summary">
+        <Text style={styles.heroLabel}>बाकी काम</Text>
+        <View style={{ flexDirection: "row", alignItems: "baseline", gap: spacing.sm }}>
+          <Text style={styles.heroValue} numberOfLines={1} adjustsFontSizeToFit>{money(stats.value)}</Text>
+          <Text style={styles.heroCount}>{stats.open} काम</Text>
+        </View>
+        {stats.advance > 0 ? <Text style={styles.heroSub} testID="work-summary-advance">एडवांस मिला {money(stats.advance)} · आना बाकी {money(Math.max(0, stats.value - stats.advance))}</Text> : null}
+        <View style={styles.tiles}>
+          <Tile icon="calendar-today" label="आज देने" value={String(stats.today)} active={filter === "today"} onPress={() => setFilter(filter === "today" ? "open" : "today")} testID="work-tile-today" />
+          <Tile icon="alert-circle-outline" label="देर से" value={String(stats.late)} warn={stats.late > 0} active={filter === "late"} onPress={() => setFilter(filter === "late" ? "open" : "late")} testID="work-tile-late" />
+          <Tile icon="truck-outline" label="Vendor के पास" value={String(stats.vendor)} sub={stats.vendorDue > 0 ? `देने ${money(stats.vendorDue)}` : ""} active={filter === "vendor"} onPress={() => setFilter(filter === "vendor" ? "open" : "vendor")} testID="work-tile-vendor" />
+          <Tile icon="cash-clock" label="पैसे बाकी" value={money(stats.unpaidSum)} sub={stats.unpaid ? `${stats.unpaid} काम` : ""} warn={stats.unpaid > 0} active={filter === "unpaid"} onPress={() => setFilter(filter === "unpaid" ? "open" : "unpaid")} testID="work-tile-unpaid" />
+        </View>
+      </View>
+
+      <View style={styles.segment}>
+        {TABS.map((t) => {
+          const active = filter === t.key;
+          return (
+            <Pressable key={t.key} onPress={() => setFilter(t.key)} style={[styles.segBtn, active && styles.segBtnOn]} accessibilityRole="button" accessibilityState={{ selected: active }} testID={`work-filter-${t.key}`}>
+              <Text style={[styles.segText, active && styles.segTextOn]} numberOfLines={1}>{t.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {tileFilter ? (
+        <Pressable onPress={() => setFilter("open")} style={styles.activeFilter} testID="work-clear-filter">
+          <Text style={styles.activeFilterText}>{tileFilter}</Text>
+          <MaterialIcon name="close" size={14} color={colors.brandPrimary} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.md }}>
+      <View style={[styles.topBar, { paddingTop: insets.top + spacing.md }]}>
         <Text style={styles.h1}>काम</Text>
-        <SearchBox value={q} onChange={setQ} placeholder="काम या ग्राहक खोजें" testID="work-search" />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.md }}>
-          {FILTERS.filter((f) => f === "open" || f === "all" || counts[f] > 0 || filter === f).map((f) => {
-            const active = filter === f;
-            const warn = (f === "late" || f === "unpaid") && counts[f] > 0;
-            const tone = f === "late" ? colors.warning : colors.error;
-            return (
-              <Pressable hitSlop={{ top: 4, bottom: 4 }}
-                key={f}
-                onPress={() => setFilter(f)}
-                style={[styles.chip, warn && !active && { borderColor: tone }, active && (warn ? { backgroundColor: tone, borderColor: tone } : styles.chipActive)]}
-                testID={`work-filter-${f}`}
-              >
-                <Text style={[styles.chipText, warn && !active && { color: tone }, active && { color: colors.onBrandPrimary }]}>
-                  {FILTER_LABEL[f]} ({counts[f] ?? 0})
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-        {!loading && (filter === "open" || filter === "today" || filter === "late") ? (
-          <Text style={styles.summary} testID="work-summary">
-            <Text onPress={() => setFilter("open")} style={filter === "open" ? styles.summaryOn : undefined}>{counts.open} काम बाकी</Text>
-            {" · "}
-            <Text onPress={todayCount > 0 ? () => setFilter("today") : undefined} style={filter === "today" ? styles.summaryOn : undefined} testID="work-summary-today">आज {todayCount}</Text>
-            {counts.late > 0 ? <Text onPress={() => setFilter("late")} style={{ color: colors.warning, fontWeight: "700" }}> · {counts.late} देर से</Text> : null}
-            {openValue > 0 ? <Text onPress={() => setFilter("open")} testID="work-summary-value"> · अनुमानित {formatINR(openValue)}</Text> : null}
-          </Text>
-        ) : null}
+        <Pressable onPress={() => { setSearching((s) => !s); if (searching) setQ(""); }} hitSlop={10} style={styles.iconBtn} accessibilityRole="button" testID="work-search-toggle">
+          <MaterialIcon name={searching ? "close" : "magnify"} size={22} color={colors.onSurface} />
+        </Pressable>
       </View>
+      {searching ? (
+        <View style={{ paddingHorizontal: spacing.lg }}>
+          <SearchBox value={q} onChange={setQ} placeholder="काम, ग्राहक या Vendor खोजें" testID="work-search" />
+        </View>
+      ) : null}
 
       {loading ? (
         <View style={{ marginTop: spacing.xxl, alignItems: "center" }}><ActivityIndicator color={colors.brandPrimary} /><SlowServerHint /></View>
@@ -139,48 +230,39 @@ function ShopWork() {
       ) : (
         <FlatList
           data={rows}
-          keyExtractor={(j) => j.id}
-          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: Math.max(spacing.xxxl * 2, insets.bottom + 104), gap: spacing.sm }}
+          keyExtractor={(r) => r.key}
+          ListHeaderComponent={header}
+          initialNumToRender={12}
+          windowSize={7}
+          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: Math.max(spacing.xxxl * 2, insets.bottom + 104) }}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <MaterialIcon name="briefcase-outline" size={32} color={colors.muted} />
-              <Text style={styles.emptyTitle}>{q ? "कोई नहीं मिला" : filter === "late" ? "कोई काम देर से नहीं" : "कोई काम सूची में नहीं"}</Text>
-              {filter !== "late" && !q ? <Text style={styles.emptySub}>नीचे + दबाकर काम जोड़ें</Text> : null}
+              <View style={styles.emptyIcon}><MaterialIcon name="briefcase-check-outline" size={30} color={colors.brandPrimary} /></View>
+              <Text style={styles.emptyTitle}>{q ? "कोई नहीं मिला" : filter === "open" ? "सारे काम पूरे" : filter === "vendor" ? "कोई काम Vendor के पास नहीं" : "यहाँ कोई काम नहीं"}</Text>
+              {!q && filter === "open" ? <Text style={styles.emptySub}>नीचे + दबाकर नया काम लिखें</Text> : null}
             </View>
           }
-          renderItem={({ item: j, index }) => {
-            const overdue = j.status !== "done" && j.dueDate < today;
-            const pay = j.status === "done" ? payOf(j) : undefined;
-            const work = workOf.get(j.id);
-            const notes = pay ? stripPayNote(j.notes) : j.notes;
-            return (
-              <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 40).duration(250)}>
-                <Pressable style={[styles.jobCard, overdue && { borderLeftWidth: 4, borderLeftColor: colors.warning }]} onPress={() => setEditing(j)} testID={`job-card-${j.id}`}>
-                  <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
-                    <Text style={[styles.jobTitle, { flex: 1, minWidth: 0 }]} numberOfLines={2}>{j.title}</Text>
-                    {pay ? <PayPill pay={pay} /> : <StatusPill status={j.status} free={j.status === "done" && !!j.customerId && !work} />}
-                  </View>
-                  <Text style={[styles.jobSub, overdue && { color: colors.warning }]}>
-                    {nameOf(j.customerId)} · {j.dueDate === today ? "आज" : formatDate(j.dueDate)}{overdue ? " (देर)" : ""}
-                    {j.estimatedAmount > 0 ? ` · ${formatINR(j.estimatedAmount)}` : ""}
-                    {j.status !== "done" && jobVendor.has(j.id) ? ` · Vendor: ${nameById.get(jobVendor.get(j.id)!) ?? "—"}` : ""}
-                  </Text>
-                  {notes ? <Text style={styles.notes}>{notes}</Text> : null}
-                  {pay && work && pay.remaining > 0 ? (
-                    <Pressable style={[styles.wideBtn, { backgroundColor: colors.success, borderColor: colors.success }]} onPress={() => setSettling(work)} testID={`settle-job-${j.id}`}>
-                      <MaterialIcon name="cash-check" size={16} color="#fff" />
-                      <Text style={[styles.smBtnText, { color: "#fff" }]}>पैसे मिले · {formatINR(pay.remaining)}</Text>
-                    </Pressable>
-                  ) : j.status !== "done" ? (
-                    <Pressable style={[styles.wideBtn, { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary }]} onPress={() => complete(j)} testID={`complete-${j.id}`}>
-                      <MaterialIcon name="check" size={16} color={colors.onBrandPrimary} />
-                      <Text style={[styles.smBtnText, { color: colors.onBrandPrimary }]}>पूरा करें</Text>
-                    </Pressable>
-                  ) : null}
-                </Pressable>
+          renderItem={({ item: r, index }) =>
+            r.kind === "head" ? (
+              <View style={styles.groupHead}>
+                <View style={[styles.groupDot, { backgroundColor: r.tone }]} />
+                <Text style={styles.groupLabel}>{r.label}</Text>
+                <Text style={styles.groupCount}>{r.count}</Text>
+              </View>
+            ) : (
+              <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 30).duration(220)}>
+                <JobCard
+                  info={r.info}
+                  today={today}
+                  customer={nameOf(r.info.job.customerId)}
+                  money={money}
+                  onOpen={() => setEditing(r.info.job)}
+                  onComplete={() => complete(r.info.job)}
+                  onSettle={() => r.info.work && setSettling(r.info.work)}
+                />
               </Animated.View>
-            );
-          }}
+            )
+          }
         />
       )}
 
@@ -193,6 +275,113 @@ function ShopWork() {
       <EditRecordSheet job={editing} onClose={() => setEditing(null)} />
       <SettleSheet work={settling} onClose={() => setSettling(null)} />
     </View>
+  );
+}
+
+function Tile({ icon, label, value, sub, warn, active, onPress, testID }: { icon: string; label: string; value: string; sub?: string; warn?: boolean; active?: boolean; onPress: () => void; testID: string }) {
+  return (
+    <Pressable onPress={onPress} style={[styles.tile, active && styles.tileOn]} accessibilityRole="button" accessibilityState={{ selected: !!active }} testID={testID}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+        <MaterialIcon name={icon as never} size={14} color={active ? colors.brandSecondary : warn ? "#FFD8A8" : "rgba(255,255,255,0.8)"} />
+        <Text style={[styles.tileLabel, active && { color: colors.brandSecondary }]} numberOfLines={1}>{label}</Text>
+      </View>
+      <Text style={[styles.tileValue, active && { color: colors.brandSecondary }]} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
+      {sub ? <Text style={[styles.tileSub, active && { color: colors.brandSecondary }]} numberOfLines={1}>{sub}</Text> : null}
+    </Pressable>
+  );
+}
+
+function dueText(j: Job, today: string): { text: string; tone: string } {
+  if (j.status === "done") return { text: `पूरा · ${formatDateShort(j.dueDate)}`, tone: colors.muted };
+  if (j.dueDate === today) return { text: "आज देना है", tone: colors.brandPrimary };
+  if (j.dueDate < today) return { text: `${daysFrom(j.dueDate, today)} दिन देर`, tone: colors.warning };
+  if (j.dueDate === todayISO(1)) return { text: "कल देना है", tone: colors.info };
+  return { text: `${formatDate(j.dueDate)} तक`, tone: colors.onSurfaceSecondary };
+}
+
+function JobCard({ info, today, customer, money, onOpen, onComplete, onSettle }: {
+  info: JobInfo;
+  today: string;
+  customer: string;
+  money: (n: number) => string;
+  onOpen: () => void;
+  onComplete: () => void;
+  onSettle: () => void;
+}) {
+  const { job: j, vendor, advance, pay, work } = info;
+  const done = j.status === "done";
+  const due = dueText(j, today);
+  const late = !done && j.dueDate < today;
+  const left = pay?.remaining ?? 0;
+  const amount = done && work ? work.amount : j.estimatedAmount;
+  const accent = done ? (left > 0 ? colors.error : colors.success) : late ? colors.warning : vendor ? colors.info : colors.brandPrimary;
+  const notes = done ? stripPayNote(j.notes) : j.notes;
+  return (
+    <Pressable style={styles.card} onPress={onOpen} testID={`job-card-${j.id}`}>
+      <View style={[styles.cardAccent, { backgroundColor: accent }]} />
+      <View style={styles.cardBody}>
+        <View style={styles.cardTop}>
+          <Text style={styles.cardTitle} numberOfLines={2}>{j.title}</Text>
+          {amount > 0 ? <Text style={styles.cardAmount}>{money(amount)}</Text> : null}
+        </View>
+        <View style={styles.cardMeta}>
+          <View style={styles.avatar}><Text style={styles.avatarText}>{(customer.trim()[0] ?? "?").toUpperCase()}</Text></View>
+          <Text style={styles.customer} numberOfLines={1}>{customer}</Text>
+          <View style={[styles.dueChip, { borderColor: due.tone }]}>
+            <Text style={[styles.dueText, { color: due.tone }]} numberOfLines={1}>{due.text}</Text>
+          </View>
+          {!done && j.status === "doing" && !vendor ? <Text style={styles.doing}>चल रहा</Text> : null}
+        </View>
+
+        {vendor ? (
+          <View style={styles.vendorStrip} testID={`job-vendor-${j.id}`}>
+            <MaterialIcon name={done || vendor.back ? "truck-check-outline" : "truck-fast-outline"} size={16} color={colors.info} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.vendorName} numberOfLines={1}>
+                {vendor.name}
+                {!done && vendor.due ? <Text style={styles.vendorDue}> · {vendor.due === today ? "आज देगा" : `${formatDateShort(vendor.due)} तक`}</Text> : null}
+              </Text>
+              <Text style={styles.vendorMoney} numberOfLines={1}>
+                लागत {money(vendor.cost)}
+                {vendor.given > 0 ? ` · दिए ${money(vendor.given)}` : ""}
+                {vendor.cost - vendor.given > 0 ? ` · बाकी ${money(roundMoney(vendor.cost - vendor.given))}` : " · पूरे दिए"}
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        <View style={styles.moneyRow}>
+          {!done && advance > 0 ? (
+            <View style={[styles.moneyChip, { backgroundColor: semantic.receivedSoft }]} testID={`job-advance-${j.id}`}>
+              <MaterialIcon name="check-circle" size={13} color={semantic.received} />
+              <Text style={[styles.moneyChipText, { color: semantic.received }]}>एडवांस {money(advance)}</Text>
+            </View>
+          ) : null}
+          {!done && advance > 0 && j.estimatedAmount > advance ? <Text style={styles.moneyHint}>बाकी {money(roundMoney(j.estimatedAmount - advance))}</Text> : null}
+          {done && pay ? (
+            <View style={[styles.moneyChip, { backgroundColor: left > 0 ? semantic.dueSoft : semantic.receivedSoft }]}>
+              <MaterialIcon name={left > 0 ? "clock-outline" : "check-circle"} size={13} color={left > 0 ? semantic.due : semantic.received} />
+              <Text style={[styles.moneyChipText, { color: left > 0 ? semantic.due : semantic.received }]}>{left > 0 ? `${money(left)} बाकी` : "पूरे मिले"}</Text>
+            </View>
+          ) : null}
+          {done && !work && j.customerId ? <Text style={styles.moneyHint}>मुफ़्त</Text> : null}
+        </View>
+
+        {notes ? <Text style={styles.notes} numberOfLines={2}>{notes}</Text> : null}
+
+        {done && work && left > 0 ? (
+          <Pressable style={[styles.action, { backgroundColor: colors.success }]} onPress={onSettle} testID={`settle-job-${j.id}`}>
+            <MaterialIcon name="cash-check" size={16} color="#fff" />
+            <Text style={styles.actionText}>पैसे मिले · {money(left)}</Text>
+          </Pressable>
+        ) : !done ? (
+          <Pressable style={[styles.action, { backgroundColor: colors.brandPrimary }]} onPress={onComplete} testID={`complete-${j.id}`}>
+            <MaterialIcon name="check" size={16} color="#fff" />
+            <Text style={styles.actionText}>पूरा करें</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </Pressable>
   );
 }
 
@@ -351,7 +540,7 @@ const TXN_UI = {
 } as const;
 
 // Completion notes carry the payment split as it was on that day ("₹500 उधार"); the live
-// status pill replaces it, so drop those parts to avoid showing stale money info.
+// status chip replaces it, so drop those parts to avoid showing stale money info.
 function stripPayNote(notes: string) {
   return notes
     .split(" · ")
@@ -359,35 +548,63 @@ function stripPayNote(notes: string) {
     .join(" · ");
 }
 
-function PayPill({ pay }: { pay: WorkStatus }) {
-  const map = {
-    cash: { bg: semantic.receivedSoft, fg: semantic.received, label: "नकद", icon: undefined },
-    settled: { bg: semantic.receivedSoft, fg: semantic.received, label: "चुकता", icon: "check" as const },
-    partial: { bg: semantic.pendingSoft, fg: semantic.pending, label: "कुछ बाकी", icon: undefined },
-    pending: { bg: semantic.dueSoft, fg: semantic.due, label: "पैसे बाकी", icon: undefined },
-  } as const;
-  const s = map[pay.state];
-  return <Pill label={s.label} color={s.fg} background={s.bg} icon={s.icon} />;
-}
-
-function StatusPill({ status, free }: { status: Job["status"]; free?: boolean }) {
-  const map = {
-    pending: { bg: colors.surfaceTertiary, fg: colors.onSurfaceTertiary, label: "काम बाकी" },
-    doing: { bg: semantic.pendingSoft, fg: semantic.pending, label: "चल रहा" },
-    done: { bg: semantic.receivedSoft, fg: semantic.received, label: free ? "मुफ़्त" : "पूरा" },
-  } as const;
-  const s = map[status];
-  return <Pill label={s.label} color={s.fg} background={s.bg} />;
-}
-
 const styles = StyleSheet.create({
   h1: { fontSize: 30, fontWeight: "700", color: colors.onSurface },
-  sub: { fontSize: 13, color: colors.muted, marginTop: 2 },
+  topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
+  iconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+
+  hero: { backgroundColor: colors.brandSecondary, borderRadius: radius.lg, padding: spacing.lg, marginBottom: spacing.md, ...elevation.mid },
+  heroLabel: { fontSize: 13, fontWeight: "700", color: "rgba(255,255,255,0.75)", letterSpacing: 0.3 },
+  heroValue: { fontSize: 32, fontWeight: "800", color: "#fff", fontVariant: ["tabular-nums"], flexShrink: 1 },
+  heroCount: { fontSize: 14, fontWeight: "700", color: "rgba(255,255,255,0.8)" },
+  heroSub: { fontSize: 12, color: "rgba(255,255,255,0.8)", marginTop: 2 },
+  tiles: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.md },
+  tile: { flexBasis: "47%", flexGrow: 1, padding: spacing.md, borderRadius: radius.md, backgroundColor: "rgba(255,255,255,0.12)", borderWidth: 1, borderColor: "rgba(255,255,255,0.14)" },
+  tileOn: { backgroundColor: "#fff", borderColor: "#fff" },
+  tileLabel: { fontSize: 12, fontWeight: "600", color: "rgba(255,255,255,0.85)", flexShrink: 1 },
+  tileValue: { fontSize: 20, fontWeight: "800", color: "#fff", marginTop: 4, fontVariant: ["tabular-nums"] },
+  tileSub: { fontSize: 11, color: "rgba(255,255,255,0.75)", marginTop: 1 },
+
+  segment: { flexDirection: "row", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: 4, borderWidth: 1, borderColor: colors.border },
+  segBtn: { flex: 1, height: 38, borderRadius: radius.sm + 2, alignItems: "center", justifyContent: "center" },
+  segBtnOn: { backgroundColor: colors.surface, ...elevation.low },
+  segText: { fontSize: 13, fontWeight: "600", color: colors.muted },
+  segTextOn: { color: colors.brandSecondary, fontWeight: "800" },
+  activeFilter: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 4, marginTop: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.brandTertiary },
+  activeFilterText: { fontSize: 12, fontWeight: "700", color: colors.brandPrimary },
+
+  groupHead: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.lg, marginBottom: spacing.sm },
+  groupDot: { width: 8, height: 8, borderRadius: 4 },
+  groupLabel: { fontSize: 13, fontWeight: "800", color: colors.onSurfaceSecondary, letterSpacing: 0.3 },
+  groupCount: { fontSize: 12, fontWeight: "700", color: colors.muted, backgroundColor: colors.surfaceTertiary, paddingHorizontal: 8, paddingVertical: 1, borderRadius: radius.pill, overflow: "hidden" },
+
+  card: { flexDirection: "row", backgroundColor: "#fff", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.sm, overflow: "hidden", ...elevation.low },
+  cardAccent: { width: 4 },
+  cardBody: { flex: 1, padding: spacing.md + 2 },
+  cardTop: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
+  cardTitle: { flex: 1, minWidth: 0, fontSize: 16, fontWeight: "700", color: colors.onSurface, lineHeight: 22 },
+  cardAmount: { fontSize: 16, fontWeight: "800", color: colors.onSurface, fontVariant: ["tabular-nums"] },
+  cardMeta: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm },
+  avatar: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
+  avatarText: { fontSize: 11, fontWeight: "800", color: colors.brandSecondary },
+  customer: { flexShrink: 1, fontSize: 13, fontWeight: "600", color: colors.onSurfaceSecondary },
+  dueChip: { borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
+  dueText: { fontSize: 11, fontWeight: "700" },
+  doing: { fontSize: 11, fontWeight: "700", color: semantic.pending },
+  vendorStrip: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.md, padding: spacing.sm + 2, borderRadius: radius.sm + 2, backgroundColor: semantic.bankSoft },
+  vendorName: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
+  vendorDue: { fontSize: 12, fontWeight: "600", color: colors.info },
+  vendorMoney: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 1 },
+  moneyRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm },
+  moneyChip: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
+  moneyChipText: { fontSize: 12, fontWeight: "700" },
+  moneyHint: { fontSize: 12, color: colors.muted, fontWeight: "600" },
+  action: { marginTop: spacing.md, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", paddingVertical: 10, borderRadius: radius.sm + 2 },
+  actionText: { fontSize: 14, fontWeight: "700", color: "#fff" },
+
   chip: { height: 36, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   chipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
   chipText: { fontSize: 13, color: colors.onSurface, fontWeight: "600" },
-  summary: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: spacing.md },
-  summaryOn: { fontWeight: "800", color: colors.onSurface },
   searchWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44, borderWidth: 1, borderColor: colors.border },
   search: { flex: 1, color: colors.onSurface, fontSize: 15 },
   txnIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
@@ -397,9 +614,9 @@ const styles = StyleSheet.create({
   jobTitle: { fontSize: 15, fontWeight: "700", color: colors.onSurface },
   jobSub: { fontSize: 12, color: colors.muted, marginTop: 4 },
   notes: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: 6 },
-  smBtn: { flexDirection: "row", gap: 4, paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   smBtnText: { fontSize: 13, fontWeight: "600", color: colors.onSurface },
   empty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },
+  emptyIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
   emptyTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   emptySub: { fontSize: 13, color: colors.muted },
   fab: { position: "absolute", right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#000", shadowOpacity: 0.15, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },

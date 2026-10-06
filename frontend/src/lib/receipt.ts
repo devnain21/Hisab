@@ -140,13 +140,10 @@ export function receiptDoc(
   let advanceBanner: Banner | undefined;
   /** Work and job advances: when the job was given, and when it was finished (null = still in progress). */
   let dates: { booked: string; done: string | null } | null = null;
-  const dateRows = (): CardRow[] =>
-    dates
-      ? [
-          { icon: "cal", tint: DUE, label: "तारीख / दिया", value: formatDate(dates.booked) },
-          { icon: "cal", tint: dates.done ? OK : AMBER, label: "पूर्ण तारीख", value: dates.done ? formatDate(dates.done) : "प्रगति पर", tone: dates.done ? "ok" : undefined },
-        ]
-      : [];
+  // "1 अक्टूबर 2026 – 6 अक्टूबर 2026": the day it was given, then the day it was finished.
+  const dateText = () =>
+    !dates ? "" : dates.done === dates.booked ? formatDate(dates.booked) : `${formatDate(dates.booked)} – ${dates.done ? formatDate(dates.done) : "प्रगति पर"}`;
+  const dateRows = (): CardRow[] => (dates ? [{ icon: "cal", tint: DUE, label: "तारीख", value: dateText() }] : []);
 
   if (entry.type === "payment") {
     const job = entry.linkId ? ctx.jobs?.find((j) => j.id === entry.linkId && j.status !== "done") : undefined;
@@ -221,9 +218,7 @@ export function receiptDoc(
 
   const message = [
     `*${shop.shop_name}*`,
-    ...(dates
-      ? [`📅 तारीख / दिया: ${formatDate(dates.booked)}`, `✅ पूर्ण तारीख: ${dates.done ? formatDate(dates.done) : "प्रगति पर"}`]
-      : [`📅 ${formatDate(entry.date)}`]),
+    `📅 ${dates ? dateText() : formatDate(entry.date)}`,
     "",
     `*${customer.name}*`,
     ...items.map((it, i) => `${many ? `${i + 1}. ` : ""}${it.title}${it.amount > 0 ? ` — ${formatINR(it.amount)}` : ""}`),
@@ -253,7 +248,7 @@ export function receiptDoc(
         : OK_BANNER(seal.text === "ADVANCE" ? "एडवांस प्राप्त हुआ" : "भुगतान सफलतापूर्वक प्राप्त हो गया है।", prefs.paidNote.trim() || PAID_NOTE_DEFAULT));
   const html = cardPage(
     shop,
-    { titleHi, titleEn, noLabel: "रसीद संख्या", no, date: formatDate(entry.date), rows, stamp: seal, banner, note: personal ? "" : prefs.receiptNote.trim() },
+    { titleHi, titleEn, noLabel: "रसीद संख्या", no, date: dates ? "" : formatDate(entry.date), rows, stamp: seal, banner, note: personal ? "" : prefs.receiptNote.trim() },
     personal,
   );
 
@@ -808,7 +803,7 @@ function cardPage(shop: ShopProfile, card: Card, personal: boolean): string {
     <div class="band">
       ${BAND_ICON}
       <div class="bandT"><div class="hi">${esc(card.titleHi)}</div><div class="en">${esc(card.titleEn)}</div></div>
-      <div class="bandNo"><div class="noL">${esc(card.noLabel)}</div><div class="noV">${esc(card.no)}</div><div class="dt">${svgIcon("cal", BLUE, 12)}${esc(card.date)}</div></div>
+      <div class="bandNo"><div class="noL">${esc(card.noLabel)}</div><div class="noV">${esc(card.no)}</div>${card.date ? `<div class="dt">${svgIcon("cal", BLUE, 12)}${esc(card.date)}</div>` : ""}</div>
     </div>
     <div class="card">
       <div class="seal" style="color:${card.stamp.color};border-color:${card.stamp.color}"><div class="sealIn" style="border-color:${card.stamp.color}"><span>★ ★ ★</span><b style="font-size:${stampSize}px">${esc(card.stamp.text)}</b><span>★ ★</span></div></div>

@@ -18,7 +18,7 @@ import { confirmAction } from "@/src/lib/confirm";
 import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet";
 import { PocketCard } from "@/src/components/pocket-card";
 import { DayCloseModal } from "@/src/components/day-close-modal";
-import { isWorkVendorCost } from "@/src/lib/records";
+import { coveredBefore, isWorkVendorCost } from "@/src/lib/records";
 import { shopProfit, type MetricKind } from "@/src/lib/metrics";
 import { useAuth } from "@/src/context/AuthContext";
 import { usePersona } from "@/src/lib/persona";
@@ -132,15 +132,8 @@ export default function DayScreen() {
   const workOnline =
     workEntries.filter((e) => e.mode === "online").reduce((s, e) => s + (e.paid ?? 0), 0) +
     withWork.filter((e) => e.mode === "online").reduce((s, e) => s + e.amount, 0);
-  // A job's advance taken on an earlier day already paid for this work: it is neither today's money nor udhaar.
-  const advanceByWork = useMemo(() => {
-    const ids = new Set(workEntries.map((w) => w.id));
-    const m = new Map<string, number>();
-    for (const e of book.entries) {
-      if (e.type === "payment" && e.linkId && e.date < date && ids.has(e.linkId)) m.set(e.linkId, (m.get(e.linkId) ?? 0) + e.amount);
-    }
-    return m;
-  }, [book.entries, date, workEntries]);
+  // Money taken on an earlier day (job advance or the customer's jama) already paid for this work: it is neither today's money nor udhaar.
+  const advanceByWork = useMemo(() => coveredBefore(book.entries, workEntries, date), [book.entries, date, workEntries]);
   const sameDayLinked = (w: Entry) => withWork.filter((p) => p.linkId === w.id).reduce((s, p) => s + p.amount, 0);
   const workAdvance = roundMoney(
     workEntries.reduce((s, w) => s + Math.min(advanceByWork.get(w.id) ?? 0, Math.max(0, w.amount - (w.paid ?? 0) - sameDayLinked(w))), 0),

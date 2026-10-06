@@ -498,3 +498,29 @@ export function buildLedger(entries: Entry[]): Ledger {
 
   return { work, nested };
 }
+
+/**
+ * For work booked on `date`: how much of each row was already covered by money that came in before that day
+ * (a job advance, or general jama the customer paid earlier) beyond what is paid on the row itself.
+ */
+export function coveredBefore(entries: Entry[], works: Entry[], date: string): Map<string, number> {
+  const out = new Map<string, number>();
+  if (!works.length) return out;
+  const ids = new Set(works.map((w) => w.id));
+  const people = new Set(works.map((w) => w.customerId));
+  const byCustomer = new Map<string, Entry[]>();
+  for (const e of entries) {
+    if (!people.has(e.customerId) || (e.date >= date && !ids.has(e.id))) continue;
+    const list = byCustomer.get(e.customerId);
+    if (list) list.push(e);
+    else byCustomer.set(e.customerId, [e]);
+  }
+  byCustomer.forEach((list) => {
+    const { work } = buildLedger(list);
+    for (const w of works) {
+      const st = work.get(w.id);
+      if (st) out.set(w.id, roundMoney(Math.max(0, st.received - st.paidAtBooking)));
+    }
+  });
+  return out;
+}

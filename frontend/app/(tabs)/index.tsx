@@ -8,7 +8,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, semantic, type, elevation } from "@/src/theme";
 import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, isVendor, type Entry, type Job } from "@/src/lib/data";
-import { buildAllLedgers, vendorByJob, workForJob } from "@/src/lib/records";
+import { buildAllLedgers, coveredBefore, vendorByJob, workForJob } from "@/src/lib/records";
 import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import * as Updates from "expo-updates";
@@ -189,13 +189,16 @@ function HomeBody() {
   // Work booked today in any mode (cash, online or udhaar). AEPS counter money is pass-through, so only
   // its commission counts. Fees and vendor cost match the day screen's work profit.
   const todayWork = useMemo(() => {
-    if (isPersonal) return { gross: 0, count: 0, fees: 0, vendor: 0, commission: 0, booked: 0, net: 0 };
+    if (isPersonal) return { gross: 0, count: 0, fees: 0, vendor: 0, commission: 0, booked: 0, net: 0, paidBefore: 0 };
     const work = metricRows(book, "business", "work", today, today);
     const gross = roundMoney(work.reduce((s, r) => s + r.amount, 0));
+    const workRows = work.flatMap((r) => (r.source === "entry" ? [r.entry] : []));
+    const before = coveredBefore(book.entries, workRows, today);
+    const paidBefore = roundMoney(workRows.reduce((s, w) => s + Math.min(before.get(w.id) ?? 0, w.amount), 0));
     const fees = metricSum(book, "business", "fee", today, today);
     const vendor = metricSum(book, "business", "workVendor", today, today);
     const commission = metricSum(book, "business", "commission", today, today);
-    return { gross, count: work.length, fees, vendor, commission, booked: roundMoney(gross + commission), net: roundMoney(gross - fees - vendor + commission) };
+    return { gross, count: work.length, fees, vendor, commission, booked: roundMoney(gross + commission), net: roundMoney(gross - fees - vendor + commission), paidBefore };
   }, [book, today, isPersonal]);
   const openMetric = (kind: MetricKind) => router.push({ pathname: "/entries" as never, params: { kind, from: today } });
   const [workSheet, setWorkSheet] = useState(false);
@@ -777,6 +780,11 @@ function HomeBody() {
               <Text style={[styles.breakTotalValue, todayWork.net < 0 && { color: semantic.due }]} numberOfLines={1}>{money(todayWork.net)}</Text>
               <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
             </Pressable>
+            {todayWork.paidBefore > 0 ? (
+              <Text style={[styles.rowSub, { marginTop: spacing.sm }]} testID="today-work-paid-before">
+                इसमें {money(todayWork.paidBefore)} पहले ही मिल चुके थे (एडवांस) — वो उसी दिन के गल्ले / बैंक में जुड़ चुके, आज नहीं
+              </Text>
+            ) : null}
           </SheetShell>
           <Lazy when={vendorOrder}><AddEntrySheet visible={vendorOrder} type="purchase" vendor onClose={() => setVendorOrder(false)} /></Lazy>
           <Lazy when={!!settling}><SettleSheet work={settling} onClose={() => setSettling(null)} /></Lazy>

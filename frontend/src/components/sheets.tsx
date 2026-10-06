@@ -982,7 +982,24 @@ function VendorRelease({ v, vendorName }: { v: ReturnType<typeof useVendorJob>; 
  * the agreed cost and any advance given; the rest is settled when the job is marked done. `start`: the day
  * the job came in. At completion of a job that was handed out, it asks who finished it.
  */
-function VendorOutsource({ v, amount, fee, workDate, assign, start }: { v: ReturnType<typeof useVendorJob>; amount: number; fee: number; workDate: string; assign?: boolean; start?: string }) {
+function VendorOutsource({
+  v,
+  amount,
+  fee,
+  workDate,
+  assign,
+  start,
+  bare,
+}: {
+  v: ReturnType<typeof useVendorJob>;
+  amount: number;
+  fee: number;
+  workDate: string;
+  assign?: boolean;
+  start?: string;
+  /** The sheet already chose "vendor" (action pills): no on/off toggle, no "who finished it" chips. */
+  bare?: boolean;
+}) {
   const customers = useCustomers().data ?? [];
   const oldName = customers.find((c) => c.id === v.orderVendor)?.name ?? "Vendor";
   const left = roundMoney(amount - fee - v.costNum);
@@ -994,7 +1011,14 @@ function VendorOutsource({ v, amount, fee, workDate, assign, start }: { v: Retur
   const today = todayISO();
   return (
     <View style={styles.vendorBox}>
-      {finishing ? (
+      {bare ? (
+        v.order && !v.changed ? (
+          <View style={styles.vendorToggle}>
+            <MaterialIcon name="truck-outline" size={20} color={colors.brandPrimary} />
+            <Text style={[styles.vendorToggleText, { color: colors.onSurface }]}>{oldName} को दिया · {formatDate(v.assignDay)}</Text>
+          </View>
+        ) : null
+      ) : finishing ? (
         <>
           <View style={styles.vendorToggle}>
             <MaterialIcon name="truck-outline" size={20} color={colors.brandPrimary} />
@@ -1668,7 +1692,21 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   );
 }
 
-/** Edits an open (or money-less finished) job card. */
+function confirmRemoveJob(job: Job, entries: Entry[], hasVendor: boolean, onDone: () => void) {
+  const all = advancesForJob(job, entries).reduce((s, e) => s + e.amount, 0);
+  const kept = olderAdvances(job, entries).reduce((s, e) => s + e.amount, 0);
+  const gone = all - kept;
+  const lines = [job.title];
+  if (gone > 0) lines.push(`आज का एडवांस ${formatINR(gone)} भी हटेगा।`);
+  if (kept > 0) lines.push(`पहले लिया एडवांस ${formatINR(kept)} खाते में जमा रहेगा (लौटाएँ तो "पैसे दिए" लिखें)।`);
+  if (hasVendor) lines.push("Vendor को दिया काम भी हटेगा; उन्हें पिछले दिनों दिया एडवांस उन पर बकाया रहेगा।");
+  confirmAction("काम हटाएँ?", lines.join("\n"), "हटा दें", () => {
+    removeJobWithAdvances(job, entries);
+    onDone();
+  });
+}
+
+/** Edits an own task or a money-less finished job card; open customer jobs use CompleteJobSheet. */
 export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () => void }) {
   const entries = useEntries().data ?? [];
   const [title, setTitle] = useState("");
@@ -1711,18 +1749,7 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
   };
 
   const remove = () => {
-    if (!job) return;
-    const all = advancesForJob(job, entries).reduce((s, e) => s + e.amount, 0);
-    const kept = olderAdvances(job, entries).reduce((s, e) => s + e.amount, 0);
-    const gone = all - kept;
-    const lines = [job.title];
-    if (gone > 0) lines.push(`आज का एडवांस ${formatINR(gone)} भी हटेगा।`);
-    if (kept > 0) lines.push(`पहले लिया एडवांस ${formatINR(kept)} खाते में जमा रहेगा (लौटाएँ तो "पैसे दिए" लिखें)।`);
-    if (vendorRow) lines.push("Vendor को दिया काम भी हटेगा; उन्हें पिछले दिनों दिया एडवांस उन पर बकाया रहेगा।");
-    confirmAction("काम हटाएँ?", lines.join("\n"), "हटा दें", () => {
-      removeJobWithAdvances(job, entries);
-      onClose();
-    });
+    if (job) confirmRemoveJob(job, entries, !!vendorRow, onClose);
   };
 
   return (
@@ -1773,9 +1800,14 @@ export function EditRecordSheet({ entry, job, onClose }: { entry?: Entry | null;
   let work: Entry | null = null;
   let plainEntry: Entry | null = null;
   let plainJob: Job | null = null;
+  let openJob: Job | null = null;
   if (job) {
     work = workForJob(job, entries) ?? null;
-    if (!work) plainJob = job;
+    // An open customer job has one place for everything: finish it, outsource it, or edit it.
+    if (!work) {
+      if (job.customerId && job.status !== "done") openJob = job;
+      else plainJob = job;
+    }
   } else if (entry && entry.type !== "aeps") {
     if (entry.type === "work") work = entry;
     else if (entry.type === "given" || entry.type === "purchase") plainEntry = entry;
@@ -1790,6 +1822,7 @@ export function EditRecordSheet({ entry, job, onClose }: { entry?: Entry | null;
     <>
       <WorkEditSheet entry={work} onClose={onClose} />
       <EditJobSheet job={plainJob} onClose={onClose} />
+      <CompleteJobSheet job={openJob} onClose={onClose} />
       <AddEntrySheet visible={!!plainEntry} type={plainEntry?.type ?? "payment"} initial={plainEntry ?? undefined} customerId={plainEntry?.customerId} onClose={onClose} />
     </>
   );
@@ -2154,8 +2187,22 @@ export function ShopProfileSheet({ visible, onClose, openShop }: { visible: bool
   );
 }
 
+type JobAction = "self" | "vendor" | "assign";
+
+const JOB_ACTIONS: { key: JobAction; label: string; icon: string }[] = [
+  { key: "self", label: "खुद पूरा किया", icon: "account-check-outline" },
+  { key: "vendor", label: "वेंडर से कराया", icon: "truck-check-outline" },
+  { key: "assign", label: "वेंडर को दिया", icon: "truck-fast-outline" },
+];
+
+/**
+ * The one sheet for an open job, whether opened from the row or from "पूरा करें": finish it yourself,
+ * finish it through a vendor, or hand it to a vendor and keep it open. Title, notes and removal sit under
+ * "विवरण बदलें".
+ */
 export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: () => void }) {
   const entries = useEntries().data ?? [];
+  const customers = useCustomers().data ?? [];
   const jobAdvances = job ? advancesForJob(job, entries) : [];
   const jobAdvance = jobAdvances.reduce((s, p) => s + p.amount, 0);
   const advance = job?.customerId ? advanceOf(entries, job.customerId) : 0;
@@ -2166,18 +2213,27 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
   const [workDay, setWorkDate] = useState(todayISO());
   const [cashDay, setCashDate] = useState(todayISO());
   const [openedOn, setOpenedOn] = useState(todayISO());
+  const [action, setAction] = useState<JobAction>("self");
+  const [title, setTitle] = useState("");
+  const [notes, setNotes] = useState("");
+  const [status, setStatus] = useState<Job["status"]>("pending");
+  const [due, setDue] = useState(todayISO());
+  const [details, setDetails] = useState(false);
   const [saving, setSaving] = useState(false);
   const split = useSplitPay();
   const vendorJob = useVendorJob(!!job);
   const { isPersonal } = usePersona();
   const outsource = !!job?.customerId && !isPersonal;
-  // Given to a vendor while pending: its order (and advances) carry into this completion.
+  // Given to a vendor while pending: its order (and advances) carry into this sheet.
   const vendorRow = job ? vendorOrdersForJob(job, entries)[0] : undefined;
   const start = job ? jobStart(job, entries) : todayISO();
+  const customerName = job?.customerId ? customers.find((c) => c.id === job.customerId)?.name ?? "" : "";
+  const orderName = vendorRow ? customers.find((c) => c.id === vendorRow.customerId)?.name ?? "Vendor" : "";
 
   useEffect(() => {
     if (job) {
       vendorJob.load(vendorRow, entries, true);
+      setAction(vendorRow ? "vendor" : "self");
       split.reset();
       const est = job.estimatedAmount > 0 ? job.estimatedAmount : 0;
       // The advance for this job already sits in the drawer/bank; only the remainder is new money.
@@ -2188,20 +2244,34 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
       setWorkDate(todayISO());
       setCashDate(todayISO());
       setOpenedOn(todayISO());
+      setTitle(job.title);
+      setNotes(job.notes);
+      setStatus(job.status === "done" ? "pending" : job.status);
+      setDue(job.dueDate || todayISO());
+      setDetails(false);
     }
     // Only re-initialise when a different job is opened, not when a sync refreshes it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.id]);
 
+  const pickAction = (a: JobAction) => {
+    setAction(a);
+    vendorJob.setOn(a !== "self");
+  };
+
+  const assigning = outsource && action === "assign";
   const amt = job?.customerId ? money.totalNum : 0;
-  const got = money.receivedNum;
+  const got = assigning ? 0 : money.receivedNum;
+  const cleanTitle = title.trim() || job?.title || "";
   // Finished no earlier than it came in, or than it was handed to the vendor who finished it.
   const doneMin = vendorJob.order && vendorJob.on && !vendorJob.releasing ? vendorJob.assignDay : start;
-  const vendorOk = !outsource || (vendorJob.ready && vendorJob.datesOk(start, false));
-  const datesOk = workDay >= doneMin && (got <= 0 || cashDay >= start);
+  const vendorOk = !outsource || (vendorJob.ready && vendorJob.datesOk(start, assigning));
+  const datesOk = assigning ? due >= start : workDay >= doneMin && (got <= 0 || cashDay >= start);
+  const canFinish = (!job?.customerId || amt <= 0 || money.answered) && vendorOk && (!job?.customerId || datesOk);
+  const canAssign = !!title.trim() && vendorOk && datesOk;
 
-  const save = async () => {
-    if (!job || !vendorOk || (job.customerId && !datesOk)) return;
+  const complete = async () => {
+    if (!job || !canFinish) return;
     setSaving(true);
     try {
       const workDate = dateOnSave(workDay, openedOn);
@@ -2210,11 +2280,11 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
       const parts = splitOf(split, got);
       const entryId = recordWork({
         customerId: job.customerId,
-        title: job.title,
+        title: cleanTitle,
         amount: amt,
         received: sameDay ? got : 0,
         date: workDate,
-        notes: "काम पूरा",
+        notes: notes.trim() || "काम पूरा",
         mode: payMode,
         fee: parseAmount(fee),
         feeMode,
@@ -2222,44 +2292,142 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
         keepRow: outsource && vendorJob.costNum > 0,
       });
       if (outsource) {
-        if (entryId) await saveVendorEdit(vendorJob, vendorRow, entryId, job.title, workDate, entries);
+        if (entryId) await saveVendorEdit(vendorJob, vendorRow, entryId, cleanTitle, workDate, entries);
         else if (vendorRow) releaseVendorOrder(vendorRow, entries, vendorJob.refund());
       }
       if (entryId) {
         jobAdvances.forEach((p) => store.updateEntry(p.id, { linkId: entryId }));
         if (!sameDay && got > 0) {
-          createPaid({ customerId: job.customerId, type: "payment", date: cashDate, description: settleDescription(job.title), notes: "", linkId: entryId }, got, payMode, parts);
+          createPaid({ customerId: job.customerId, type: "payment", date: cashDate, description: settleDescription(cleanTitle), notes: "", linkId: entryId }, got, payMode, parts);
         }
       } else if (got > 0 && job.customerId) {
-        createPaid({ customerId: job.customerId, type: "payment", date: cashDate, description: ADVANCE, notes: `${job.title} के लिए` }, got, payMode, parts);
+        createPaid({ customerId: job.customerId, type: "payment", date: cashDate, description: ADVANCE, notes: `${cleanTitle} के लिए` }, got, payMode, parts);
       }
-      store.updateJob(job.id, { status: "done", dueDate: workDate, estimatedAmount: amt, entryId });
+      store.updateJob(job.id, { title: cleanTitle, notes: notes.trim(), status: "done", dueDate: workDate, estimatedAmount: amt, entryId });
       onClose();
     } finally { setSaving(false); }
   };
 
+  const assign = async () => {
+    if (!job || !canAssign) return;
+    setSaving(true);
+    try {
+      store.updateJob(job.id, { title: cleanTitle, estimatedAmount: amt, dueDate: due, notes: notes.trim(), status: status === "pending" ? "doing" : status });
+      await saveVendorAssign(vendorJob, vendorRow, job.id, cleanTitle, due, entries);
+      onClose();
+    } finally { setSaving(false); }
+  };
+
+  const saveDetails = () => {
+    if (!job || !title.trim()) return;
+    store.updateJob(job.id, { title: cleanTitle, notes: notes.trim(), status });
+    onClose();
+  };
+
+  const remove = () => {
+    if (job) confirmRemoveJob(job, entries, !!vendorRow, onClose);
+  };
+
   return (
-    <SheetShell visible={!!job} onClose={onClose} title="काम पूरा करें" testID="sheet-complete-job">
-      {job ? <Text style={styles.jobName}>{job.title}</Text> : null}
-      {jobAdvance > 0 ? <Text style={[styles.hint, { marginTop: 0, marginBottom: spacing.md, fontWeight: "700", color: colors.success }]}>एडवांस मिल चुका {formatINR(jobAdvance)}</Text> : null}
-      {job?.customerId ? (
-        <>
-          <MoneyFields money={money} advance={advance} receivedLabel="आज मिले (₹)" freeAllowed />
-          {got > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={got} /> : null}
-          <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
-          {outsource ? <VendorOutsource v={vendorJob} amount={amt} fee={parseAmount(fee)} workDate={workDay} start={start} /> : null}
-        </>
+    <SheetShell visible={!!job} onClose={onClose} title={assigning ? "वेंडर को दें" : "काम पूरा करें"} testID="sheet-complete-job">
+      {job ? (
+        <View style={styles.jobHead}>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.jobName, { marginBottom: 2 }]} numberOfLines={2}>{cleanTitle}</Text>
+            <Text style={styles.jobMeta} numberOfLines={1}>
+              {[customerName, job.customerId ? `आया ${formatDate(start)}` : "", jobAdvance > 0 ? `एडवांस ${formatINR(jobAdvance)}` : ""].filter(Boolean).join(" · ")}
+            </Text>
+          </View>
+          <Pressable onPress={() => setDetails((d) => !d)} hitSlop={8} style={styles.jobEditBtn} accessibilityRole="button" testID="toggle-job-details">
+            <MaterialIcon name={details ? "chevron-up" : "pencil-outline"} size={16} color={colors.brandPrimary} />
+            <Text style={styles.jobEditText}>{details ? "बंद करें" : "विवरण बदलें"}</Text>
+          </Pressable>
+        </View>
       ) : null}
-      <DateField label="काम कब पूरा हुआ" value={workDay} onChange={(d) => { setWorkDate(d); setCashDate(d); }} min={job?.customerId ? doneMin : undefined} testID="input-complete-date" />
-      {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDay} onChange={setCashDate} min={start} money testID="input-complete-cash-date" /> : null}
-      {job?.customerId ? <LimitWarning customerId={job.customerId} extra={roundMoney(amt - got)} /> : null}
-      <PrimaryButton
-        label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"}
-        onPress={save}
-        disabled={(!!job?.customerId && amt > 0 && !money.answered) || !vendorOk || (!!job?.customerId && !datesOk)}
-        saving={saving}
-        testID="save-complete-btn"
-      />
+
+      {details ? (
+        <View style={styles.vendorBox}>
+          <Field label="क्या काम">
+            <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholderTextColor={colors.muted} testID="input-edit-job-title" />
+          </Field>
+          <Field label="नोट / रिमार्क">
+            <TextInput style={[inputStyle, { minHeight: 56 }]} value={notes} onChangeText={setNotes} multiline placeholderTextColor={colors.muted} testID="input-edit-job-notes" />
+          </Field>
+          <Field label="स्थिति">
+            <View style={styles.chipRow}>
+              <Chip label="काम बाकी" active={status === "pending"} onPress={() => setStatus("pending")} testID="edit-job-status-pending" />
+              <Chip label="चल रहा" active={status === "doing"} onPress={() => setStatus("doing")} tone={colors.warning} testID="edit-job-status-doing" />
+            </View>
+          </Field>
+          <Pressable onPress={saveDetails} disabled={!title.trim()} style={[styles.detailSave, !title.trim() && { opacity: 0.5 }]} accessibilityRole="button" testID="save-job-details-btn">
+            <Text style={styles.detailSaveText}>सिर्फ़ विवरण सेव करें</Text>
+          </Pressable>
+          <Pressable onPress={remove} style={styles.dangerLink} accessibilityRole="button" testID="delete-job-btn">
+            <MaterialIcon name="trash-can-outline" size={18} color={colors.error} />
+            <Text style={{ color: colors.error, fontWeight: "700" }}>काम हटाएँ</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {outsource ? (
+        <View style={styles.actionRow}>
+          {JOB_ACTIONS.map((a) => {
+            const active = action === a.key;
+            return (
+              <Pressable
+                key={a.key}
+                onPress={() => pickAction(a.key)}
+                style={[styles.actionPill, active && styles.actionPillOn]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                testID={`job-action-${a.key}`}
+              >
+                <MaterialIcon name={a.icon as never} size={20} color={active ? "#fff" : colors.brandPrimary} />
+                <Text style={[styles.actionPillText, active && { color: "#fff" }]} numberOfLines={1}>{a.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+
+      {assigning ? (
+        <>
+          <Field label="ग्राहक से कुल रकम (₹, वैकल्पिक)">
+            <TextInput style={inputStyle} value={money.total} onChangeText={money.setTotal} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.muted} testID="input-assign-amount" />
+          </Field>
+          <VendorOutsource v={vendorJob} amount={amt} fee={0} workDate={due} assign start={start} bare />
+          <DateField label="ग्राहक को कब तक" value={due} onChange={setDue} future min={start} testID="input-assign-due" />
+          <PrimaryButton label={vendorRow ? "बदलाव सेव करें" : "वेंडर को सौंपें"} onPress={() => void assign()} disabled={!canAssign} saving={saving} testID="save-assign-btn" />
+        </>
+      ) : (
+        <>
+          {outsource && action === "self" && vendorRow ? (
+            vendorJob.needFate ? (
+              <VendorRelease v={vendorJob} vendorName={orderName} />
+            ) : (
+              <Text style={[styles.hint, { marginTop: 0, marginBottom: spacing.md }]}>{orderName} से काम वापस लिया जाएगा — उनकी लागत नहीं जुड़ेगी</Text>
+            )
+          ) : null}
+          {job?.customerId ? (
+            <>
+              <MoneyFields money={money} advance={advance} receivedLabel="आज मिले (₹)" freeAllowed />
+              {got > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={got} /> : null}
+              <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
+              {outsource && action === "vendor" ? <VendorOutsource v={vendorJob} amount={amt} fee={parseAmount(fee)} workDate={workDay} start={start} bare /> : null}
+            </>
+          ) : null}
+          <DateField label="काम कब पूरा हुआ" value={workDay} onChange={(d) => { setWorkDate(d); setCashDate(d); }} min={job?.customerId ? doneMin : undefined} testID="input-complete-date" />
+          {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDay} onChange={setCashDate} min={start} money testID="input-complete-cash-date" /> : null}
+          {job?.customerId ? <LimitWarning customerId={job.customerId} extra={roundMoney(amt - got)} /> : null}
+          <PrimaryButton
+            label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"}
+            onPress={() => void complete()}
+            disabled={!canFinish}
+            saving={saving}
+            testID="save-complete-btn"
+          />
+        </>
+      )}
     </SheetShell>
   );
 }
@@ -2274,6 +2442,16 @@ const styles = StyleSheet.create({
   hint: { fontSize: 12, color: colors.muted, marginTop: spacing.xs },
   splitBox: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
   splitLabel: { fontSize: 12, fontWeight: "700", color: colors.onSurfaceSecondary, marginBottom: 4 },
+  jobHead: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md, marginBottom: spacing.md },
+  jobMeta: { fontSize: 12, color: colors.muted, fontWeight: "600" },
+  jobEditBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 6, paddingHorizontal: 10, borderRadius: radius.pill, backgroundColor: colors.infoSoft },
+  jobEditText: { fontSize: 12, fontWeight: "700", color: colors.brandPrimary },
+  detailSave: { borderWidth: 1, borderColor: colors.brandPrimary, borderRadius: radius.md, paddingVertical: 12, alignItems: "center", marginTop: spacing.xs },
+  detailSaveText: { color: colors.brandPrimary, fontWeight: "700" },
+  actionRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.lg },
+  actionPill: { flex: 1, alignItems: "center", justifyContent: "center", gap: 4, paddingVertical: 10, paddingHorizontal: 4, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  actionPillOn: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  actionPillText: { fontSize: 12, fontWeight: "700", color: colors.onSurface },
   jobName: { fontSize: 16, fontWeight: "700", color: colors.onSurface, marginBottom: spacing.md },
   primaryBtn: { backgroundColor: colors.brandPrimary, borderRadius: radius.md, paddingVertical: 15, alignItems: "center", marginTop: spacing.md, minHeight: 52, justifyContent: "center" },
   primaryText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "700" },

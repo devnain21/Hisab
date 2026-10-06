@@ -19,6 +19,7 @@ import { clearRejected, flush, rejectedChanges, retryRejected, retryableRejected
 import { cashTotals, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
 import { FlowTile, signedINR } from "@/src/components/money-flow";
 import { useCounterMode } from "@/src/lib/counter";
+import { aepsTotals } from "@/src/lib/aeps";
 import { accountName, usePersona } from "@/src/lib/persona";
 import { TERMS, balanceTerm } from "@/src/lib/terms";
 import { HIDDEN, savePrefs, usePrefs } from "@/src/lib/prefs";
@@ -183,18 +184,30 @@ function HomeBody() {
   const bankBal = pocketNet(pockets.bank);
   const todayTotals = useMemo(() => cashTotals(book, persona, (d) => d === today), [book, persona, today]);
   const todaySpend = todayTotals.byKey.get("expense") ?? 0;
-  // Same as the day screen's work profit: today's work, less govt fees and the vendor cost of that work.
-  const todayProfit = useMemo(() => {
-    if (isPersonal) return 0;
+  // Work booked today in any mode (cash, online or udhaar). AEPS counter money is pass-through, so only
+  // its commission counts. Fees and vendor cost match the day screen's work profit.
+  const todayWork = useMemo(() => {
+    const w = { gross: 0, count: 0, fees: 0, vendor: 0, commission: 0, booked: 0, net: 0 };
+    if (isPersonal) return w;
     const workIds = new Set(entries.filter((e) => e.type === "work").map((e) => e.id));
-    let p = 0;
     for (const e of entries) {
       if (e.date !== today || !personaCustIds.has(e.customerId)) continue;
-      if (e.type === "work") p += e.amount - (e.fee ?? 0);
-      else if (isWorkVendorCost(e, workIds)) p -= e.amount;
+      if (e.type === "work") {
+        w.gross += e.amount;
+        w.fees += e.fee ?? 0;
+        w.count += 1;
+      } else if (isWorkVendorCost(e, workIds)) w.vendor += e.amount;
     }
-    return roundMoney(p);
-  }, [entries, today, personaCustIds, isPersonal]);
+    if (counter.on) w.commission = aepsTotals(aeps, (d) => d === today).commission;
+    w.gross = roundMoney(w.gross);
+    w.fees = roundMoney(w.fees);
+    w.vendor = roundMoney(w.vendor);
+    w.commission = roundMoney(w.commission);
+    w.booked = roundMoney(w.gross + w.commission);
+    w.net = roundMoney(w.gross - w.fees - w.vendor + w.commission);
+    return w;
+  }, [entries, aeps, today, personaCustIds, isPersonal, counter.on]);
+  const [workSheet, setWorkSheet] = useState(false);
   const pendingSum = useMemo(() => {
     const open = jobs.filter((j) => j.status !== "done" && j.customerId);
     const ids = new Set(open.map((j) => j.id));
@@ -435,9 +448,9 @@ function HomeBody() {
                 {isPersonal ? null : (
                   <>
                     <View style={styles.walletDivider} />
-                    <Pressable style={styles.kpiCell} onPress={() => router.push({ pathname: "/day", params: { type: "work" } })} accessibilityRole="button" testID="stat-today-profit">
-                      <Text style={styles.kpiLabel}>आज मुनाफ़ा</Text>
-                      <Text style={[styles.kpiValue, { color: todayProfit < 0 ? semantic.due : colors.success }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(todayProfit)}</Text>
+                    <Pressable style={styles.kpiCell} onPress={() => setWorkSheet(true)} accessibilityRole="button" testID="stat-today-work">
+                      <Text style={styles.kpiLabel}>आज का काम</Text>
+                      <Text style={[styles.kpiValue, { color: colors.success }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(todayWork.booked)}</Text>
                     </Pressable>
                   </>
                 )}
@@ -746,6 +759,34 @@ function HomeBody() {
               <MaterialIcon name="chevron-right" size={16} color={colors.brandPrimary} />
             </Pressable>
           </SheetShell>
+          <SheetShell visible={workSheet} onClose={() => setWorkSheet(false)} title="आज का काम" testID="sheet-today-work">
+            {(
+              [
+                { key: "gross", label: "कुल काम बुक", sub: `${todayWork.count} काम · नकद, ऑनलाइन, उधार सब`, value: todayWork.gross, sign: "", to: () => router.push({ pathname: "/day", params: { type: "work" } }) },
+                { key: "fees", label: "पोर्टल / सरकारी फीस", sub: "", value: todayWork.fees, sign: "−", to: () => router.push({ pathname: "/day", params: { type: "work" } }) },
+                { key: "vendor", label: "Vendor लागत", sub: "", value: todayWork.vendor, sign: "−", to: () => router.push({ pathname: "/day", params: { type: "work" } }) },
+                ...(counter.on
+                  ? [{ key: "aeps", label: "AEPS / सेवा कमीशन", sub: "जमा-निकासी की रकम नहीं जुड़ती", value: todayWork.commission, sign: "+", to: () => go("/(tabs)/aeps", { range: "today" }) }]
+                  : []),
+              ] as const
+            ).map((r) => (
+              <Pressable key={r.key} style={styles.breakRow} onPress={() => { setWorkSheet(false); setTimeout(r.to, 250); }} accessibilityRole="button" testID={`today-work-${r.key}`}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.rowTitle} numberOfLines={1}>{r.label}</Text>
+                  {r.sub ? <Text style={styles.rowSub} numberOfLines={1}>{r.sub}</Text> : null}
+                </View>
+                <Text style={[styles.breakValue, r.sign === "−" && r.value > 0 && { color: semantic.due }]} numberOfLines={1}>
+                  {r.sign && r.value > 0 ? `${r.sign} ` : ""}{money(r.value)}
+                </Text>
+                <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
+              </Pressable>
+            ))}
+            <Pressable style={styles.breakTotal} onPress={() => { setWorkSheet(false); setTimeout(() => router.push({ pathname: "/day", params: { type: "work" } }), 250); }} accessibilityRole="button" testID="today-work-net">
+              <Text style={styles.breakTotalLabel}>शुद्ध बचत (मार्जिन)</Text>
+              <Text style={[styles.breakTotalValue, todayWork.net < 0 && { color: semantic.due }]} numberOfLines={1}>{money(todayWork.net)}</Text>
+              <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
+            </Pressable>
+          </SheetShell>
           <AddEntrySheet visible={vendorOrder} type="purchase" vendor onClose={() => setVendorOrder(false)} />
           <SettleSheet work={settling} onClose={() => setSettling(null)} />
         </>
@@ -913,6 +954,11 @@ const styles = StyleSheet.create({
   receiptBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md, minHeight: 40, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandPrimary },
   receiptBtnText: { fontSize: 12, fontWeight: "700", color: colors.brandPrimary },
   sectionSub: { fontSize: 12, fontWeight: "600", color: colors.muted, marginTop: 2, fontVariant: ["tabular-nums"] },
+  breakRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  breakValue: { fontSize: 15, fontWeight: "700", color: colors.onSurface, fontVariant: ["tabular-nums"] },
+  breakTotal: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: semantic.receivedSoft },
+  breakTotalLabel: { flex: 1, fontSize: 15, fontWeight: "800", color: colors.onSurface },
+  breakTotalValue: { fontSize: 18, fontWeight: "800", color: semantic.received, fontVariant: ["tabular-nums"] },
   kpiRow: { flexDirection: "row", alignItems: "stretch", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   kpiCell: { flex: 1, minWidth: 0, paddingVertical: 4 },
   kpiLabel: { fontSize: 12, fontWeight: "700", color: colors.muted },

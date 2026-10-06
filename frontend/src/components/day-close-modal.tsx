@@ -64,7 +64,7 @@ export function DayCloseModal({
 
             {/* Work & Profit Card */}
             <View style={styles.card}>
-              <IconLabel icon="briefcase-outline" iconColor={colors.brandPrimary} label="काम, पोर्टल फीस व बचत" style={styles.cardHeading} boxStyle={{ marginBottom: spacing.sm }} />
+              <IconLabel icon="briefcase-outline" iconColor={colors.brandPrimary} label="काम, पोर्टल फीस व कमाई" style={styles.cardHeading} boxStyle={{ marginBottom: spacing.sm }} />
               <View style={styles.row}>
                 <Text style={styles.rowLabel}>कुल काम बिल:</Text>
                 <Text style={styles.rowVal}>{formatINR(data.workTotal)}</Text>
@@ -76,7 +76,7 @@ export function DayCloseModal({
                     <Text style={[styles.rowVal, { color: colors.error }]}>-{formatINR(data.workFees)}</Text>
                   </View>
                   <View style={styles.row}>
-                    <Text style={styles.rowLabel}>काम से शुद्ध बचत:</Text>
+                    <Text style={styles.rowLabel}>काम से कमाई:</Text>
                     <Text style={[styles.rowVal, { fontWeight: "800", color: colors.brandPrimary }]}>
                       {formatINR(data.workProfit || (data.workTotal - data.workFees))}
                     </Text>

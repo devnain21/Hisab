@@ -152,14 +152,14 @@ export default function DayScreen() {
 
   const segments: { id: Kind; label: string; value?: string }[] = isPersonal
     ? [
-        { id: "drawer", label: "सारांश", value: signedINR(dayNet) },
+        { id: "drawer", label: "Net", value: signedINR(dayNet) },
         { id: "txns", label: "लेन-देन", value: String(personalDay.count) },
         { id: "expense", label: "खर्च", value: formatINR(expenseTotal) },
       ]
     : [
-        { id: "drawer", label: "सारांश", value: signedINR(dayNet) },
+        { id: "drawer", label: "Net", value: signedINR(dayNet) },
         { id: "work", label: "काम", value: formatINR(sum("work")) },
-        { id: "payment", label: "मिले", value: formatINR(sum("payment")) },
+        { id: "payment", label: "⬇ ग्राहकों से", value: formatINR(sum("payment")) },
         { id: "expense", label: "खर्च", value: formatINR(expenseTotal) },
       ];
   const openPocket = (p: "cash" | "bank") => router.push({ pathname: "/pocket" as never, params: { p, date } });
@@ -171,8 +171,8 @@ export default function DayScreen() {
   // Likely reason the portal and the app differ: counter rows whose bank side hasn't happened yet.
   const bankWaiting = isPersonal ? [] : book.aeps.filter((t) => t.status === "pending" && bankOf(t) !== "none" && !bankLegDate(t));
   const bankHint = bankWaiting.length
-    ? `${bankWaiting.length} पेंडिंग एंट्री (${formatINR(bankWaiting.reduce((s, t) => s + t.amount, 0))}) हिसाब के बैंक में अभी नहीं जुड़ीं — पोर्टल में हो चुकी हों तो काउंटर में उन्हें “हो गया” करें।`
-    : "आज की एंट्री, ऐप कमीशन और खर्च देख लें।";
+    ? `${bankWaiting.length} पेंडिंग (${formatINR(bankWaiting.reduce((s, t) => s + t.amount, 0))}) बैंक में नहीं जुड़ीं`
+    : "";
 
   // A correction move makes the app's galla equal to the counted cash from this day on.
   const matchCounted = () => {
@@ -287,7 +287,7 @@ export default function DayScreen() {
                   text={`सामान लिया ${formatINR(personalDay.goods)}${personalDay.goodsPaid > 0 ? ` (${formatINR(personalDay.goodsPaid)} चुकाए)` : ""}`}
                 />
               ) : null}
-              {personalDay.repaid > 0 ? <Pill color={colors.error} soft={colors.errorSoft} text={`बकाया चुकाया ${formatINR(personalDay.repaid)}`} /> : null}
+              {personalDay.repaid > 0 ? <Pill color={colors.error} soft={colors.errorSoft} text={`चुकाया ${formatINR(personalDay.repaid)}`} /> : null}
             </View>
           </View>
         ) : kind === "work" ? (
@@ -309,7 +309,7 @@ export default function DayScreen() {
               <View style={styles.workProfitRow}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                   <MaterialIcon name="star-outline" size={15} color={colors.brandPrimary} />
-                  <Text style={styles.profitLabel}>बचत</Text>
+                  <Text style={styles.profitLabel}>कमाई</Text>
                 </View>
                 <Text style={styles.profitValue}>{formatINR(workProfit)}</Text>
               </View>
@@ -615,7 +615,7 @@ export default function DayScreen() {
                   <Text style={[styles.kindTag, { color: personalKind(e).color }]}>{personalKind(e).label}</Text>
                 ) : null}
                 {e.description || kind !== "txns" ? (
-                  <Text style={styles.desc} numberOfLines={2}>{e.description || (e.type === "work" ? "काम" : "मिले")}</Text>
+                  <Text style={styles.desc} numberOfLines={2}>{e.description || (e.type === "work" ? "काम" : "पैसे आए")}</Text>
                 ) : null}
                 {e.type === "purchase" ? (
                   <Text style={[styles.notes, { color: (e.paid ?? 0) >= e.amount ? colors.success : colors.warning }]}>
@@ -637,7 +637,7 @@ export default function DayScreen() {
                     </Text>
                     {e.fee && e.fee > 0 ? (
                       <Text style={styles.feeInfoText}>
-                        फीस {formatINR(e.fee)} ({e.feeMode === "cash" ? "गल्ला" : "बैंक"}) · बचत {formatINR(e.amount - e.fee)}
+                        फीस {formatINR(e.fee)} ({e.feeMode === "cash" ? "गल्ला" : "बैंक"}) · कमाई {formatINR(e.amount - e.fee)}
                       </Text>
                     ) : null}
                   </View>
@@ -722,12 +722,12 @@ function RangeView({
   return (
     <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}>
       <View style={styles.rangeGrid}>
-        <RangeCell label={isPersonal ? "दिए" : "काम"} value={formatINR(data.work)} color={isPersonal ? colors.error : colors.onSurface} />
-        <RangeCell label="मिले" value={formatINR(data.got)} color={colors.success} />
-        {isPersonal ? <RangeCell label="सामान / सेवा ली" value={formatINR(data.goods)} color={colors.warning} /> : null}
+        <RangeCell label={isPersonal ? "⬆ लोगों को" : "काम"} value={formatINR(data.work)} color={isPersonal ? colors.error : colors.onSurface} />
+        <RangeCell label={isPersonal ? "⬇ लोगों से" : "⬇ ग्राहकों से"} value={formatINR(data.got)} color={colors.success} />
+        {isPersonal ? <RangeCell label="सामान / सेवा" value={formatINR(data.goods)} color={colors.warning} /> : null}
         <RangeCell label="खर्च" value={formatINR(data.exp)} color={colors.error} />
         {isPersonal ? null : <RangeCell label="कमीशन" value={formatINR(data.commission)} color={colors.brandPrimary} />}
-        {isPersonal ? null : <RangeCell label="अनुमानित बचत" value={formatINR(data.profit)} color={data.profit < 0 ? colors.error : colors.brandPrimary} />}
+        {isPersonal ? null : <RangeCell label="कमाई" value={formatINR(data.profit)} color={data.profit < 0 ? colors.error : colors.brandPrimary} />}
         <RangeCell label={`${cashLabel} / बैंक बदलाव`} value={`${signed(data.cashNet)} / ${signed(data.bankNet)}`} color={colors.onSurface} small />
       </View>
 
@@ -764,7 +764,7 @@ function RangeView({
         ))
       )}
       {data.days.length > 0 ? (
-        <Text style={styles.rangeLegend}>{isPersonal ? "दिए" : "काम"} · मिले · खर्च</Text>
+        <Text style={styles.rangeLegend}>{isPersonal ? "लोगों को" : "काम"} · {isPersonal ? "लोगों से" : "ग्राहकों से"} · खर्च</Text>
       ) : null}
     </ScrollView>
   );
@@ -772,10 +772,10 @@ function RangeView({
 
 /** What a personal entry was, in one word, with the way it moved the person's balance. */
 function personalKind(e: Entry): { label: string; color: string; sign: string } {
-  if (e.type === "payment") return { label: "मिले", color: colors.success, sign: "+" };
-  if (e.type === "purchase") return { label: "सामान / सेवा ली", color: colors.warning, sign: "" };
-  if (isRepayment(e)) return { label: "बकाया चुकाया", color: colors.error, sign: "−" };
-  return { label: "दिए", color: colors.error, sign: "−" };
+  if (e.type === "payment") return { label: "⬇ पैसे आए", color: colors.success, sign: "+" };
+  if (e.type === "purchase") return (e.paid ?? 0) > 0 ? { label: "सामान / सेवा", color: colors.warning, sign: "" } : { label: "उधार पर लिया", color: colors.muted, sign: "" };
+  if (isRepayment(e)) return { label: "⬆ पैसे गए · चुकाया", color: colors.error, sign: "−" };
+  return { label: "⬆ पैसे गए", color: colors.error, sign: "−" };
 }
 
 function Pill({ text, color, soft }: { text: string; color: string; soft: string }) {

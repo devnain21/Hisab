@@ -197,6 +197,29 @@ export function computeFlows(book: Book, persona: Persona, keep: (date: string) 
   return f;
 }
 
+/** A transfer between two of this book's own accounts: it changes neither its In nor its Out. */
+export function isInternal(t: WalletTxn, persona: Persona): boolean {
+  if (t.src.kind !== "move") return false;
+  const { from, to } = t.src.move;
+  return from.startsWith(`${persona}:`) && to.startsWith(`${persona}:`);
+}
+
+export type CashTotals = { ins: number; outs: number; net: number; byKey: Map<FlowKey, number> };
+
+/** Money In / Out of cash and bank together for the dates `keep` accepts; Net equals the two pockets' nets added. */
+export function cashTotals(book: Book, persona: Persona, keep: (date: string) => boolean): CashTotals {
+  const byKey = new Map<FlowKey, number>();
+  let ins = 0;
+  let outs = 0;
+  for (const t of walletTxns(book, persona, keep)) {
+    if (isInternal(t, persona)) continue;
+    if (isInflow(t.key)) ins += t.amount;
+    else outs += t.amount;
+    byKey.set(t.key, roundMoney((byKey.get(t.key) ?? 0) + t.amount));
+  }
+  return { ins: roundMoney(ins), outs: roundMoney(outs), net: roundMoney(ins - outs) + 0, byKey };
+}
+
 /** All the money data, ready for balances. */
 export function useMoneyBook() {
   const entries = useEntries().data;

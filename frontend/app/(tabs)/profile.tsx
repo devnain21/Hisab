@@ -491,21 +491,9 @@ export default function Profile() {
             <MaterialIcon name="chart-box-outline" size={20} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.rowValue}>महीने की रिपोर्ट</Text>
+            <Text style={styles.rowValue}>Reports</Text>
             <Text style={styles.rowLabel} numberOfLines={1}>
-              {isPersonal ? "मिले, दिए, खर्च और बचत · PDF" : "कमाई, खर्च, कमीशन, वसूली · PDF"}
-            </Text>
-          </View>
-          <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
-        </Pressable>
-        <Pressable style={[styles.settingRow, styles.rowBorder]} onPress={() => router.push("/balance" as never)} testID="profile-total-balance">
-          <View style={styles.iconCircle}>
-            <MaterialIcon name="wallet-outline" size={20} color={colors.brandPrimary} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.rowValue}>{labels.cash} व बैंक</Text>
-            <Text style={styles.rowLabel} numberOfLines={1}>
-              {prefs.hideAmounts ? "रकम छुपी है" : `कुल ${formatINR(cashBal + bankBal)} · ${labels.cash} ${formatINR(cashBal)} · बैंक ${formatINR(bankBal)}`}
+              {prefs.hideAmounts ? "Cash In / Out · दिन, हफ़्ता, महीना" : `${labels.cash} ${formatINR(cashBal)} · बैंक ${formatINR(bankBal)}`}
             </Text>
           </View>
           <MaterialIcon name="chevron-right" size={20} color={colors.muted} />

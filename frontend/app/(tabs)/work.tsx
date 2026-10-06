@@ -77,12 +77,6 @@ function ShopWork() {
 
   const todayCount = useMemo(() => jobs.filter((j) => j.status !== "done" && j.dueDate === today).length, [jobs, today]);
 
-  const unpaidTotal = useMemo(
-    () => jobs.reduce((s, j) => s + (j.status === "done" ? payOf(j)?.remaining ?? 0 : 0), 0),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [jobs, ledger, workOf],
-  );
-
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return jobs
@@ -131,11 +125,6 @@ function ShopWork() {
             <Text>आज {todayCount}</Text>
             {counts.late > 0 ? <Text onPress={() => setFilter("late")} style={{ color: colors.error, fontWeight: "700" }}> · {counts.late} देर से</Text> : null}
             {openValue > 0 ? ` · अनुमानित ${formatINR(openValue)}` : ""}
-          </Text>
-        ) : null}
-        {!loading && filter === "unpaid" && unpaidTotal > 0 ? (
-          <Text style={styles.summary} testID="work-unpaid-summary">
-            पूरे हो चुके काम पर <Text style={{ color: colors.error, fontWeight: "800" }}>{formatINR(unpaidTotal)}</Text> लेने हैं
           </Text>
         ) : null}
       </View>
@@ -219,7 +208,7 @@ function SearchBox({ value, onChange, placeholder, testID }: { value: string; on
 
 type TxnFilter = "all" | "given" | "payment" | "purchase" | "open";
 const TXN_FILTERS: TxnFilter[] = ["all", "open", "given", "payment", "purchase"];
-const TXN_LABEL: Record<TxnFilter, string> = { all: "सभी", open: "बाकी", given: "दिए", payment: "मिले", purchase: "सामान / सेवा" };
+const TXN_LABEL: Record<TxnFilter, string> = { all: "सभी", open: "बाकी", given: "⬆ पैसे गए", payment: "⬇ पैसे आए", purchase: "सामान / सेवा" };
 
 /** The personal book has no jobs: its tab is every rupee given, received and goods taken. */
 function PersonalTxns() {
@@ -237,7 +226,6 @@ function PersonalTxns() {
   const [editing, setEditing] = useState<Entry | null>(null);
   const [settling, setSettling] = useState<Entry | null>(null);
   const today = todayISO();
-  const month = today.slice(0, 7);
 
   const left = (e: Entry) => ((e.type === "given" && !e.linkId) || e.type === "purchase" ? ledger.get(e.id)?.remaining ?? 0 : 0);
   const is = (e: Entry, f: TxnFilter) => (f === "all" ? true : f === "open" ? left(e) > 0 : e.type === f);
@@ -247,12 +235,6 @@ function PersonalTxns() {
     return c;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries, ledger]);
-  // Paying back goods is not money lent out; shown on its own.
-  const monthGiven = entries.filter((e) => e.date.startsWith(month) && e.type === "given" && !e.linkId).reduce((s, e) => s + e.amount, 0);
-  const monthRepaid = entries.filter((e) => e.date.startsWith(month) && e.type === "given" && !!e.linkId).reduce((s, e) => s + e.amount, 0);
-  const monthGot = entries.filter((e) => e.date.startsWith(month) && e.type === "payment").reduce((s, e) => s + e.amount, 0);
-  const monthGoods = entries.filter((e) => e.date.startsWith(month) && e.type === "purchase").reduce((s, e) => s + e.amount, 0);
-
   const needle = q.trim().toLowerCase();
   const rows = entries
     .filter((e) => is(e, filter))
@@ -284,14 +266,6 @@ function PersonalTxns() {
             );
           })}
         </ScrollView>
-        {!loading && monthGiven + monthGot + monthGoods + monthRepaid > 0 ? (
-          <Text style={styles.summary} testID="txn-month">
-            इस महीने: दिए <Text style={{ color: colors.error, fontWeight: "800" }}>{formatINR(monthGiven)}</Text>
-            {" · "}मिले <Text style={{ color: colors.success, fontWeight: "800" }}>{formatINR(monthGot)}</Text>
-            {monthGoods > 0 ? <Text> · सामान लिया <Text style={{ color: colors.warning, fontWeight: "800" }}>{formatINR(monthGoods)}</Text></Text> : null}
-            {monthRepaid > 0 ? <Text> · बकाया चुकाया <Text style={{ color: colors.info, fontWeight: "800" }}>{formatINR(monthRepaid)}</Text></Text> : null}
-          </Text>
-        ) : null}
       </View>
 
       {loading ? (
@@ -323,7 +297,7 @@ function PersonalTxns() {
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.jobTitle} numberOfLines={1}>{names.get(e.customerId) ?? "व्यक्ति"}</Text>
                     <Text style={styles.jobSub} numberOfLines={1}>
-                      {[repay ? "सामान के पैसे चुकाए" : ui.label, e.description, e.date === today ? "आज" : formatDate(e.date), e.mode === "online" ? "ऑनलाइन" : ""].filter(Boolean).join(" · ")}
+                      {[repay ? "⬆ पैसे गए · चुकाया" : e.type === "purchase" && !(e.paid ?? 0) ? "उधार पर लिया" : ui.label, e.description, e.date === today ? "आज" : formatDate(e.date), e.mode === "online" ? "ऑनलाइन" : ""].filter(Boolean).join(" · ")}
                     </Text>
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
@@ -367,9 +341,9 @@ function PersonalTxns() {
 }
 
 const TXN_UI = {
-  given: { label: "दिए", icon: "arrow-top-right", fg: colors.error, bg: colors.errorSoft },
-  payment: { label: "मिले", icon: "arrow-bottom-left", fg: colors.success, bg: colors.successSoft },
-  purchase: { label: "सामान / सेवा ली", icon: "cart-outline", fg: colors.warning, bg: "#FEF3E2" },
+  given: { label: "⬆ पैसे गए", icon: "arrow-up-circle", fg: semantic.due, bg: semantic.dueSoft },
+  payment: { label: "⬇ पैसे आए", icon: "arrow-down-circle", fg: semantic.received, bg: semantic.receivedSoft },
+  purchase: { label: "सामान / सेवा", icon: "cart-outline", fg: colors.warning, bg: "#FEF3E2" },
 } as const;
 
 // Completion notes carry the payment split as it was on that day ("₹500 उधार"); the live

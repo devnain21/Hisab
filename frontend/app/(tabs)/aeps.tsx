@@ -79,6 +79,9 @@ export default function AepsScreen() {
     [txns, inRangeDate],
   );
 
+  const [leg, setLeg] = useState<"all" | "cash" | "bank" | "comm">("all");
+  const toggleLeg = (l: "cash" | "bank" | "comm") => setLeg((v) => (v === l ? "all" : l));
+
   const pending = useMemo(
     () => txns.filter((t) => t.status === "pending").sort((a, b) => (a.dueDate || a.date).localeCompare(b.dueDate || b.date)),
     [txns],
@@ -98,6 +101,7 @@ export default function AepsScreen() {
     const narrow = typesInRange.length > 1;
     return inRange
       .filter((t) => !narrow || type === "all" || t.type === type)
+      .filter((t) => (leg === "cash" ? !!cashLegDate(t) : leg === "bank" ? !!bankLegDate(t) : leg === "comm" ? t.commission > 0 : true))
       .filter(
         (t) =>
           !needle ||
@@ -111,7 +115,7 @@ export default function AepsScreen() {
           t.beneficiaryName.toLowerCase().includes(needle),
       )
       .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : clockOf(b).localeCompare(clockOf(a)) || b.createdAt.localeCompare(a.createdAt)));
-  }, [inRange, type, search, typesInRange.length]);
+  }, [inRange, type, search, typesInRange.length, leg]);
 
   const totals = useMemo(() => aepsTotals(txns, inRangeDate), [txns, inRangeDate]);
   // Commission per day it was earned, newest first; same day rule as the totals.
@@ -162,11 +166,11 @@ export default function AepsScreen() {
         />
 
         <View style={styles.statStrip} testID="aeps-summary">
-          <Stat label="गल्ला" value={hide(signed(totals.cashNet))} sub={`आए ${hide(formatINR(totals.cashIn))} · गए ${hide(formatINR(totals.cashOut))}`} tone={totals.cashNet < 0 ? semantic.due : semantic.received} />
+          <Stat label="गल्ला" value={hide(signed(totals.cashNet))} sub={`⬇ ${hide(formatINR(totals.cashIn))} · ⬆ ${hide(formatINR(totals.cashOut))}`} tone={totals.cashNet < 0 ? semantic.due : semantic.received} active={leg === "cash"} onPress={() => toggleLeg("cash")} testID="aeps-stat-cash" />
           <View style={styles.statDivider} />
-          <Stat label="बैंक" value={hide(signed(totals.bankNet))} sub={`आए ${hide(formatINR(totals.bankIn))} · गए ${hide(formatINR(totals.bankOut))}`} tone={totals.bankNet < 0 ? semantic.due : semantic.received} />
+          <Stat label="बैंक" value={hide(signed(totals.bankNet))} sub={`⬇ ${hide(formatINR(totals.bankIn))} · ⬆ ${hide(formatINR(totals.bankOut))}`} tone={totals.bankNet < 0 ? semantic.due : semantic.received} active={leg === "bank"} onPress={() => toggleLeg("bank")} testID="aeps-stat-bank" />
           <View style={styles.statDivider} />
-          <Stat label="कमीशन" value={hide(formatINR(totals.commission))} sub={`कैश ${hide(formatINR(totals.commissionCash))} · बैंक ${hide(formatINR(totals.commissionBank))}`} tone={colors.brandSecondary} />
+          <Stat label="कमीशन" value={hide(formatINR(totals.commission))} sub={`कैश ${hide(formatINR(totals.commissionCash))} · बैंक ${hide(formatINR(totals.commissionBank))}`} tone={colors.brandSecondary} active={leg === "comm"} onPress={() => toggleLeg("comm")} testID="aeps-stat-comm" />
         </View>
         {multiDay && commByDay.length > 0 ? (
           <View style={styles.daysBox}>
@@ -186,12 +190,6 @@ export default function AepsScreen() {
               : null}
           </View>
         ) : null}
-        <Pressable style={styles.reconcileLink} onPress={() => router.push({ pathname: "/day", params: { type: "drawer" } })} testID="aeps-portal">
-          <MaterialIcon name="scale-balance" size={16} color={colors.brandPrimary} />
-          <Text style={styles.reconcileLinkText}>पोर्टल / गल्ला मिलान — दिन के हिसाब में</Text>
-          <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
-        </Pressable>
-
         {pending.length > 0 ? (
           <View style={styles.pendingBox} testID="aeps-pending">
             <View style={styles.pendingHead}>
@@ -304,13 +302,13 @@ export default function AepsScreen() {
   );
 }
 
-function Stat({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: string }) {
+function Stat({ label, value, sub, tone, active, onPress, testID }: { label: string; value: string; sub: string; tone: string; active: boolean; onPress: () => void; testID: string }) {
   return (
-    <View style={styles.stat}>
+    <Pressable style={[styles.stat, active && styles.statOn]} onPress={onPress} accessibilityRole="button" accessibilityState={{ selected: active }} testID={testID}>
       <Text style={styles.statLabel}>{label}</Text>
       <Text style={[styles.statValue, { color: tone }]} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
       <Text style={styles.statSub} numberOfLines={2}>{sub}</Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -333,6 +331,7 @@ const styles = StyleSheet.create({
   segmentText: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
   statStrip: { flexDirection: "row", marginTop: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   stat: { flex: 1, minWidth: 0, paddingHorizontal: spacing.sm },
+  statOn: { backgroundColor: colors.brandTertiary, borderRadius: radius.sm },
   statDivider: { width: 1, backgroundColor: colors.border },
   daysBox: { marginTop: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, paddingHorizontal: spacing.md },
   daysHead: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 44 },
@@ -341,8 +340,6 @@ const styles = StyleSheet.create({
   dayDate: { width: 72, fontSize: 13, fontWeight: "700", color: colors.onSurface },
   dayCount: { flex: 1, fontSize: 12, color: colors.muted },
   dayComm: { fontSize: 14, fontWeight: "800", color: colors.brandSecondary, fontVariant: ["tabular-nums"] },
-  reconcileLink: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm, minHeight: 44, paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary },
-  reconcileLinkText: { flex: 1, fontSize: 13, fontWeight: "700", color: colors.brandSecondary },
   statLabel: { fontSize: 12, fontWeight: "700", color: colors.muted },
   statValue: { fontSize: 17, fontWeight: "800", marginTop: 2 },
   statSub: { fontSize: 12, color: colors.muted, marginTop: 2 },

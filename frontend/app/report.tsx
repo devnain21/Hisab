@@ -3,13 +3,13 @@ import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Alert } from "re
 import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, radius, spacing } from "@/src/theme";
-import { formatINR, formatMonth, monthRange, roundMoney, todayISO } from "@/src/lib/format";
+import { colors, radius, semantic, spacing } from "@/src/theme";
+import { formatDateShort, formatINR, formatMonth, formatWeekdayDate, monthRange, roundMoney, shiftISO, todayISO, weekRange } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { usePersona, type Persona } from "@/src/lib/persona";
 import { computeBalance, isRepayment } from "@/src/lib/data";
 import { expensePersona } from "@/src/lib/expenses";
-import { personaOfEntry, useMoneyBook } from "@/src/lib/wallet";
+import { cashTotals, computeFlows, personaOfEntry, pocketIn, pocketNet, pocketOut, useMoneyBook, type FlowKey, type Pocket } from "@/src/lib/wallet";
 import { commissionDate } from "@/src/lib/aeps";
 import { useBudget } from "@/src/lib/budget";
 import { useAuth } from "@/src/context/AuthContext";
@@ -17,10 +17,20 @@ import { pdfSupported, reportDoc, sharePdf, type Line } from "@/src/lib/receipt"
 import { shareMessage } from "@/src/lib/share-text";
 import { exportFullLedgerCsv } from "@/src/lib/export-data";
 import { TERMS, balanceTerm } from "@/src/lib/terms";
+import { HIDDEN, usePrefs } from "@/src/lib/prefs";
+import { IN_ROWS, OUT_ROWS, pocketTitle } from "@/src/components/pocket-card";
+import { FLOW, FlowHead, FlowRow, FlowTile, NetRow, signedINR } from "@/src/components/money-flow";
+import { CalendarModal } from "@/src/components/calendar-modal";
 
 type Book = ReturnType<typeof useMoneyBook>;
+type Period = "day" | "week" | "month";
+const PERIODS: { id: Period; label: string }[] = [
+  { id: "day", label: "दिन" },
+  { id: "week", label: "हफ़्ता" },
+  { id: "month", label: "महीना" },
+];
 
-type MonthStats = {
+type Stats = {
   billed: number;
   billedCount: number;
   collected: number;
@@ -34,12 +44,12 @@ type MonthStats = {
   result: number;
 };
 
-function monthStats(book: Book, persona: Persona, from: string, to: string): MonthStats {
-  const inMonth = (d: string) => d >= from && d <= to;
+function periodStats(book: Book, persona: Persona, from: string, to: string): Stats {
+  const inRange = (d: string) => d >= from && d <= to;
   const byId = new Map(book.customers.map((c) => [c.id, c]));
   let billed = 0, billedCount = 0, collected = 0, fee = 0, given = 0, paidOut = 0;
   for (const e of book.entries) {
-    if (!inMonth(e.date) || personaOfEntry(e, byId) !== persona) continue;
+    if (!inRange(e.date) || personaOfEntry(e, byId) !== persona) continue;
     if (e.type === "work") {
       billed += e.amount;
       billedCount += 1;
@@ -55,7 +65,7 @@ function monthStats(book: Book, persona: Persona, from: string, to: string): Mon
   const cats = new Map<string, number>();
   let expense = 0;
   for (const x of book.expenses) {
-    if (!inMonth(x.date) || expensePersona(x) !== persona) continue;
+    if (!inRange(x.date) || expensePersona(x) !== persona) continue;
     expense += x.amount;
     cats.set(x.title, (cats.get(x.title) ?? 0) + x.amount);
   }
@@ -64,7 +74,7 @@ function monthStats(book: Book, persona: Persona, from: string, to: string): Mon
   if (persona === "business") {
     for (const t of book.aeps) {
       const day = t.commission > 0 ? commissionDate(t) : null;
-      if (day && inMonth(day)) commission += t.commission;
+      if (day && inRange(day)) commission += t.commission;
     }
   }
   const result = persona === "business" ? billed + commission - expense - fee : collected - given - paidOut - expense;
@@ -82,7 +92,7 @@ function monthStats(book: Book, persona: Persona, from: string, to: string): Mon
   };
 }
 
-/** "+12%" against last month; empty when last month had nothing to compare with. */
+/** "+12%" against the period before; empty when that had nothing to compare with. */
 function change(now: number, before: number): { text: string; up: boolean } | null {
   if (before <= 0 || now === before) return null;
   const pct = Math.round(((now - before) / before) * 100);
@@ -90,6 +100,11 @@ function change(now: number, before: number): { text: string; up: boolean } | nu
   return { text: `${pct > 0 ? "+" : ""}${pct}%`, up: pct > 0 };
 }
 
+function rangeOf(period: Period, date: string) {
+  return period === "week" ? weekRange(date) : period === "month" ? monthRange(date) : { from: date, to: date };
+}
+
+/** Every summary in one place: cash in / out, the two accounts, where money came from and went, profit and what is still owed. */
 export default function ReportScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -97,18 +112,45 @@ export default function ReportScreen() {
   const { user } = useAuth();
   const book = useMoneyBook();
   const budget = useBudget();
+  const { hideAmounts } = usePrefs();
+  const money = (n: number) => (hideAmounts ? HIDDEN : formatINR(n));
   const today = todayISO();
   const { month } = useLocalSearchParams<{ month?: string }>();
-  const [offset, setOffset] = useState(month === "prev" ? -1 : 0);
+  const [period, setPeriod] = useState<Period>(month ? "month" : "day");
+  const [date, setDate] = useState(month === "prev" ? monthRange(today, -1).from : today);
+  const [calendar, setCalendar] = useState(false);
   const [sharing, setSharing] = useState(false);
 
-  const range = monthRange(today, offset);
-  const prevRange = monthRange(today, offset - 1);
-  const period = formatMonth(range.from);
-  const isCurrent = offset === 0;
+  const range = rangeOf(period, date);
+  const { from, to: end } = range;
+  const to = end < today ? end : today;
+  const prevRange = rangeOf(period, period === "week" ? shiftISO(from, -7) : period === "month" ? monthRange(from, -1).from : shiftISO(from, -1));
+  const prevFrom = prevRange.from;
+  const prevTo = prevRange.to;
+  const isCurrent = range.to >= today;
+  const label =
+    period === "day"
+      ? date === today ? "आज" : date === todayISO(-1) ? "कल" : formatWeekdayDate(date)
+      : period === "week"
+        ? `${formatDateShort(range.from)} – ${formatDateShort(range.to)}`
+        : formatMonth(range.from);
+  const step = (n: number) => {
+    const next = period === "week" ? shiftISO(date, 7 * n) : period === "month" ? monthRange(date, n).from : shiftISO(date, n);
+    setDate(next > today ? today : next);
+  };
+  const nav = { period, date: period === "day" ? date : range.from };
 
-  const now = useMemo(() => monthStats(book, persona, range.from, range.to), [book, persona, range.from, range.to]);
-  const prev = useMemo(() => monthStats(book, persona, prevRange.from, prevRange.to), [book, persona, prevRange.from, prevRange.to]);
+  const flow = useMemo(() => cashTotals(book, persona, (d) => d >= from && d <= to), [book, persona, from, to]);
+  const accounts = useMemo(() => {
+    const before = computeFlows(book, persona, (d) => d < from);
+    const during = computeFlows(book, persona, (d) => d >= from && d <= to);
+    return (["cash", "bank"] as Pocket[]).map((p) => {
+      const opening = pocketNet(before[p]);
+      return { p, opening, ins: pocketIn(during[p]), outs: pocketOut(during[p]), closing: roundMoney(opening + pocketNet(during[p])) };
+    });
+  }, [book, persona, from, to]);
+  const now = useMemo(() => periodStats(book, persona, from, end), [book, persona, from, end]);
+  const prev = useMemo(() => periodStats(book, persona, prevFrom, prevTo), [book, persona, prevFrom, prevTo]);
 
   const balances = useMemo(() => {
     const mine = book.customers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal"));
@@ -116,40 +158,50 @@ export default function ReportScreen() {
   }, [book.customers, book.entries, isPersonal]);
   const owedToYou = balances.filter((b) => b.bal > 0).sort((a, b) => b.bal - a.bal);
   const youOwe = balances.filter((b) => b.bal < 0).sort((a, b) => a.bal - b.bal);
-  const outstanding = owedToYou.reduce((s, b) => s + b.bal, 0);
-  const recovery = now.collected + outstanding > 0 ? Math.round((now.collected / (now.collected + outstanding)) * 100) : null;
+  const outstanding = roundMoney(owedToYou.reduce((s, b) => s + b.bal, 0));
+  const theirs = roundMoney(youOwe.reduce((s, b) => s - b.bal, 0));
+  const recovery = !isPersonal && period === "month" && isCurrent && now.collected + outstanding > 0 ? Math.round((now.collected / (now.collected + outstanding)) * 100) : null;
 
-  const resultLabel = isPersonal ? "महीने की बचत" : "अनुमानित कमाई";
-  const formula = isPersonal
-    ? "मिले − (लोगों को दिए + सामान/उधार चुकाए + खर्च)"
-    : "काम/बिक्री + AEPS कमीशन − खर्च − पोर्टल फीस · सामान की ख़रीद इसमें नहीं जुड़ी";
-
-  type Metric = { label: string; value: number; before: number; tone?: "good" | "bad"; goodWhenUp: boolean };
-  const metrics: Metric[] = isPersonal
+  const resultLabel = isPersonal ? "बचत" : "कमाई";
+  const profitRows: { label: string; value: number; sign: "+" | "−" }[] = isPersonal
     ? [
-        { label: "मिले", value: now.collected, before: prev.collected, tone: "good", goodWhenUp: true },
-        { label: "लोगों को दिए", value: now.given, before: prev.given, goodWhenUp: false },
-        { label: "चुकाए", value: now.paidOut, before: prev.paidOut, goodWhenUp: false },
-        { label: "खर्च", value: now.expense, before: prev.expense, tone: "bad", goodWhenUp: false },
+        { label: "पैसे आए", value: now.collected, sign: "+" },
+        { label: "लोगों को गए", value: now.given, sign: "−" },
+        { label: "सामान / सेवा चुकाए", value: now.paidOut, sign: "−" },
+        { label: "खर्च", value: now.expense, sign: "−" },
       ]
     : [
-        { label: `काम / बिक्री (${now.billedCount})`, value: now.billed, before: prev.billed, goodWhenUp: true },
-        { label: "पैसे मिले", value: now.collected, before: prev.collected, tone: "good", goodWhenUp: true },
-        { label: "AEPS कमीशन", value: now.commission, before: prev.commission, tone: "good", goodWhenUp: true },
-        { label: "खर्च + फीस", value: now.expense + now.fee, before: prev.expense + prev.fee, tone: "bad", goodWhenUp: false },
+        { label: `काम / बिक्री (${now.billedCount})`, value: now.billed, sign: "+" },
+        { label: "कमीशन", value: now.commission, sign: "+" },
+        { label: "खर्च", value: now.expense, sign: "−" },
+        { label: "पोर्टल फीस", value: now.fee, sign: "−" },
       ];
+  const resultChange = change(now.result, prev.result);
+
+  const sourceRows = (rows: typeof IN_ROWS) => rows.map((r) => ({ r, v: flow.byKey.get(r.key) ?? 0 })).filter((x) => x.v > 0);
+  const ins = sourceRows(IN_ROWS);
+  const outs = sourceRows(OUT_ROWS);
+  const maxSource = Math.max(1, ...ins.map((x) => x.v), ...outs.map((x) => x.v));
+  const openFlow = (dir: "in" | "out", key?: FlowKey) => router.push({ pathname: "/pocket" as never, params: { p: "all", dir, ...(key ? { key } : {}), ...nav } });
+  const openPocket = (p: Pocket) => router.push({ pathname: "/pocket" as never, params: { p, ...nav } });
+  const openCustomers = (filter: "due" | "owe") => router.push({ pathname: "/(tabs)/customers", params: { filter, t: String(Date.now()) } });
 
   const sharePdfDoc = async () => {
     if (sharing) return;
     setSharing(true);
     try {
-      const lines: Line[] = metrics.map((m) => ({ label: m.label, value: formatINR(m.value), tone: m.tone === "good" ? "ok" : m.tone === "bad" ? "due" : undefined }));
+      const lines: Line[] = [
+        { label: `${FLOW.in.title} · ${FLOW.in.hi}`, value: formatINR(flow.ins), tone: "ok" },
+        { label: `${FLOW.out.title} · ${FLOW.out.hi}`, value: formatINR(flow.outs), tone: "due" },
+        { label: "Net", value: signedINR(flow.net), tone: flow.net < 0 ? "due" : "ok" },
+        ...profitRows.map((r) => ({ label: r.label, value: `${r.sign}${formatINR(r.value)}` })),
+      ];
       const account: Line = { label: resultLabel, value: formatINR(now.result), tone: now.result < 0 ? "due" : "ok" };
-      const doc = reportDoc(user || {}, isPersonal ? "मेरी मासिक रिपोर्ट" : "मासिक रिपोर्ट", period, lines, account, [
+      const doc = reportDoc(user || {}, isPersonal ? "मेरी रिपोर्ट" : "रिपोर्ट", label, lines, account, [
+        { title: "खाते", lines: accounts.map((a) => ({ label: pocketTitle(persona, a.p), value: `${formatINR(a.opening)} → ${formatINR(a.closing)}` })) },
         { title: "खर्च कहाँ हुआ", lines: now.byCat.map(([t, v]) => ({ label: t, value: formatINR(v) })) },
         { title: `${TERMS.get} (अभी)`, lines: owedToYou.slice(0, 10).map((b) => ({ label: b.c.name, value: formatINR(b.bal), tone: "due" as const })) },
         ...(isPersonal ? [{ title: `${TERMS.give} (अभी)`, lines: youOwe.slice(0, 10).map((b) => ({ label: b.c.name, value: formatINR(-b.bal) })) }] : []),
-        { title: "हिसाब का तरीका", lines: [{ label: resultLabel, value: formula }] },
       ]);
       if (pdfSupported) await sharePdf(doc);
       else await shareMessage(doc.message);
@@ -164,7 +216,7 @@ export default function ReportScreen() {
     if (sharing) return;
     setSharing(true);
     try {
-      await exportFullLedgerCsv({ ...book, jobs: [], shop: user, only: persona, range: { ...range, label: period } });
+      await exportFullLedgerCsv({ ...book, jobs: [], shop: user, only: persona, range: { ...range, label } });
     } catch {
       Alert.alert("फ़ाइल नहीं बन पाई", "दोबारा कोशिश करें।");
     } finally {
@@ -173,7 +225,7 @@ export default function ReportScreen() {
   };
 
   const maxCat = now.byCat[0]?.[1] ?? 0;
-  const monthBudget = isPersonal && isCurrent ? budget.total : 0;
+  const monthBudget = isPersonal && period === "month" && isCurrent ? budget.total : 0;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
@@ -181,7 +233,7 @@ export default function ReportScreen() {
         <Pressable onPress={() => router.back()} hitSlop={12} testID="report-back">
           <MaterialIcon name="arrow-left" size={26} color={colors.onSurface} />
         </Pressable>
-        <Text style={styles.topTitle}>महीने की रिपोर्ट</Text>
+        <Text style={styles.topTitle}>Reports</Text>
         <Pressable onPress={shareCsv} hitSlop={8} disabled={sharing} style={{ marginRight: spacing.md }} accessibilityLabel="Excel फ़ाइल भेजें" testID="report-csv">
           <MaterialIcon name="microsoft-excel" size={26} color={colors.success} />
         </Pressable>
@@ -191,73 +243,87 @@ export default function ReportScreen() {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}>
+        <View style={styles.segment}>
+          {PERIODS.map((p) => (
+            <Pressable key={p.id} onPress={() => setPeriod(p.id)} style={[styles.segmentBtn, period === p.id && styles.segmentOn]} testID={`report-period-${p.id}`}>
+              <Text style={[styles.segmentText, period === p.id && { color: colors.onBrandPrimary }]}>{p.label}</Text>
+            </Pressable>
+          ))}
+        </View>
         <View style={styles.monthRow}>
-          <Pressable onPress={() => setOffset(offset - 1)} hitSlop={10} style={styles.monthBtn} testID="report-prev">
+          <Pressable onPress={() => step(-1)} hitSlop={10} style={styles.monthBtn} testID="report-prev">
             <MaterialIcon name="chevron-left" size={24} color={colors.onSurface} />
           </Pressable>
-          <Text style={styles.monthText}>{period}{isCurrent ? " (अभी तक)" : ""}</Text>
-          <Pressable onPress={() => setOffset(offset + 1)} hitSlop={10} style={[styles.monthBtn, isCurrent && { opacity: 0.3 }]} disabled={isCurrent} testID="report-next">
+          <Pressable onPress={() => setCalendar(true)} style={styles.monthLabel} testID="report-date">
+            <MaterialIcon name="calendar-month-outline" size={18} color={colors.brandPrimary} />
+            <Text style={styles.monthText}>{label}</Text>
+          </Pressable>
+          <Pressable onPress={() => step(1)} hitSlop={10} style={[styles.monthBtn, isCurrent && { opacity: 0.3 }]} disabled={isCurrent} testID="report-next">
             <MaterialIcon name="chevron-right" size={24} color={colors.onSurface} />
           </Pressable>
         </View>
 
-        <View style={styles.hero}>
-          <Text style={styles.heroLabel}>{resultLabel}</Text>
-          <Text style={styles.heroValue}>{now.result < 0 ? "−" : ""}{formatINR(Math.abs(now.result))}</Text>
-          {(() => {
-            const c = change(now.result, prev.result);
-            return c ? (
-              <Text style={styles.heroHint}>
-                पिछले महीने से {c.text} · पिछला {formatINR(prev.result)}
-              </Text>
-            ) : (
-              <Text style={styles.heroHint}>पिछला महीना: {formatINR(prev.result)}</Text>
-            );
-          })()}
-          <Text style={styles.formula}>{formula}</Text>
+        <Text style={styles.sectionTitle}>Cash Flow</Text>
+        <View style={styles.card}>
+          <View style={styles.tiles}>
+            <FlowTile dir="in" value={money(flow.ins)} onPress={() => openFlow("in")} testID="report-cash-in" />
+            <FlowTile dir="out" value={money(flow.outs)} onPress={() => openFlow("out")} testID="report-cash-out" />
+          </View>
+          <NetRow value={flow.net} fmt={money} onPress={() => (period === "day" ? router.push({ pathname: "/day", params: { type: "drawer", date } }) : router.push({ pathname: "/pocket" as never, params: { p: "all", ...nav } }))} testID="report-net" />
         </View>
 
-        <View style={styles.grid}>
-          {metrics.map((m) => {
-            const c = change(m.value, m.before);
-            const good = c ? c.up === m.goodWhenUp : true;
-            return (
-              <View key={m.label} style={styles.metric}>
-                <Text style={styles.metricLabel} numberOfLines={1}>{m.label}</Text>
-                <Text style={[styles.metricValue, m.tone === "good" && { color: colors.success }, m.tone === "bad" && { color: colors.error }]}>{formatINR(m.value)}</Text>
-                {c ? (
-                  <View style={styles.changeRow}>
-                    <MaterialIcon name={c.up ? "arrow-up" : "arrow-down"} size={12} color={good ? colors.success : colors.error} />
-                    <Text style={[styles.changeText, { color: good ? colors.success : colors.error }]}>{c.text}</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.changeText}> </Text>
-                )}
+        <Text style={styles.sectionTitle}>Accounts</Text>
+        <View style={styles.tiles}>
+          {accounts.map((a) => (
+            <Pressable key={a.p} style={[styles.card, styles.account]} onPress={() => openPocket(a.p)} testID={`report-account-${a.p}`}>
+              <View style={styles.accountHead}>
+                <MaterialIcon name={a.p === "cash" ? "cash-multiple" : "bank-outline"} size={18} color={a.p === "cash" ? semantic.cash : semantic.bank} />
+                <Text style={styles.cardTitle}>{pocketTitle(persona, a.p)}</Text>
+                <MaterialIcon name="chevron-right" size={16} color={colors.muted} style={{ marginLeft: "auto" }} />
               </View>
-            );
-          })}
+              <Text style={styles.small}>Opening {money(a.opening)}</Text>
+              <Text style={[styles.small, { color: FLOW.in.color }]}>⬇ +{money(a.ins)}</Text>
+              <Text style={[styles.small, { color: FLOW.out.color }]}>⬆ −{money(a.outs)}</Text>
+              <Text style={[styles.closing, a.closing < 0 && { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit>{money(a.closing)}</Text>
+              <Text style={styles.small}>Closing</Text>
+            </Pressable>
+          ))}
         </View>
 
-        {!isPersonal && isCurrent && recovery !== null ? (
+        {ins.length + outs.length > 0 ? (
           <View style={styles.card}>
-            <View style={styles.cardHead}>
-              <Text style={styles.cardTitle}>वसूली दर</Text>
-              <Text style={[styles.cardTitle, { color: recovery >= 60 ? colors.success : recovery >= 35 ? colors.warning : colors.error }]}>{recovery}%</Text>
-            </View>
-            <View style={styles.track}>
-              <View style={[styles.fill, { width: `${Math.max(2, recovery)}%`, backgroundColor: recovery >= 60 ? colors.success : recovery >= 35 ? colors.warning : colors.error }]} />
-            </View>
-            <Text style={styles.note}>
-              इस महीने {formatINR(now.collected)} मिले, बाज़ार में अभी {formatINR(outstanding)} बकाया है। जितना ज़्यादा प्रतिशत, उतना कम पैसा फँसा।
-            </Text>
+            {ins.length ? <FlowHead dir="in" /> : null}
+            {ins.map(({ r, v }) => (
+              <SourceBar key={r.key} label={r.label(persona, "cash")} value={`+${money(v)}`} pct={v / maxSource} color={FLOW.in.color} onPress={() => openFlow("in", r.key)} testID={`report-in-${r.key}`} />
+            ))}
+            {outs.length ? <FlowHead dir="out" /> : null}
+            {outs.map(({ r, v }) => (
+              <SourceBar key={r.key} label={r.label(persona, "cash")} value={`−${money(v)}`} pct={v / maxSource} color={FLOW.out.color} onPress={() => openFlow("out", r.key)} testID={`report-out-${r.key}`} />
+            ))}
           </View>
         ) : null}
 
+        <Text style={styles.sectionTitle}>{resultLabel}</Text>
+        <View style={styles.card}>
+          <View style={styles.profitHead}>
+            <Text style={[styles.profitValue, now.result < 0 && { color: colors.error }]}>{now.result < 0 ? "−" : ""}{money(Math.abs(now.result))}</Text>
+            {resultChange ? (
+              <View style={styles.changePill}>
+                <MaterialIcon name={resultChange.up ? "arrow-up" : "arrow-down"} size={12} color={resultChange.up ? colors.success : colors.error} />
+                <Text style={[styles.changeText, { color: resultChange.up ? colors.success : colors.error }]}>{resultChange.text}</Text>
+              </View>
+            ) : null}
+          </View>
+          {profitRows.map((r) => (
+            <FlowRow key={r.label} label={r.label} value={`${r.sign}${money(r.value)}`} color={r.sign === "+" ? FLOW.in.color : FLOW.out.color} />
+          ))}
+        </View>
+
         {monthBudget > 0 ? (
           <View style={styles.card}>
-            <View style={styles.cardHead}>
+            <View style={styles.rowBetween}>
               <Text style={styles.cardTitle}>बजट</Text>
-              <Text style={styles.cardTitle}>{formatINR(now.expense)} / {formatINR(monthBudget)}</Text>
+              <Text style={styles.cardTitle}>{money(now.expense)} / {money(monthBudget)}</Text>
             </View>
             <View style={styles.track}>
               <View style={[styles.fill, { width: `${Math.min(100, Math.max(2, (now.expense / monthBudget) * 100))}%`, backgroundColor: now.expense > monthBudget ? colors.error : colors.success }]} />
@@ -265,47 +331,66 @@ export default function ReportScreen() {
           </View>
         ) : null}
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>खर्च कहाँ हुआ</Text>
-          {now.byCat.length === 0 ? (
-            <Text style={styles.note}>इस महीने कोई खर्च नहीं लिखा</Text>
-          ) : (
-            now.byCat.slice(0, 6).map(([t, v]) => (
+        {now.byCat.length > 0 ? (
+          <Pressable style={styles.card} onPress={() => openFlow("out", "expense")} testID="report-expenses">
+            <View style={styles.rowBetween}>
+              <Text style={styles.cardTitle}>खर्च</Text>
+              <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
+            </View>
+            {now.byCat.slice(0, 6).map(([t, v]) => (
               <View key={t} style={{ marginTop: spacing.sm }}>
-                <View style={styles.cardHead}>
+                <View style={styles.rowBetween}>
                   <Text style={styles.rowLabel} numberOfLines={1}>{t}</Text>
-                  <Text style={styles.rowValue}>{formatINR(v)}</Text>
+                  <Text style={styles.rowValue}>{money(v)}</Text>
                 </View>
                 <View style={styles.track}>
                   <View style={[styles.fill, { width: `${Math.max(2, (v / maxCat) * 100)}%`, backgroundColor: colors.warning }]} />
                 </View>
               </View>
-            ))
-          )}
-        </View>
+            ))}
+          </Pressable>
+        ) : null}
 
-        <PeopleCard
-          title={`${TERMS.get} · सबसे ज़्यादा`}
-          rows={owedToYou.slice(0, 5)}
-          color={colors.error}
-          personal={isPersonal}
-          empty="किसी से पैसे नहीं मिलने हैं"
-          onOpen={(id) => router.push(`/customer/${id}`)}
-          onAll={() => router.push({ pathname: "/(tabs)/customers", params: { filter: "due", t: String(Date.now()) } })}
-        />
-        {isPersonal ? (
-          <PeopleCard
-            title={`${TERMS.give} · सबसे ज़्यादा`}
-            rows={youOwe.slice(0, 5)}
-            color={colors.warning}
-            personal
-            empty="किसी को पैसे नहीं देने हैं"
-            onOpen={(id) => router.push(`/customer/${id}`)}
-            onAll={() => router.push({ pathname: "/(tabs)/customers", params: { filter: "owe", t: String(Date.now()) } })}
-          />
+        <Text style={styles.sectionTitle}>बाकी (Outstanding)</Text>
+        <View style={styles.tiles}>
+          <Pressable style={[styles.card, styles.account]} onPress={() => openCustomers("due")} testID="report-owed">
+            <Text style={styles.small}>{TERMS.getShort} · {owedToYou.length}</Text>
+            <Text style={[styles.closing, { color: outstanding > 0 ? semantic.due : colors.onSurface }]} numberOfLines={1} adjustsFontSizeToFit>{money(outstanding)}</Text>
+          </Pressable>
+          <Pressable style={[styles.card, styles.account]} onPress={() => openCustomers("owe")} testID="report-owe">
+            <Text style={styles.small}>{isPersonal ? TERMS.giveShort : TERMS.advanceShort} · {youOwe.length}</Text>
+            <Text style={[styles.closing, { color: theirs > 0 ? semantic.pending : colors.onSurface }]} numberOfLines={1} adjustsFontSizeToFit>{money(theirs)}</Text>
+          </Pressable>
+        </View>
+        {recovery !== null ? <FlowRow label="वसूली दर (इस महीने)" value={`${recovery}%`} color={recovery >= 60 ? colors.success : recovery >= 35 ? colors.warning : colors.error} /> : null}
+
+        {owedToYou.length > 0 ? (
+          <PeopleCard title={`${TERMS.get} · सबसे ज़्यादा`} rows={owedToYou.slice(0, 5)} color={semantic.due} personal={isPersonal} money={money} onOpen={(id) => router.push(`/customer/${id}`)} onAll={() => openCustomers("due")} />
+        ) : null}
+        {isPersonal && youOwe.length > 0 ? (
+          <PeopleCard title={`${TERMS.give} · सबसे ज़्यादा`} rows={youOwe.slice(0, 5)} color={semantic.pending} personal money={money} onOpen={(id) => router.push(`/customer/${id}`)} onAll={() => openCustomers("owe")} />
         ) : null}
       </ScrollView>
+
+      <CalendarModal visible={calendar} value={date} onPick={(d) => setDate(d)} onClose={() => setCalendar(false)} max={today} />
     </View>
+  );
+}
+
+function SourceBar({ label, value, pct, color, onPress, testID }: { label: string; value: string; pct: number; color: string; onPress: () => void; testID?: string }) {
+  return (
+    <Pressable style={styles.source} onPress={onPress} testID={testID}>
+      <View style={styles.rowBetween}>
+        <Text style={styles.rowLabel} numberOfLines={1}>{label}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+          <Text style={[styles.rowValue, { color }]}>{value}</Text>
+          <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
+        </View>
+      </View>
+      <View style={styles.track}>
+        <View style={[styles.fill, { width: `${Math.max(2, pct * 100)}%`, backgroundColor: color }]} />
+      </View>
+    </Pressable>
   );
 }
 
@@ -314,7 +399,7 @@ function PeopleCard({
   rows,
   color,
   personal,
-  empty,
+  money,
   onOpen,
   onAll,
 }: {
@@ -322,26 +407,21 @@ function PeopleCard({
   rows: { c: { id: string; name: string }; bal: number }[];
   color: string;
   personal: boolean;
-  empty: string;
+  money: (n: number) => string;
   onOpen: (id: string) => void;
   onAll: () => void;
 }) {
   return (
     <View style={styles.card}>
-      <View style={styles.cardHead}>
+      <Pressable style={styles.rowBetween} onPress={onAll} hitSlop={8}>
         <Text style={styles.cardTitle}>{title}</Text>
-        {rows.length ? (
-          <Pressable onPress={onAll} hitSlop={8}>
-            <Text style={styles.link}>सभी देखें</Text>
-          </Pressable>
-        ) : null}
-      </View>
-      {rows.length === 0 ? <Text style={styles.note}>{empty}</Text> : null}
+        <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
+      </Pressable>
       {rows.map((r, i) => (
         <Pressable key={r.c.id} style={[styles.personRow, i > 0 && styles.personBorder]} onPress={() => onOpen(r.c.id)}>
           <Text style={styles.rank}>{i + 1}</Text>
           <Text style={[styles.rowLabel, { flex: 1 }]} numberOfLines={1}>{r.c.name}</Text>
-          <Text style={[styles.rowValue, { color }]}>{formatINR(Math.abs(r.bal))}</Text>
+          <Text style={[styles.rowValue, { color }]}>{money(Math.abs(r.bal))}</Text>
           <Text style={styles.tag}>{balanceTerm(r.bal, personal, true)}</Text>
         </Pressable>
       ))}
@@ -352,29 +432,32 @@ function PeopleCard({
 const styles = StyleSheet.create({
   topBar: { flexDirection: "row", alignItems: "center", gap: spacing.lg, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, backgroundColor: colors.surface },
   topTitle: { flex: 1, fontSize: 18, fontWeight: "700", color: colors.onSurface },
-  link: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
-  monthRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.md },
+  segment: { flexDirection: "row", gap: 4, padding: 4, borderRadius: radius.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.sm },
+  segmentBtn: { flex: 1, alignItems: "center", justifyContent: "center", minHeight: 38, borderRadius: radius.sm },
+  segmentOn: { backgroundColor: colors.brandPrimary },
+  segmentText: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
+  monthRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm },
   monthBtn: { width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
+  monthLabel: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
   monthText: { fontSize: 16, fontWeight: "800", color: colors.onSurface },
-  hero: { padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.brandPrimary, marginBottom: spacing.md },
-  heroLabel: { fontSize: 13, fontWeight: "600", color: colors.onBrandPrimary, opacity: 0.85 },
-  heroValue: { fontSize: 32, fontWeight: "800", color: colors.onBrandPrimary, marginTop: 2 },
-  heroHint: { fontSize: 12, color: colors.onBrandPrimary, opacity: 0.9, marginTop: 4 },
-  formula: { fontSize: 12, color: colors.onBrandPrimary, opacity: 0.75, marginTop: spacing.sm },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
-  metric: { width: "48.5%", flexGrow: 1, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
-  metricLabel: { fontSize: 12, fontWeight: "600", color: colors.muted },
-  metricValue: { fontSize: 18, fontWeight: "800", color: colors.onSurface, marginTop: 4 },
-  changeRow: { flexDirection: "row", alignItems: "center", gap: 2, marginTop: 2 },
-  changeText: { fontSize: 12, fontWeight: "700", color: colors.muted },
-  card: { padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md },
-  cardHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
+  sectionTitle: { fontSize: 13, fontWeight: "800", color: colors.muted, marginTop: spacing.md, marginBottom: spacing.sm, textTransform: "uppercase" },
+  card: { padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.sm },
+  tiles: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.xs },
+  account: { flex: 1, minWidth: 0, gap: 2 },
+  accountHead: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 },
   cardTitle: { fontSize: 14, fontWeight: "800", color: colors.onSurface },
-  track: { height: 8, borderRadius: 4, backgroundColor: colors.surfaceSecondary, overflow: "hidden", marginTop: 6 },
-  fill: { height: 8, borderRadius: 4 },
-  note: { fontSize: 12, color: colors.muted, marginTop: spacing.sm, lineHeight: 17 },
+  small: { fontSize: 12, color: colors.muted, fontWeight: "600", fontVariant: ["tabular-nums"] },
+  closing: { fontSize: 20, fontWeight: "800", color: colors.onSurface, marginTop: 4, fontVariant: ["tabular-nums"] },
+  source: { paddingVertical: 6 },
+  profitHead: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.xs },
+  profitValue: { fontSize: 28, fontWeight: "800", color: colors.brandPrimary, fontVariant: ["tabular-nums"] },
+  changePill: { flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary },
+  changeText: { fontSize: 12, fontWeight: "700", color: colors.muted },
+  rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
+  track: { height: 6, borderRadius: 3, backgroundColor: colors.surfaceSecondary, overflow: "hidden", marginTop: 6 },
+  fill: { height: 6, borderRadius: 3 },
   rowLabel: { fontSize: 13, color: colors.onSurface, fontWeight: "600", flexShrink: 1 },
-  rowValue: { fontSize: 13, fontWeight: "800", color: colors.onSurface },
+  rowValue: { fontSize: 13, fontWeight: "800", color: colors.onSurface, fontVariant: ["tabular-nums"] },
   personRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm },
   personBorder: { borderTopWidth: 1, borderTopColor: colors.border },
   rank: { width: 20, fontSize: 12, fontWeight: "800", color: colors.muted },

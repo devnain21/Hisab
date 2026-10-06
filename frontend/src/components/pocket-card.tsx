@@ -3,26 +3,28 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
 import { formatINR } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
+import { FLOW, FlowHead } from "@/src/components/money-flow";
 import type { Persona } from "@/src/lib/persona";
 import { pocketIn, pocketNet, pocketOut, type FlowKey, type PocketFlow, type Pocket } from "@/src/lib/wallet";
 
 type Row = { key: FlowKey; label: (p: Persona, pocket: Pocket) => string };
 
+// Labels name only the source; the Cash In / Cash Out heading above them says the direction.
 export const IN_ROWS: Row[] = [
-  { key: "work", label: () => "काम के पैसे मिले" },
-  { key: "received", label: (p) => (p === "business" ? "उधारी / एडवांस मिले" : "लोगों से मिले") },
-  { key: "counterIn", label: () => "AEPS आए" },
-  { key: "commission", label: () => "AEPS कमीशन" },
-  { key: "moveIn", label: () => "जोड़े / ट्रांसफर आए" },
+  { key: "work", label: () => "काम" },
+  { key: "received", label: (p) => (p === "business" ? "ग्राहकों से" : "लोगों से") },
+  { key: "counterIn", label: () => "काउंटर" },
+  { key: "commission", label: () => "कमीशन" },
+  { key: "moveIn", label: () => "जोड़े / ट्रांसफर" },
 ];
 
 export const OUT_ROWS: Row[] = [
-  { key: "counterOut", label: () => "AEPS गए" },
-  { key: "given", label: (p) => (p === "business" ? "उधार दिए" : "लोगों को दिए") },
-  { key: "purchase", label: () => "सामान / सेवा के चुकाए" },
+  { key: "counterOut", label: () => "काउंटर" },
+  { key: "given", label: (p) => (p === "business" ? "ग्राहकों को" : "लोगों को") },
+  { key: "purchase", label: () => "सामान / सेवा" },
   { key: "expense", label: () => "खर्च" },
-  { key: "fee", label: () => "फीस" },
-  { key: "moveOut", label: () => "निकाले / ट्रांसफर गए" },
+  { key: "fee", label: () => "पोर्टल फीस" },
+  { key: "moveOut", label: () => "निकाले / ट्रांसफर" },
 ];
 
 export function flowLabel(key: FlowKey, persona: Persona, pocket: Pocket): string {
@@ -74,41 +76,39 @@ export function PocketCard({
         {showBalance ? <Text style={[styles.balance, closing < 0 && { color: colors.error }]}>{formatINR(closing)}</Text> : null}
         {onOpen ? (
           <View style={styles.openPill}>
-            <Text style={styles.openText}>पूरा हिसाब</Text>
             <MaterialIcon name="chevron-right" size={16} color={colors.brandPrimary} />
           </View>
         ) : null}
       </Pressable>
 
-      <Text style={styles.group}>{dayLabel} आए</Text>
-      {ins.length === 0 ? <Text style={styles.none}>कुछ नहीं</Text> : null}
+      <View style={styles.row}>
+        <Text style={styles.label}>Opening</Text>
+        <Text style={[styles.value, opening < 0 && { color: colors.error }]}>{formatINR(opening)}</Text>
+      </View>
+
+      <FlowHead dir="in" total={`+${formatINR(pocketIn(flow))}`} />
       {ins.map((r) => (
         <View key={r.key} style={styles.row}>
           <Text style={styles.label}>{r.label(persona, pocket)}</Text>
-          <Text style={[styles.value, { color: colors.success }]}>+{formatINR(flow[r.key])}</Text>
+          <Text style={[styles.value, { color: FLOW.in.color }]}>+{formatINR(flow[r.key])}</Text>
         </View>
       ))}
 
-      <Text style={styles.group}>{dayLabel} गए</Text>
-      {outs.length === 0 ? <Text style={styles.none}>कुछ नहीं</Text> : null}
+      <FlowHead dir="out" total={`−${formatINR(pocketOut(flow))}`} />
       {outs.map((r) => (
         <View key={r.key} style={styles.row}>
           <Text style={styles.label}>{r.label(persona, pocket)}</Text>
-          <Text style={[styles.value, { color: colors.error }]}>−{formatINR(flow[r.key])}</Text>
+          <Text style={[styles.value, { color: FLOW.out.color }]}>−{formatINR(flow[r.key])}</Text>
         </View>
       ))}
 
       <View style={styles.divider} />
       <View style={styles.row}>
-        <Text style={styles.label}>{dayLabel} का कुल (आए {formatINR(pocketIn(flow))} − गए {formatINR(pocketOut(flow))})</Text>
-        <Text style={[styles.value, { color: net < 0 ? colors.error : colors.success }]}>{signed(net)}</Text>
-      </View>
-      <View style={styles.row}>
-        <Text style={styles.label}>{dayLabel === "आज" ? "कल तक का बचा" : "पहले का बचा"}</Text>
-        <Text style={[styles.value, opening < 0 && { color: colors.error }]}>{formatINR(opening)}</Text>
+        <Text style={styles.label}>Net {dayLabel}</Text>
+        <Text style={[styles.value, { color: net < 0 ? FLOW.out.color : FLOW.net.color }]}>{signed(net)}</Text>
       </View>
       <View style={[styles.row, styles.closingRow]}>
-        <Text style={styles.totalLabel}>अब बचा</Text>
+        <Text style={styles.totalLabel}>Closing</Text>
         <Text style={[styles.totalValue, closing < 0 && { color: colors.error }]}>{formatINR(closing)}</Text>
       </View>
       {children}

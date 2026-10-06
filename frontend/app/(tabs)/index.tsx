@@ -12,12 +12,12 @@ import { buildAllLedgers, workForJob } from "@/src/lib/records";
 import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import * as Updates from "expo-updates";
-import { aepsTotals } from "@/src/lib/aeps";
 import { formatDateShort, formatINR, formatPhone, formatWeekdayDate, todayISO } from "@/src/lib/format";
 import { AddEntrySheet, AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
 import { useAuth } from "@/src/context/AuthContext";
 import { clearRejected, flush, rejectedChanges, retryRejected, retryableRejectedCount, store, usePendingCount, useRejectedCount } from "@/src/lib/store";
-import { computeFlows, pocketNet, useMoneyBook } from "@/src/lib/wallet";
+import { cashTotals, computeFlows, pocketNet, useMoneyBook } from "@/src/lib/wallet";
+import { FlowTile, NetRow } from "@/src/components/money-flow";
 import { useCounterMode } from "@/src/lib/counter";
 import { accountName, usePersona } from "@/src/lib/persona";
 import { TERMS, balanceTerm } from "@/src/lib/terms";
@@ -128,40 +128,26 @@ export default function Home() {
   }, [searchQuery, customers, jobs, entries]);
 
   const stats = useMemo(() => {
-    const balances = customers.map((c) => computeBalance(entries, c.id));
-    const dues = balances.filter((d) => d > 0);
-    const weOwe = balances.filter((d) => d < 0).map((d) => -d);
-    const totalDue = dues.reduce((s, d) => s + d, 0);
-    const totalWeOwe = weOwe.reduce((s, d) => s + d, 0);
-    const todayWork = entries.filter((e) => e.date === today && e.type === "work" && personaCustIds.has(e.customerId));
+    const dues = customers.map((c) => computeBalance(entries, c.id)).filter((d) => d > 0);
     const open = jobs.filter((j) => j.status !== "done");
     return {
-      totalDue,
+      totalDue: dues.reduce((s, d) => s + d, 0),
       dueCustomers: dues.length,
-      totalWeOwe,
-      weOweCount: weOwe.length,
-      todayWork: todayWork.reduce((n, e) => n + e.amount, 0),
-      todayWorkCount: todayWork.length,
       openJobs: open.length,
       overdue: open.filter((j) => j.dueDate < today).length,
     };
-  }, [customers, entries, jobs, today, personaCustIds]);
+  }, [customers, entries, jobs, today]);
 
   const persona = isPersonal ? "personal" : "business";
   const pockets = useMemo(() => computeFlows(book, persona, (d) => d <= today), [book, persona, today]);
   const cashBal = pocketNet(pockets.cash);
   const bankBal = pocketNet(pockets.bank);
-  const todayFlows = useMemo(() => computeFlows(book, persona, (d) => d === today), [book, persona, today]);
-  const todayCash = pocketNet(todayFlows.cash);
-  const todayBank = pocketNet(todayFlows.bank);
-  const todayNet = todayCash + todayBank;
+  const todayTotals = useMemo(() => cashTotals(book, persona, (d) => d === today), [book, persona, today]);
+  const openToday = (dir: "in" | "out") => router.push({ pathname: "/pocket" as never, params: { p: "all", dir, period: "day", date: today } });
 
-  const aepsToday = useMemo(() => aepsTotals(aeps, (d) => d === today), [aeps, today]);
   const aepsDue = useMemo(() => aeps.filter((t) => t.status === "pending" && (t.dueDate || t.date) <= today).length, [aeps, today]);
   const { hideAmounts } = usePrefs();
   const money = (n: number) => (hideAmounts ? HIDDEN : formatINR(n));
-  const signedINR = (n: number) => (hideAmounts ? HIDDEN : `${n < 0 ? "−" : "+"}${formatINR(Math.abs(n))}`);
-
   const upcoming = useMemo(
     () => jobs.filter((j) => j.status !== "done").sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 8),
     [jobs]
@@ -350,45 +336,16 @@ export default function Home() {
         ) : (
           <Animated.View entering={FadeInDown.duration(300)}>
             <View style={styles.hero}>
-              <Pressable style={styles.heroTop} onPress={() => router.push({ pathname: "/day", params: { type: "drawer" } })} testID="stat-today-money">
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <Text style={styles.heroLabel}>आज का हिसाब</Text>
-                  <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
-                </View>
-                <Text
-                  style={[styles.heroValue, { color: todayNet < 0 ? semantic.due : todayNet > 0 ? semantic.received : colors.onSurface }]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                >
-                  {signedINR(todayNet)}
-                </Text>
-                <Text style={styles.heroHint} numberOfLines={1}>{labels.cash} {signedINR(todayCash)} · बैंक {signedINR(todayBank)}</Text>
+              <Pressable style={styles.heroHead} onPress={() => router.push("/report" as never)} accessibilityRole="button" testID="home-snapshot">
+                <Text style={styles.heroLabel}>Today&apos;s Snapshot</Text>
+                <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
               </Pressable>
-
-              <View style={styles.heroSplit}>
-                <Pressable style={styles.heroCell} onPress={() => go("/(tabs)/customers", { filter: "due" })} testID="stat-total-due">
-                  <Text style={styles.heroCellLabel}>{TERMS.get}</Text>
-                  <Text style={[styles.heroCellValue, { color: stats.totalDue > 0 ? semantic.due : colors.onSurface }]} numberOfLines={1} adjustsFontSizeToFit>
-                    {money(Math.max(stats.totalDue, 0))}
-                  </Text>
-                  <Text style={styles.heroHint}>{stats.dueCustomers} {isPersonal ? "लोग" : "ग्राहक"}</Text>
-                </Pressable>
-                <View style={styles.heroDivider} />
-                {isPersonal ? (
-                  <Pressable style={styles.heroCell} onPress={() => go("/(tabs)/customers", { filter: "owe" })} testID="stat-total-we-owe">
-                    <Text style={styles.heroCellLabel}>{TERMS.give}</Text>
-                    <Text style={[styles.heroCellValue, { color: stats.totalWeOwe > 0 ? semantic.pending : colors.onSurface }]} numberOfLines={1} adjustsFontSizeToFit>
-                      {money(Math.max(stats.totalWeOwe, 0))}
-                    </Text>
-                    <Text style={styles.heroHint}>{stats.weOweCount} लोग</Text>
-                  </Pressable>
-                ) : (
-                  <Pressable style={styles.heroCell} onPress={() => router.push({ pathname: "/day", params: { type: "work" } })} testID="stat-today-work">
-                    <Text style={styles.heroCellLabel}>आज का काम</Text>
-                    <Text style={styles.heroCellValue} numberOfLines={1} adjustsFontSizeToFit>{money(stats.todayWork)}</Text>
-                    <Text style={styles.heroHint}>{stats.todayWorkCount} एंट्री</Text>
-                  </Pressable>
-                )}
+              <View style={styles.heroTiles}>
+                <FlowTile dir="in" value={money(todayTotals.ins)} onPress={() => openToday("in")} testID="home-cash-in" />
+                <FlowTile dir="out" value={money(todayTotals.outs)} onPress={() => openToday("out")} testID="home-cash-out" />
+              </View>
+              <View style={styles.heroNet}>
+                <NetRow value={todayTotals.net} label="Net today" fmt={money} onPress={() => router.push({ pathname: "/day", params: { type: "drawer" } })} testID="stat-today-money" />
               </View>
 
               <View style={styles.walletLine}>
@@ -403,25 +360,24 @@ export default function Home() {
                   <Text style={styles.walletLabel}>बैंक</Text>
                   <Text style={[styles.walletValue, bankBal < 0 && { color: semantic.due }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(bankBal)}</Text>
                 </Pressable>
-                <Pressable onPress={() => router.push("/balance" as never)} hitSlop={10} style={styles.walletMore} accessibilityRole="button" accessibilityLabel="कुल पैसे देखें" testID="home-wallet">
-                  <Text style={styles.walletMoreText}>कुल</Text>
-                  <MaterialIcon name="chevron-right" size={18} color={colors.brandPrimary} />
-                </Pressable>
               </View>
             </View>
 
-            {counter.on ? (
-            <Pressable style={styles.aepsLine} onPress={() => go("/(tabs)/aeps", { range: "today" })} testID="home-aeps-card">
-              <MaterialIcon name="fingerprint" size={16} color={colors.brandPrimary} />
-              <Text style={styles.aepsLineText} numberOfLines={2}>
-                {(aepsToday.count === 0
-                  ? "काउंटर · आज कुछ नहीं"
-                  : `काउंटर · गल्ला ${signedINR(aepsToday.cashNet)} · बैंक ${signedINR(aepsToday.bankNet)}${aepsToday.commission > 0 ? ` · कमीशन ${money(aepsToday.commission)}` : ""}`) +
-                  (aepsDue > 0 ? ` · ${aepsDue} भेजनी बाकी` : "")}
-              </Text>
-              <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
-            </Pressable>
-            ) : null}
+            <View style={styles.chipRow}>
+              {stats.totalDue > 0 ? (
+                <Pressable style={styles.chip} onPress={() => go("/(tabs)/customers", { filter: "due" })} testID="stat-total-due">
+                  <Text style={styles.chipText} numberOfLines={1}>{isPersonal ? TERMS.get : "बाकी वसूली"} {money(stats.totalDue)} · {stats.dueCustomers}</Text>
+                  <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
+                </Pressable>
+              ) : null}
+              {counter.on && aepsDue > 0 ? (
+                <Pressable style={styles.chip} onPress={() => go("/(tabs)/aeps", { range: "today" })} testID="home-aeps-card">
+                  <MaterialIcon name="fingerprint" size={14} color={semantic.pending} />
+                  <Text style={styles.chipText} numberOfLines={1}>{aepsDue} काउंटर पेंडिंग</Text>
+                  <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
+                </Pressable>
+              ) : null}
+            </View>
 
             {isPersonal ? (
               <>
@@ -477,9 +433,9 @@ export default function Home() {
                       const got = e.type === "payment";
                       const goods = e.type === "purchase";
                       const repay = isRepayment(e);
-                      const label = got ? "मिले" : goods ? "सामान लिया" : repay ? "बकाया चुकाया" : "दिए";
-                      const icon = got ? "arrow-bottom-left" : goods ? "cart-outline" : repay ? "check-circle-outline" : "arrow-top-right";
-                      const tint = got ? colors.success : goods ? colors.warning : repay ? colors.info : colors.error;
+                      const label = got ? "पैसे आए" : goods ? ((e.paid ?? 0) > 0 ? "सामान / सेवा" : "उधार पर लिया") : repay ? "पैसे गए · चुकाया" : "पैसे गए";
+                      const icon = got ? "arrow-down-circle" : goods ? "cart-outline" : "arrow-up-circle";
+                      const tint = got ? semantic.received : goods ? colors.muted : semantic.due;
                       return (
                         <Pressable key={e.id} style={styles.jobCard} onPress={() => router.push(`/customer/${e.customerId}`)} testID={`home-txn-${e.id}`}>
                           <MaterialIcon name={icon} size={20} color={tint} />
@@ -615,15 +571,13 @@ const styles = StyleSheet.create({
   pendingPill: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", marginTop: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.errorSoft },
   pendingText: { fontSize: 12, fontWeight: "600", color: colors.warning },
   hero: { marginTop: spacing.lg, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, overflow: "hidden", ...elevation.low },
-  heroTop: { padding: spacing.lg, paddingBottom: spacing.md },
+  heroHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.sm },
+  heroTiles: { flexDirection: "row", gap: spacing.sm, paddingHorizontal: spacing.md },
+  heroNet: { paddingHorizontal: spacing.lg, paddingVertical: spacing.xs },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.sm },
+  chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: spacing.md, paddingRight: spacing.sm, minHeight: 36, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  chipText: { fontSize: 13, fontWeight: "600", color: colors.onSurfaceSecondary },
   heroLabel: { ...type.caption, color: colors.muted, fontWeight: "700" },
-  heroValue: { ...type.display, fontWeight: "800", fontVariant: ["tabular-nums"], marginTop: 2 },
-  heroHint: { ...type.caption, color: colors.muted },
-  heroSplit: { flexDirection: "row", borderTopWidth: 1, borderTopColor: colors.border },
-  heroCell: { flex: 1, minWidth: 0, paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
-  heroCellLabel: { ...type.caption, color: colors.muted, fontWeight: "700" },
-  heroCellValue: { ...type.title, fontWeight: "800", color: colors.onSurface, fontVariant: ["tabular-nums"] },
-  heroDivider: { width: 1, backgroundColor: colors.border },
   lateTag: { ...type.caption, color: semantic.due, fontWeight: "700" },
   actionBar: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
   walletLine: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface },
@@ -631,8 +585,6 @@ const styles = StyleSheet.create({
   walletLabel: { fontSize: 13, color: colors.muted, fontWeight: "600" },
   walletValue: { fontSize: 16, fontWeight: "800", color: colors.onSurface, flexShrink: 1 },
   walletDivider: { width: 1, alignSelf: "stretch", backgroundColor: colors.border },
-  walletMore: { flexDirection: "row", alignItems: "center", paddingLeft: 4 },
-  walletMoreText: { fontSize: 12, fontWeight: "700", color: colors.brandPrimary },
   primaryAction: { flex: 3, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
   primaryActionText: { color: colors.onBrandPrimary, fontSize: 15, fontWeight: "700" },
   secondaryAction: { flex: 2.5, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.surface },

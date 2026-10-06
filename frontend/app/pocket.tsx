@@ -13,7 +13,8 @@ import { usePersona, type Persona } from "@/src/lib/persona";
 import { useCustomers, type Entry } from "@/src/lib/data";
 import { AEPS_META } from "@/src/lib/aeps";
 import type { Expense } from "@/src/lib/expenses";
-import { accountLabel, computeFlows, isInflow, pocketNet, useMoneyBook, walletTxns, type FlowKey, type Move, type Pocket, type WalletTxn } from "@/src/lib/wallet";
+import { accountLabel, computeFlows, isInflow, isInternal, pocketNet, useMoneyBook, walletTxns, type FlowKey, type Move, type Pocket, type WalletTxn } from "@/src/lib/wallet";
+import { FLOW, FlowHead, FlowRow, FlowTile, NetRow } from "@/src/components/money-flow";
 import { IN_ROWS, OUT_ROWS, flowLabel, pocketTitle } from "@/src/components/pocket-card";
 import { EditRecordSheet } from "@/src/components/sheets";
 import { AddExpenseSheet } from "@/src/components/expense-sheet";
@@ -35,7 +36,9 @@ const signed = (n: number) => `${n < 0 ? "−" : "+"}${formatINR(Math.abs(n))}`;
 
 /** One pocket's register: what was there, every rupee in and out, and what is left — for any period. */
 export default function PocketScreen() {
-  const params = useLocalSearchParams<{ p?: string; date?: string }>();
+  const params = useLocalSearchParams<{ p?: string; date?: string; dir?: string; key?: string; period?: string }>();
+  // "all" lists cash and bank together (Cash In / Cash Out drill-downs); transfers between them are left out.
+  const both = params.p === "all";
   const pocket: Pocket = params.p === "bank" ? "bank" : "cash";
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -43,7 +46,9 @@ export default function PocketScreen() {
   const customers = useCustomers().data ?? [];
   const book = useMoneyBook();
   const today = todayISO();
-  const [period, setPeriod] = useState<Period>(params.date ? "day" : "month");
+  const [period, setPeriod] = useState<Period>(
+    PERIODS.some((p) => p.id === params.period) ? (params.period as Period) : params.date ? "day" : "month",
+  );
   const [date, setDate] = useState(params.date && params.date <= today ? params.date : today);
   const [calendar, setCalendar] = useState(false);
   const [shown, setShown] = useState(PAGE);
@@ -52,8 +57,10 @@ export default function PocketScreen() {
   const [editMove, setEditMove] = useState<Move | null>(null);
   const [move, setMove] = useState<MoveKind | null>(null);
   const [expense, setExpense] = useState(false);
-  const [dir, setDir] = useState<"all" | "in" | "out">("all");
-  const [keyFilter, setKeyFilter] = useState<FlowKey | null>(null);
+  const [dir, setDir] = useState<"all" | "in" | "out">(params.dir === "in" || params.dir === "out" ? params.dir : "all");
+  const [keyFilter, setKeyFilter] = useState<FlowKey | null>(
+    [...IN_ROWS, ...OUT_ROWS].some((r) => r.key === params.key) ? (params.key as FlowKey) : null,
+  );
   const [query, setQuery] = useState("");
   const [sharing, setSharing] = useState(false);
   const { user } = useAuth();
@@ -68,10 +75,14 @@ export default function PocketScreen() {
   };
 
   const data = useMemo(() => {
-    const nowBal = pocketNet(computeFlows(book, persona, (d) => d <= today)[pocket]);
-    const opening = range.from ? pocketNet(computeFlows(book, persona, (d) => d < range.from)[pocket]) : 0;
+    const balance = (keep: (d: string) => boolean) => {
+      const f = computeFlows(book, persona, keep);
+      return both ? roundMoney(pocketNet(f.cash) + pocketNet(f.bank)) : pocketNet(f[pocket]);
+    };
+    const nowBal = balance((d) => d <= today);
+    const opening = range.from ? balance((d) => d < range.from) : 0;
     const list = walletTxns(book, persona, (d) => d >= range.from && d <= to)
-      .filter((t) => t.pocket === pocket)
+      .filter((t) => (both ? !isInternal(t, persona) : t.pocket === pocket))
       .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 
     const byKey = new Map<FlowKey, number>();
@@ -88,7 +99,7 @@ export default function PocketScreen() {
       withBal.push({ t, after: bal });
     }
     return { nowBal, opening, ins: roundMoney(ins), outs: roundMoney(outs), closing: roundMoney(opening + ins - outs), byKey, withBal, count: list.length };
-  }, [book, persona, pocket, range.from, to, today]);
+  }, [book, persona, pocket, both, range.from, to, today]);
 
   const nameOf = (id: string) => customers.find((c) => c.id === id)?.name ?? labels.customer;
   const needle = query.trim().toLowerCase();
@@ -102,13 +113,13 @@ export default function PocketScreen() {
         if (dir === "out" && inflow) return false;
         if (keyFilter && r.t.key !== keyFilter) return false;
         if (needle) {
-          const d = describe(r.t, persona, pocket, nameOf);
+          const d = describe(r.t, persona, r.t.pocket, nameOf);
           if (!`${d.title} ${d.sub} ${r.t.amount}`.toLowerCase().includes(needle)) return false;
         }
         return true;
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data.withBal, dir, keyFilter, needle, persona, pocket, customers],
+    [data.withBal, dir, keyFilter, needle, persona, customers],
   );
   const items = useMemo(() => {
     // Newest day first, each day headed by its own change and closing balance.
@@ -128,7 +139,7 @@ export default function PocketScreen() {
     }
     return out;
   }, [shownRows]);
-  const title = pocketTitle(persona, pocket);
+  const title = both ? `${pocketTitle(persona, "cash")} + बैंक` : pocketTitle(persona, pocket);
   const periodText =
     period === "all"
       ? "शुरू से आज तक"
@@ -153,14 +164,15 @@ export default function PocketScreen() {
 
   const header = (
     <View>
-      <View style={[styles.hero, { backgroundColor: pocket === "cash" ? colors.success : colors.info }]}>
+      <View style={[styles.hero, { backgroundColor: both ? colors.brandPrimary : pocket === "cash" ? colors.success : colors.info }]}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <MaterialIcon name={pocket === "cash" ? "cash-multiple" : "bank-outline"} size={20} color="#fff" />
-          <Text style={styles.heroLabel}>{title} में अभी</Text>
+          <MaterialIcon name={both ? "wallet-outline" : pocket === "cash" ? "cash-multiple" : "bank-outline"} size={20} color="#fff" />
+          <Text style={styles.heroLabel}>{title} · अभी</Text>
         </View>
         <Text style={styles.heroValue}>{formatINR(data.nowBal)}</Text>
       </View>
 
+      {both ? null : (
       <View style={styles.actions}>
         {([
           { id: "in", label: "जोड़ें", icon: "plus-circle-outline", color: colors.success },
@@ -174,6 +186,7 @@ export default function PocketScreen() {
           </Pressable>
         ))}
       </View>
+      )}
 
       <View style={styles.periodRow}>
         {PERIODS.map((p) => (
@@ -198,29 +211,28 @@ export default function PocketScreen() {
       ) : null}
 
       <View style={styles.card}>
-        <Text style={styles.cardHead}>{periodText} का हिसाब</Text>
-        <Line label={period === "all" ? "शुरुआत" : `${formatDateShort(range.from)} से पहले बचा`} value={formatINR(data.opening)} negative={data.opening < 0} />
-        <Line label="आए (+)" value={`+${formatINR(data.ins)}`} color={colors.success} />
-        <Line label="गए (−)" value={`−${formatINR(data.outs)}`} color={colors.error} />
+        <View style={{ flexDirection: "row", gap: spacing.sm, marginBottom: spacing.sm }}>
+          <FlowTile dir="in" value={`+${formatINR(data.ins)}`} onPress={() => setDir(dir === "in" ? "all" : "in")} testID="pocket-sum-in" style={dir === "in" ? styles.tileOn : undefined} />
+          <FlowTile dir="out" value={`−${formatINR(data.outs)}`} onPress={() => setDir(dir === "out" ? "all" : "out")} testID="pocket-sum-out" style={dir === "out" ? styles.tileOn : undefined} />
+        </View>
+        <FlowRow label={period === "all" ? "Opening" : `Opening · ${formatDateShort(range.from)}`} value={formatINR(data.opening)} color={data.opening < 0 ? colors.error : undefined} />
+        <NetRow value={roundMoney(data.ins - data.outs)} />
         <View style={styles.totalRow}>
-          <Text style={styles.totalLabel}>{to === today ? "अब बचा" : `${formatDateShort(to)} को बचा`}</Text>
+          <Text style={styles.totalLabel}>{to === today ? "Closing" : `Closing · ${formatDateShort(to)}`}</Text>
           <Text style={[styles.totalValue, data.closing < 0 && { color: colors.error }]}>{formatINR(data.closing)}</Text>
         </View>
-        <Text style={styles.formula}>
-          {formatINR(data.opening)} + {formatINR(data.ins)} − {formatINR(data.outs)} = {formatINR(data.closing)}
-        </Text>
       </View>
 
       {inRows.length + outRows.length > 0 ? (
         <View style={styles.card}>
-          <Text style={styles.cardHead}>कहाँ से आए, कहाँ गए</Text>
+          {inRows.length ? <FlowHead dir="in" /> : null}
           {inRows.map((r) => (
-            <Line key={r.key} label={r.label(persona, pocket)} value={`+${formatINR(data.byKey.get(r.key) ?? 0)}`} color={colors.success} active={keyFilter === r.key} onPress={() => setKeyFilter(keyFilter === r.key ? null : r.key)} />
+            <FlowRow key={r.key} label={r.label(persona, pocket)} value={`+${formatINR(data.byKey.get(r.key) ?? 0)}`} color={FLOW.in.color} active={keyFilter === r.key} onPress={() => setKeyFilter(keyFilter === r.key ? null : r.key)} testID={`pocket-key-${r.key}`} />
           ))}
+          {outRows.length ? <FlowHead dir="out" /> : null}
           {outRows.map((r) => (
-            <Line key={r.key} label={r.label(persona, pocket)} value={`−${formatINR(data.byKey.get(r.key) ?? 0)}`} color={colors.error} active={keyFilter === r.key} onPress={() => setKeyFilter(keyFilter === r.key ? null : r.key)} />
+            <FlowRow key={r.key} label={r.label(persona, pocket)} value={`−${formatINR(data.byKey.get(r.key) ?? 0)}`} color={FLOW.out.color} active={keyFilter === r.key} onPress={() => setKeyFilter(keyFilter === r.key ? null : r.key)} testID={`pocket-key-${r.key}`} />
           ))}
-          <Text style={styles.formula}>किसी लाइन पर दबाएँ — सिर्फ़ वही लेन-देन दिखेंगे</Text>
         </View>
       ) : null}
 
@@ -237,8 +249,8 @@ export default function PocketScreen() {
         {(
           [
             { id: "all", label: "सब" },
-            { id: "in", label: "सिर्फ़ आए" },
-            { id: "out", label: "सिर्फ़ गए" },
+            { id: "in", label: "⬇ Cash In" },
+            { id: "out", label: "⬆ Cash Out" },
           ] as const
         ).map((f) => (
           <Pressable key={f.id} onPress={() => setDir(f.id)} style={[styles.periodChip, dir === f.id && styles.periodOn]} testID={`pocket-dir-${f.id}`}>
@@ -270,7 +282,7 @@ export default function PocketScreen() {
         tone: isInflow(r.key) ? ("ok" as const) : ("due" as const),
       }));
       const rows: RegisterRow[] = shownRows.map((r) => {
-        const d = describe(r.t, persona, pocket, nameOf);
+        const d = describe(r.t, persona, r.t.pocket, nameOf);
         return { date: r.t.date, title: d.title, sub: d.sub, amount: r.t.amount, inflow: isInflow(r.t.key), after: r.after };
       });
       const doc = registerDoc(user || {}, title, periodText, data, breakdownLines, rows);
@@ -289,17 +301,19 @@ export default function PocketScreen() {
         <Pressable onPress={() => router.back()} hitSlop={12} testID="pocket-back">
           <MaterialIcon name="arrow-left" size={26} color={colors.onSurface} />
         </Pressable>
-        <Text style={styles.topTitle}>{title} का हिसाब</Text>
+        <Text style={styles.topTitle} numberOfLines={1}>{title}</Text>
         <Pressable onPress={sharePdfDoc} hitSlop={8} disabled={sharing} testID="pocket-pdf">
           {sharing ? <ActivityIndicator size="small" color={colors.brandPrimary} /> : <MaterialIcon name="file-pdf-box" size={24} color={colors.brandPrimary} />}
         </Pressable>
-        <Pressable
-          onPress={() => router.push({ pathname: "/pocket" as never, params: { p: pocket === "cash" ? "bank" : "cash", ...(period === "day" ? { date } : {}) } })}
-          hitSlop={8}
-          testID="pocket-switch"
-        >
-          <Text style={styles.link}>{pocket === "cash" ? "बैंक देखें" : `${pocketTitle(persona, "cash")} देखें`}</Text>
-        </Pressable>
+        {both ? null : (
+          <Pressable
+            onPress={() => router.push({ pathname: "/pocket" as never, params: { p: pocket === "cash" ? "bank" : "cash", ...(period === "day" ? { date } : {}) } })}
+            hitSlop={8}
+            testID="pocket-switch"
+          >
+            <Text style={styles.link}>{pocket === "cash" ? "बैंक" : pocketTitle(persona, "cash")}</Text>
+          </Pressable>
+        )}
       </View>
 
       <FlatList
@@ -328,7 +342,7 @@ export default function PocketScreen() {
               <Text style={styles.dayClose}>बचा {formatINR(item.close)}</Text>
             </View>
           ) : (
-            <TxnRow t={item.t} after={item.after} persona={persona} pocket={pocket} nameOf={nameOf} onPress={() => open(item.t)} />
+            <TxnRow t={item.t} after={item.after} persona={persona} pocket={item.t.pocket} nameOf={nameOf} onPress={() => open(item.t)} />
           )
         }
       />
@@ -336,26 +350,10 @@ export default function PocketScreen() {
       <CalendarModal visible={calendar} value={date} onPick={(d) => { setDate(d); setShown(PAGE); }} onClose={() => setCalendar(false)} max={today} />
       <EditRecordSheet entry={editEntry} onClose={() => setEditEntry(null)} />
       <AddExpenseSheet visible={!!editExpense} initial={editExpense} onClose={() => setEditExpense(null)} />
-      <AddExpenseSheet visible={expense} initialMode={pocket === "bank" ? "online" : "cash"} onClose={() => setExpense(false)} />
+      <AddExpenseSheet visible={expense && !both} initialMode={pocket === "bank" ? "online" : "cash"} onClose={() => setExpense(false)} />
       <MoneyMoveSheet kind={null} initial={editMove} onClose={() => setEditMove(null)} />
       <MoneyMoveSheet kind={move} initialPocket={pocket} onClose={() => setMove(null)} />
     </View>
-  );
-}
-
-function Line({ label, value, color, negative, active, onPress }: { label: string; value: string; color?: string; negative?: boolean; active?: boolean; onPress?: () => void }) {
-  const body = (
-    <>
-      {onPress ? <MaterialIcon name={active ? "filter" : "filter-outline"} size={14} color={active ? colors.brandPrimary : colors.muted} /> : null}
-      <Text style={[styles.lineLabel, active && { color: colors.brandPrimary, fontWeight: "800" }]}>{label}</Text>
-      <Text style={[styles.lineValue, color ? { color } : null, negative && { color: colors.error }]}>{value}</Text>
-    </>
-  );
-  if (!onPress) return <View style={styles.line}>{body}</View>;
-  return (
-    <Pressable style={[styles.line, active && styles.lineActive]} onPress={onPress}>
-      {body}
-    </Pressable>
   );
 }
 
@@ -365,14 +363,14 @@ function describe(t: WalletTxn, persona: Persona, pocket: Pocket, nameOf: (id: s
     const e = s.entry;
     const what =
       t.key === "fee"
-        ? "फीस भरी"
+        ? "पोर्टल फीस"
         : t.key === "work"
-          ? "काम के पैसे मिले"
+          ? "काम"
           : t.key === "received"
-            ? "पैसे मिले"
+            ? "पैसे आए"
             : t.key === "purchase"
-              ? e.type === "purchase" ? "सामान / सेवा, उसी समय चुकाए" : "सामान / सेवा का बकाया चुकाया"
-              : persona === "business" ? "उधार दिए" : "पैसे दिए";
+              ? e.type === "purchase" ? "सामान / सेवा" : "सामान / सेवा · चुकाया"
+              : "पैसे गए";
     return { title: nameOf(e.customerId), sub: [what, e.description].filter(Boolean).join(" · "), icon: t.key === "fee" ? "receipt" : "account-outline" };
   }
   if (s.kind === "expense") {
@@ -449,7 +447,7 @@ const styles = StyleSheet.create({
   rowBal: { fontSize: 12, color: colors.muted, marginTop: 2 },
   empty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },
   emptyText: { fontSize: 14, color: colors.muted, textAlign: "center" },
-  lineActive: { backgroundColor: colors.brandTertiary, borderRadius: radius.sm, paddingHorizontal: 6 },
+  tileOn: { borderWidth: 2, borderColor: colors.brandPrimary },
   searchWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surface, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44, borderWidth: 1, borderColor: colors.border, marginTop: spacing.lg },
   search: { flex: 1, color: colors.onSurface, fontSize: 15 },
   listHead: { flexDirection: "row", alignItems: "center", marginTop: spacing.lg, marginBottom: spacing.xs },

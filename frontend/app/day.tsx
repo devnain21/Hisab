@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { colors, spacing, radius } from "@/src/theme";
+import { colors, spacing, radius, semantic } from "@/src/theme";
 import { isRepayment, useCustomers, useNameOf, type Entry } from "@/src/lib/data";
 import { cleanAmountInput, formatDateShort, formatINR, formatMonth, formatWeekdayDate, isBackdated, monthRange, parseAmount, roundMoney, shiftISO, todayISO, weekRange } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
@@ -18,8 +18,7 @@ import { confirmAction } from "@/src/lib/confirm";
 import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet";
 import { PocketCard } from "@/src/components/pocket-card";
 import { DayCloseModal } from "@/src/components/day-close-modal";
-import { coveredBefore, isWorkVendorCost } from "@/src/lib/records";
-import { shopProfit, type MetricKind } from "@/src/lib/metrics";
+import { metricRows, metricSum, shopProfit, workMoney, workMoneyText, type MetricKind } from "@/src/lib/metrics";
 import { useAuth } from "@/src/context/AuthContext";
 import { usePersona } from "@/src/lib/persona";
 import { accountKey, accountLabel, addMove, balanceOf, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
@@ -80,14 +79,23 @@ export default function DayScreen() {
   );
   const dayEntries = useMemo(() => book.entries.filter((e) => e.date === date && mineIds.has(e.customerId)), [book.entries, date, mineIds]);
 
+  // Work that came in this day (a job finished later still counts here), finished or pending; its money as of this day.
+  const arrived = useMemo(() => (isPersonal ? [] : metricRows(book, "business", "work", date, date)), [book, date, isPersonal]);
+  const arrivedMoney = useMemo(() => new Map(arrived.map((r) => [r.key, workMoney(r, book.entries, date)])), [arrived, book.entries, date]);
+  const workEntries = useMemo(() => arrived.flatMap((r) => (r.source === "entry" ? [r.entry] : [])), [arrived]);
+  const openJobs = useMemo(() => arrived.flatMap((r) => (r.source === "job" ? [r] : [])), [arrived]);
+
   type ListKind = "work" | "payment" | "txns";
   const inKind = (e: Entry, k: ListKind) =>
     k === "txns" ? e.type !== "aeps" : k === "work" ? e.type === "work" : e.type === "payment" || (e.type === "work" && (e.paid ?? 0) > 0);
   const amountFor = (e: Entry, k: ListKind) => (k === "payment" && e.type === "work" ? e.paid ?? 0 : e.amount);
   const rows = useMemo(
-    () => (kind === "drawer" || kind === "expense" ? [] : dayEntries.filter((e) => inKind(e, kind)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))),
+    () =>
+      kind === "drawer" || kind === "expense"
+        ? []
+        : (kind === "work" ? workEntries : dayEntries.filter((e) => inKind(e, kind))).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dayEntries, kind]
+    [dayEntries, workEntries, kind]
   );
   const sum = (k: ListKind) => dayEntries.filter((e) => inKind(e, k)).reduce((s, e) => s + amountFor(e, k), 0);
 
@@ -114,34 +122,22 @@ export default function DayScreen() {
   const expectedCash = openingCash + pocketNet(flows.cash);
   const expectedBank = openingBank + pocketNet(flows.bank);
 
-  const workEntries = useMemo(() => dayEntries.filter((e) => e.type === "work"), [dayEntries]);
-  const workIds = useMemo(() => new Set(book.entries.filter((e) => e.type === "work").map((e) => e.id)), [book.entries]);
-  const workTotal = workEntries.reduce((s, e) => s + e.amount, 0);
-  const workFees = workEntries.reduce((s, e) => s + (e.fee ?? 0), 0);
-  const workVendor = dayEntries.reduce((s, e) => s + (isWorkVendorCost(e, workIds) ? e.amount : 0), 0);
-  const workProfit = workTotal - workFees - workVendor;
+  const workTotal = roundMoney(arrived.reduce((s, r) => s + r.amount, 0));
+  const workFees = useMemo(() => (isPersonal ? 0 : metricSum(book, "business", "fee", date, date)), [book, date, isPersonal]);
+  const workVendor = useMemo(() => (isPersonal ? 0 : metricSum(book, "business", "workVendor", date, date)), [book, date, isPersonal]);
+  const workProfit = roundMoney(workTotal - workFees - workVendor);
   // Khata totals include old (backdated) rows; only the galla / bank cards leave them out.
-  // Paid against the day's own work (the online part of a split, or the rest paid later that day) is that work's
-  // money, not old udhaar coming back.
-  const dayWorkIds = new Set(workEntries.map((e) => e.id));
-  const forDayWork = (e: Entry) => e.type === "payment" && !!e.linkId && dayWorkIds.has(e.linkId);
-  const withWork = dayEntries.filter(forDayWork);
-  const workCash =
-    workEntries.filter((e) => e.mode !== "online").reduce((s, e) => s + (e.paid ?? 0), 0) +
-    withWork.filter((e) => e.mode !== "online").reduce((s, e) => s + e.amount, 0);
-  const workOnline =
-    workEntries.filter((e) => e.mode === "online").reduce((s, e) => s + (e.paid ?? 0), 0) +
-    withWork.filter((e) => e.mode === "online").reduce((s, e) => s + e.amount, 0);
-  // Money taken on an earlier day (job advance or the customer's jama) already paid for this work: it is neither today's money nor udhaar.
-  const advanceByWork = useMemo(() => coveredBefore(book.entries, workEntries, date), [book.entries, date, workEntries]);
-  const sameDayLinked = (w: Entry) => withWork.filter((p) => p.linkId === w.id).reduce((s, p) => s + p.amount, 0);
-  const workAdvance = roundMoney(
-    workEntries.reduce((s, w) => s + Math.min(advanceByWork.get(w.id) ?? 0, Math.max(0, w.amount - (w.paid ?? 0) - sameDayLinked(w))), 0),
-  );
-  const workUdhaar = Math.max(0, roundMoney(workTotal - (workCash + workOnline) - workAdvance));
-  const dayPayments = dayEntries.filter((e) => e.type === "payment" && !forDayWork(e));
-  const paymentCash = dayPayments.filter((e) => e.mode !== "online").reduce((s, e) => s + e.amount, 0);
-  const paymentOnline = dayPayments.filter((e) => e.mode === "online").reduce((s, e) => s + e.amount, 0);
+  // Money for the day's own work is that work's; everything else that came in (old udhaar, work that came in
+  // on an earlier day) is "ग्राहकों से".
+  const moneyOf = (pending: boolean) => [...arrivedMoney.values()].filter((m) => m.pending === pending);
+  const workCash = roundMoney([...arrivedMoney.values()].reduce((s, m) => s + m.cash, 0));
+  const workOnline = roundMoney([...arrivedMoney.values()].reduce((s, m) => s + m.online, 0));
+  const workUdhaar = roundMoney(moneyOf(false).reduce((s, m) => s + m.left, 0));
+  const workPending = roundMoney(moneyOf(true).reduce((s, m) => s + m.left, 0));
+  const inByMode = (online: boolean) =>
+    dayEntries.reduce((s, e) => s + ((e.mode === "online") !== online ? 0 : e.type === "payment" ? e.amount : e.type === "work" ? Math.min(e.paid ?? 0, e.amount) : 0), 0);
+  const paymentCash = Math.max(0, roundMoney(inByMode(false) - workCash));
+  const paymentOnline = Math.max(0, roundMoney(inByMode(true) - workOnline));
 
   const dayExpenses = useMemo(
     () => book.expenses.filter((x) => x.date === date && expensePersona(x) === persona).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -177,7 +173,7 @@ export default function DayScreen() {
       ]
     : [
         { id: "drawer", label: "बचत", value: signedINR(dayNet) },
-        { id: "work", label: "काम", value: formatINR(sum("work")) },
+        { id: "work", label: "काम", value: formatINR(workTotal) },
         { id: "payment", label: "⬇ ग्राहकों से", value: formatINR(sum("payment")) },
         { id: "expense", label: "खर्च", value: formatINR(expenseTotal) },
       ];
@@ -312,7 +308,7 @@ export default function DayScreen() {
         ) : kind === "work" ? (
           <View style={styles.workSummaryCard}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
-              <Text style={styles.totalLabel}>कुल काम ({rows.length})</Text>
+              <Text style={styles.totalLabel}>आए काम ({arrived.length})</Text>
               <Text style={[styles.totalValue, { fontSize: 24, marginTop: 0 }]}>{formatINR(workTotal)}</Text>
             </View>
             {workFees > 0 ? (
@@ -353,17 +349,26 @@ export default function DayScreen() {
                   <Text style={[styles.miniPillText, { color: colors.info }]}>UPI: {formatINR(workOnline)}</Text>
                 </View>
               ) : null}
-              {workAdvance > 0 ? (
-                <View style={[styles.miniPill, { backgroundColor: colors.successSoft }]}>
-                  <Text style={[styles.miniPillText, { color: colors.success }]}>पहले मिला एडवांस: {formatINR(workAdvance)}</Text>
-                </View>
-              ) : null}
               {workUdhaar > 0 ? (
                 <View style={[styles.miniPill, { backgroundColor: colors.errorSoft }]}>
                   <Text style={[styles.miniPillText, { color: colors.error }]}>उधारी: {formatINR(workUdhaar)}</Text>
                 </View>
               ) : null}
+              {workPending > 0 ? (
+                <View style={[styles.miniPill, { backgroundColor: semantic.pendingSoft }]}>
+                  <Text style={[styles.miniPillText, { color: colors.warning }]}>पेंडिंग काम: {formatINR(workPending)}</Text>
+                </View>
+              ) : null}
             </View>
+            {openJobs.map((r) => (
+              <Pressable key={r.key} style={styles.workFeeRow} onPress={() => router.push(`/customer/${r.job.customerId}` as never)} testID={`day-open-job-${r.key}`}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.feeLabel} numberOfLines={1}>{nameOf(r.job.customerId)} · {r.job.title}</Text>
+                  <Text style={styles.notes} numberOfLines={1}>{workMoneyText(arrivedMoney.get(r.key)!)}</Text>
+                </View>
+                <Text style={styles.feeValue}>{formatINR(r.amount)}</Text>
+              </Pressable>
+            ))}
           </View>
         ) : kind === "payment" ? (
           <View style={styles.totalCard}>
@@ -619,7 +624,7 @@ export default function DayScreen() {
           keyExtractor={(e) => e.id}
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2, gap: spacing.sm }}
           ListEmptyComponent={
-            <View style={styles.empty}>
+            kind === "work" && openJobs.length ? null : <View style={styles.empty}>
               <MaterialIcon name="calendar-blank-outline" size={32} color={colors.muted} />
               <Text style={styles.emptyTitle}>
                 {kind === "txns" ? "इस दिन कोई लेन-देन नहीं" : kind === "work" ? "इस दिन कोई काम नहीं" : "इस दिन कुछ नहीं मिला"}
@@ -663,15 +668,12 @@ export default function DayScreen() {
                 {e.type === "work" ? (
                   <View style={{ marginTop: 2 }}>
                     {(() => {
-                      const before = advanceByWork.get(e.id) ?? 0;
-                      const got = roundMoney((e.paid ?? 0) + sameDayLinked(e) + before);
+                      const m = kind === "work" ? arrivedMoney.get(e.id) : undefined;
+                      if (m) return <Text style={[styles.notes, { color: m.left > 0 ? colors.error : colors.success }]}>{workMoneyText(m)}</Text>;
+                      const paid = e.paid ?? 0;
                       return (
-                        <Text style={[styles.notes, { color: got >= e.amount ? colors.success : colors.error }]}>
-                          {got >= e.amount
-                            ? before > 0 ? "पहले एडवांस में मिल चुके" : "पूरे मिले"
-                            : got > 0
-                            ? `${formatINR(got)} मिले · ${formatINR(roundMoney(e.amount - got))} बाकी`
-                            : "पैसे बाकी"}
+                        <Text style={[styles.notes, { color: paid >= e.amount ? colors.success : colors.error }]}>
+                          {paid >= e.amount ? "पूरे मिले" : paid > 0 ? `${formatINR(paid)} मिले · ${formatINR(e.amount - paid)} बाकी` : "पैसे बाकी"}
                         </Text>
                       );
                     })()}
@@ -730,19 +732,23 @@ function RangeView({
     const flows = computeFlows(book, persona, inRange);
     const entries = book.entries.filter((e) => inRange(e.date) && mineIds.has(e.customerId));
     const expenses = book.expenses.filter((x) => inRange(x.date) && expensePersona(x) === persona);
-    // Personal: money lent out (not paying back goods); shop: work done.
-    const out = (e: Entry) => (isPersonal ? (e.type === "given" && !isRepayment(e) ? e.amount : 0) : e.type === "work" ? e.amount : 0);
+    // Personal: money lent out (not paying back goods); shop: work that came in (by the day it came in).
+    const workRows = isPersonal ? [] : metricRows(book, "business", "work", from, to);
+    const workOn = (d: string) =>
+      isPersonal
+        ? entries.filter((e) => e.date === d).reduce((s, e) => s + (e.type === "given" && !isRepayment(e) ? e.amount : 0), 0)
+        : workRows.filter((r) => r.date === d).reduce((s, r) => s + r.amount, 0);
     const got = (e: Entry) => (e.type === "payment" ? e.amount : e.type === "work" ? e.paid ?? 0 : 0);
     const days: { d: string; work: number; got: number; exp: number }[] = [];
     for (let d = to; d >= from; d = shiftISO(d, -1)) {
       const de = entries.filter((e) => e.date === d);
       const dx = expenses.filter((x) => x.date === d);
-      const row = { d, work: de.reduce((s, e) => s + out(e), 0), got: de.reduce((s, e) => s + got(e), 0), exp: dx.reduce((s, x) => s + x.amount, 0) };
+      const row = { d, work: roundMoney(workOn(d)), got: de.reduce((s, e) => s + got(e), 0), exp: dx.reduce((s, x) => s + x.amount, 0) };
       if (row.work || row.got || row.exp || de.length) days.push(row);
     }
     const byTitle = new Map<string, number>();
     expenses.forEach((x) => byTitle.set(x.title, (byTitle.get(x.title) ?? 0) + x.amount));
-    const work = entries.reduce((s, e) => s + out(e), 0);
+    const work = roundMoney(days.reduce((s, r) => s + r.work, 0));
     const exp = expenses.reduce((s, x) => s + x.amount, 0);
     const shop = isPersonal ? null : shopProfit(book, from, to);
     const commission = shop?.commission ?? 0;

@@ -13,11 +13,11 @@ import { AEPS_META } from "@/src/lib/aeps";
 import { usePersona } from "@/src/lib/persona";
 import { useMoneyBook } from "@/src/lib/wallet";
 import { HIDDEN, usePrefs } from "@/src/lib/prefs";
-import { METRIC_KINDS, metricRows, type MetricKind, type MetricRow } from "@/src/lib/metrics";
+import { METRIC_KINDS, metricRows, workMoney, workMoneyText, type MetricKind, type MetricRow } from "@/src/lib/metrics";
 import type { Expense } from "@/src/lib/expenses";
 
 const TITLES: Record<MetricKind, string> = {
-  work: "काम बुक",
+  work: "आए काम",
   fee: "पोर्टल / सरकारी फीस",
   vendor: "Vendor लागत",
   workVendor: "Vendor लागत",
@@ -57,6 +57,7 @@ export default function EntriesScreen() {
 
   const open = (r: MetricRow) => {
     if (r.source === "entry") setEditing(r.entry);
+    else if (r.source === "job") router.push(`/customer/${r.job.customerId}` as never);
     else if (r.source === "expense") setEditExpense(r.expense);
     else router.push(`/aeps/${r.txn.id}` as never);
   };
@@ -67,11 +68,11 @@ export default function EntriesScreen() {
       const t = r.txn;
       return { title: t.customerName || "काउंटर ग्राहक", sub: `${AEPS_META[t.type].hi} ${formatINR(t.amount)} · कमीशन` };
     }
+    if (r.source === "job") return { title: nameOf(r.job.customerId), sub: `${r.job.title} · ${workMoneyText(workMoney(r, book.entries))}` };
     const e = r.entry;
-    const paid = e.paid ?? 0;
     let sub = e.description || (e.type === "work" ? "काम" : "");
     if (kind === "fee") sub = `${e.description || "काम"} · काम ${formatINR(e.amount)}`;
-    else if (kind === "work") sub = `${sub} · ${paid >= e.amount ? "पूरे मिले" : paid > 0 ? `${formatINR(paid)} मिले` : "उधार"}`;
+    else if (kind === "work") sub = `${sub} · ${workMoneyText(workMoney(r, book.entries))}`;
     else if (kind === "collected" && e.type === "work") sub = `${sub} · काम के साथ मिले`;
     return { title: nameOf(e.customerId), sub };
   };

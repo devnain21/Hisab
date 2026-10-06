@@ -8,7 +8,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, semantic, type, elevation } from "@/src/theme";
 import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, isVendor, type Entry, type Job } from "@/src/lib/data";
-import { buildAllLedgers, coveredBefore, vendorByJob, workForJob } from "@/src/lib/records";
+import { buildAllLedgers, vendorByJob, workForJob } from "@/src/lib/records";
 import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import * as Updates from "expo-updates";
@@ -19,7 +19,7 @@ import { clearRejected, flush, rejectedChanges, retryRejected, retryableRejected
 import { cashTotals, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
 import { FlowTile, signedINR } from "@/src/components/money-flow";
 import { useCounterMode } from "@/src/lib/counter";
-import { metricRows, metricSum, type MetricKind } from "@/src/lib/metrics";
+import { metricRows, metricSum, workMoney, workMoneyText, type MetricKind } from "@/src/lib/metrics";
 import { accountName, usePersona } from "@/src/lib/persona";
 import { TERMS, balanceTerm } from "@/src/lib/terms";
 import { HIDDEN, savePrefs, usePrefs } from "@/src/lib/prefs";
@@ -189,16 +189,13 @@ function HomeBody() {
   // Work booked today in any mode (cash, online or udhaar). AEPS counter money is pass-through, so only
   // its commission counts. Fees and vendor cost match the day screen's work profit.
   const todayWork = useMemo(() => {
-    if (isPersonal) return { gross: 0, count: 0, fees: 0, vendor: 0, commission: 0, booked: 0, net: 0, paidBefore: 0 };
+    if (isPersonal) return { rows: [], gross: 0, count: 0, fees: 0, vendor: 0, commission: 0, booked: 0, net: 0 };
     const work = metricRows(book, "business", "work", today, today);
     const gross = roundMoney(work.reduce((s, r) => s + r.amount, 0));
-    const workRows = work.flatMap((r) => (r.source === "entry" ? [r.entry] : []));
-    const before = coveredBefore(book.entries, workRows, today);
-    const paidBefore = roundMoney(workRows.reduce((s, w) => s + Math.min(before.get(w.id) ?? 0, w.amount), 0));
     const fees = metricSum(book, "business", "fee", today, today);
     const vendor = metricSum(book, "business", "workVendor", today, today);
     const commission = metricSum(book, "business", "commission", today, today);
-    return { gross, count: work.length, fees, vendor, commission, booked: roundMoney(gross + commission), net: roundMoney(gross - fees - vendor + commission), paidBefore };
+    return { rows: work, gross, count: work.length, fees, vendor, commission, booked: roundMoney(gross + commission), net: roundMoney(gross - fees - vendor + commission) };
   }, [book, today, isPersonal]);
   const openMetric = (kind: MetricKind) => router.push({ pathname: "/entries" as never, params: { kind, from: today } });
   const [workSheet, setWorkSheet] = useState(false);
@@ -754,9 +751,28 @@ function HomeBody() {
             </Pressable>
           </SheetShell>
           <SheetShell visible={workSheet} onClose={() => setWorkSheet(false)} title="आज का काम" testID="sheet-today-work">
+            <Pressable style={styles.breakRow} onPress={() => { setWorkSheet(false); setTimeout(() => openMetric("work"), 250); }} accessibilityRole="button" testID="today-work-gross">
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.rowTitle} numberOfLines={1}>आज आए काम ({todayWork.count})</Text>
+              </View>
+              <Text style={styles.breakValue} numberOfLines={1}>{money(todayWork.gross)}</Text>
+              <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
+            </Pressable>
+            {todayWork.rows.map((r) => {
+              const customerId = r.source === "job" ? r.job.customerId : r.source === "entry" ? r.entry.customerId : "";
+              const what = r.source === "job" ? r.job.title : r.source === "entry" ? r.entry.description || "काम" : "";
+              return (
+                <Pressable key={r.key} style={styles.workItem} onPress={() => { setWorkSheet(false); setTimeout(() => router.push(`/customer/${customerId}` as never), 250); }} accessibilityRole="button" testID={`today-work-item-${r.key}`}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.workItemTitle} numberOfLines={1}>{nameOf(customerId)} · {what}</Text>
+                    <Text style={styles.rowSub} numberOfLines={1}>{hideAmounts ? "" : workMoneyText(workMoney(r, entries))}</Text>
+                  </View>
+                  <Text style={styles.workItemValue} numberOfLines={1}>{money(r.amount)}</Text>
+                </Pressable>
+              );
+            })}
             {(
               [
-                { key: "gross", label: "कुल काम बुक", sub: `${todayWork.count} काम · नकद, ऑनलाइन, उधार सब`, value: todayWork.gross, sign: "", to: () => openMetric("work") },
                 { key: "fees", label: "पोर्टल / सरकारी फीस", sub: "", value: todayWork.fees, sign: "−", to: () => openMetric("fee") },
                 { key: "vendor", label: "Vendor लागत", sub: "", value: todayWork.vendor, sign: "−", to: () => openMetric("workVendor") },
                 ...(counter.on || todayWork.commission > 0
@@ -780,11 +796,6 @@ function HomeBody() {
               <Text style={[styles.breakTotalValue, todayWork.net < 0 && { color: semantic.due }]} numberOfLines={1}>{money(todayWork.net)}</Text>
               <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
             </Pressable>
-            {todayWork.paidBefore > 0 ? (
-              <Text style={[styles.rowSub, { marginTop: spacing.sm }]} testID="today-work-paid-before">
-                इसमें {money(todayWork.paidBefore)} पहले ही मिल चुके थे (एडवांस) — वो उसी दिन के गल्ले / बैंक में जुड़ चुके, आज नहीं
-              </Text>
-            ) : null}
           </SheetShell>
           <Lazy when={vendorOrder}><AddEntrySheet visible={vendorOrder} type="purchase" vendor onClose={() => setVendorOrder(false)} /></Lazy>
           <Lazy when={!!settling}><SettleSheet work={settling} onClose={() => setSettling(null)} /></Lazy>
@@ -955,6 +966,9 @@ const styles = StyleSheet.create({
   sectionSub: { fontSize: 12, fontWeight: "600", color: colors.muted, marginTop: 2, fontVariant: ["tabular-nums"] },
   breakRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
   breakValue: { fontSize: 15, fontWeight: "700", color: colors.onSurface, fontVariant: ["tabular-nums"] },
+  workItem: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm, paddingLeft: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  workItemTitle: { fontSize: 14, fontWeight: "600", color: colors.onSurface },
+  workItemValue: { fontSize: 14, fontWeight: "700", color: colors.onSurfaceSecondary, fontVariant: ["tabular-nums"] },
   breakTotal: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: semantic.receivedSoft },
   breakTotalLabel: { flex: 1, fontSize: 15, fontWeight: "800", color: colors.onSurface },
   breakTotalValue: { fontSize: 18, fontWeight: "800", color: semantic.received, fontVariant: ["tabular-nums"] },

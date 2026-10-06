@@ -5,7 +5,7 @@ import { File, Paths } from "expo-file-system";
 import { itemsOf, type Customer, type Entry, type AepsTxn, type Job } from "@/src/lib/data";
 import type { Ledger, WorkStatus } from "@/src/lib/records";
 import { formatDate, formatDateShort, formatINR, formatPhone, localDay, roundMoney, todayISO } from "@/src/lib/format";
-import { ADVANCE, jobStart } from "@/src/lib/records";
+import { ADVANCE, buildLedger, jobStart } from "@/src/lib/records";
 import type { ShopProfile } from "@/src/context/AuthContext";
 import { AEPS_META, aepsBill, customerCharge, defaultVia, maskAccount, statusLabel, viaBill } from "@/src/lib/aeps";
 import { accountName } from "@/src/lib/persona";
@@ -154,6 +154,8 @@ export function receiptDoc(
   const dateRows = (): CardRow[] => (dates ? [{ icon: "cal", tint: DUE, label: "तारीख", value: dateText() }] : []);
   /** Payment that came before its work: an एडवांस everywhere on the slip, not "भुगतान". */
   let early = false;
+  /** Open job's advance: by when the work will be ready. */
+  let readyBy = "";
 
   if (entry.type === "payment") {
     const job = entry.linkId ? ctx.jobs?.find((j) => j.id === entry.linkId && j.status !== "done") : undefined;
@@ -182,7 +184,14 @@ export function receiptDoc(
       if (est > 0) rows.push({ icon: "scale", tint: AMBER, label: "बकाया", value: formatINR(itemDue), tone: itemDue > 0 ? "due" : "ok" });
       titleHi = "एडवांस रसीद";
       titleEn = "ADVANCE RECEIPT";
-      advanceBanner = { color: INFO, bg: "#E8F1FD", icon: "check", title: "एडवांस प्राप्त हुआ", sub: itemDue > 0 ? `काम पूरा होने पर बाकी ${formatINR(itemDue)}` : "धन्यवाद 🙏" };
+      readyBy = job.dueDate ? `काम ${formatDate(job.dueDate)} तक पूरा हो जाएगा` : "";
+      advanceBanner = {
+        color: INFO,
+        bg: "#E8F1FD",
+        icon: "check",
+        title: "एडवांस प्राप्त हुआ",
+        sub: [readyBy, itemDue > 0 ? `काम पूरा होने पर बाकी ${formatINR(itemDue)}` : "धन्यवाद 🙏"].filter(Boolean).join(" · "),
+      };
     } else {
       lines.push({ label, value: formatINR(entry.amount), tone: "ok" });
       const about = work?.description || (looseAdvance ? entry.notes.trim() : entry.description && entry.description !== "भुगतान" ? entry.description : "");
@@ -191,7 +200,9 @@ export function receiptDoc(
       titleHi = early ? "एडवांस रसीद" : "भुगतान रसीद";
       titleEn = early ? "ADVANCE RECEIPT" : "PAYMENT RECEIPT";
     }
-    seal = early ? { text: "ADVANCE", color: INFO } : { text: "RECEIVED", color: OK };
+    // An advance whose work is now finished is stamped by that work: paid in full, or still pending.
+    const workLeft = early && work ? buildLedger((ctx.entries ?? []).filter((e) => e.customerId === work.customerId)).work.get(work.id)?.remaining ?? 0 : 0;
+    seal = early && work ? (workLeft > 0 ? { text: "PENDING", color: AMBER } : { text: "PAID", color: OK }) : early ? { text: "ADVANCE", color: INFO } : { text: "RECEIVED", color: OK };
   } else if (entry.type === "work") {
     itemDue = status?.remaining ?? Math.max(0, entry.amount - (entry.paid ?? 0));
     const parts = workParts(entry, status);
@@ -209,7 +220,7 @@ export function receiptDoc(
     );
     titleHi = personal ? "बिल" : itemDue > 0 ? "ग्राहक बिल" : "ग्राहक भुगतान रसीद";
     titleEn = personal ? "BILL" : itemDue > 0 ? "CUSTOMER BILL" : "CUSTOMER PAYMENT RECEIPT";
-    seal = itemDue > 0 ? { text: TERMS.docDueShort, color: DUE } : { text: "PAID", color: OK };
+    seal = itemDue > 0 ? { text: "PENDING", color: AMBER } : { text: "PAID", color: OK };
   } else {
     const received = status?.received ?? (purchase ? entry.paid ?? 0 : 0);
     itemDue = status?.remaining ?? Math.max(0, entry.amount - received);
@@ -247,6 +258,7 @@ export function receiptDoc(
     "──────────",
     ...lines.map(lineText),
     ...(itemDue <= 0 && entry.type === "work" ? ["पूरा भुगतान ✓"] : []),
+    ...(readyBy ? ["", `⏳ ${readyBy}`] : []),
     ...(account ? ["", `*${account.label}: ${account.value}*`] : []),
     "",
     ...(isCustomer && !purchase && !given ? shareFooter(shop, upiDue, customer.name) : ["धन्यवाद 🙏"]),

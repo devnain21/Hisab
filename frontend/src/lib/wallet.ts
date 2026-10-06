@@ -5,7 +5,7 @@ import * as Crypto from "expo-crypto";
 import { api } from "./api";
 import { store, withPending } from "./store";
 import { isBackdated, roundMoney, todayISO } from "./format";
-import { isRepayment, useAeps, useCustomers, useEntries, type AepsTxn, type Customer, type Entry } from "./data";
+import { isRepayment, useAeps, useCustomers, useEntries, useJobs, type AepsTxn, type Customer, type Entry, type Job } from "./data";
 import { useExpenses, expensePersona, type Expense } from "./expenses";
 import { aepsLegs } from "./aeps";
 import type { Persona } from "./persona";
@@ -113,7 +113,7 @@ export const pocketIn = (f: PocketFlow) => roundMoney(f.work + f.received + f.co
 export const pocketOut = (f: PocketFlow) => roundMoney(f.counterOut + f.expense + f.fee + f.given + f.purchase + f.moveOut);
 export const pocketNet = (f: PocketFlow) => roundMoney(pocketIn(f) - pocketOut(f)) + 0;
 
-type Book = { entries: Entry[]; customers: Customer[]; aeps: AepsTxn[]; expenses: Expense[]; moves: Move[] };
+type Book = { entries: Entry[]; customers: Customer[]; aeps: AepsTxn[]; expenses: Expense[]; moves: Move[]; jobs?: Job[] };
 
 export function personaOfEntry(e: Entry, byId: Map<string, Customer>): Persona {
   return byId.get(e.customerId)?.persona === "personal" ? "personal" : "business";
@@ -232,10 +232,11 @@ export function useMoneyBook() {
   const aeps = useAeps().data;
   const { all: expenses } = useExpenses();
   const moves = useMoves();
+  const jobs = useJobs().data;
   return useMemo<Book>(
     // An entry's book is known from its customer; until customers load, personal rows would count as shop money.
-    () => ({ entries: customers ? (entries ?? []) : [], customers: customers ?? [], aeps: aeps ?? [], expenses, moves }),
-    [entries, customers, aeps, expenses, moves]
+    () => ({ entries: customers ? (entries ?? []) : [], customers: customers ?? [], aeps: aeps ?? [], expenses, moves, jobs: jobs ?? [] }),
+    [entries, customers, aeps, expenses, moves, jobs]
   );
 }
 

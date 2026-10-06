@@ -422,7 +422,7 @@ export default function CustomerDetail() {
       />
       <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
       <RemindDateSheet customer={customer} visible={remindSheet} onClose={() => setRemindSheet(false)} />
-      <LedgerLinkSheet customer={customer} due={due} shopName={user?.shop_name ?? ""} visible={ledgerSheet} onClose={() => setLedgerSheet(false)} />
+      <LedgerLinkSheet customer={customer} due={due} shopName={accountName(user ? { ...user, persona: customer.persona === "personal" ? "personal" : "business" } : null)} visible={ledgerSheet} onClose={() => setLedgerSheet(false)} />
       <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
       <ReceiptSheet
         doc={stmtDoc}
@@ -439,7 +439,7 @@ export default function CustomerDetail() {
         visible={qrModal}
         onClose={() => setQrModal(false)}
         upiId={user?.shop_upi || ""}
-        shopName={accountName(user) || "खाता"}
+        shopName={accountName(user ? { ...user, persona: customer.persona === "personal" ? "personal" : "business" } : null) || "खाता"}
         amount={due}
         customerName={customer.name}
       />

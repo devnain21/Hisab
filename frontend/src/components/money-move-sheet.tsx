@@ -4,7 +4,7 @@ import { colors, spacing } from "@/src/theme";
 import { dateOnSave, formatINR, isValidISO, parseAmount, todayISO } from "@/src/lib/format";
 import { usePersona, type Persona } from "@/src/lib/persona";
 import { accountKey, accountLabel, addMove, balanceOf, deleteMove, pocketName, useMoneyBook, type AccountKey, type Move, type Pocket } from "@/src/lib/wallet";
-import { Chip, DangerLink, DateField, Field, PrimaryButton, SheetShell, confirmOldDate, inputStyle } from "@/src/components/sheets";
+import { Chip, CustomerPicker, DangerLink, DateField, Field, PrimaryButton, SheetShell, confirmOldDate, inputStyle, useCustomerChoice } from "@/src/components/sheets";
 import { store } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
 import { EditHistory } from "@/src/components/edit-history";
@@ -43,6 +43,9 @@ export function MoneyMoveSheet({
   const kind = initial ? readMove(initial, persona).kind : newKind;
   const [pocket, setPocket] = useState<Pocket>("cash");
   const [other, setOther] = useState(false);
+  // Personal: money borrowed from someone goes on their khata (देने हैं), so it never reads as own money.
+  const [loan, setLoan] = useState(false);
+  const lender = useCustomerChoice(!!newKind && !initial);
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [date, setDate] = useState(todayISO());
@@ -65,6 +68,7 @@ export function MoneyMoveSheet({
     if (!newKind) return;
     setPocket(initialPocket);
     setOther(false);
+    setLoan(false);
     setAmount("");
     setNote("");
     setDate(initialDate ?? todayISO());
@@ -102,8 +106,10 @@ export function MoneyMoveSheet({
     () => (from ? Math.min(balanceOf(book, from, date), balanceOf(book, from, date > todayISO() ? date : todayISO())) + own0 : Infinity),
     [book, from, date, own0],
   );
+  const canLoan = !initial && kind === "in" && persona === "personal";
+  const borrowing = canLoan && loan;
   const short = !!from && amt > available;
-  const valid = amt > 0 && isValidISO(date);
+  const valid = amt > 0 && isValidISO(date) && (!borrowing || lender.ready);
 
   const save = () => (initial ? confirmOldDate(initial.date, date, initial.createdAt, cashWord, checkShort) : checkShort());
   const checkShort = () => {
@@ -125,6 +131,20 @@ export function MoneyMoveSheet({
     if (!kind) return;
     setSaving(true);
     try {
+      if (borrowing) {
+        const customerId = await lender.resolve();
+        store.createEntry({
+          customerId,
+          type: "payment",
+          date: dateOnSave(date, openedOn),
+          description: "उधार लिया",
+          amount: amt,
+          mode: pocket === "bank" ? "online" : "cash",
+          notes: note.trim(),
+        });
+        onClose();
+        return;
+      }
       const body = { date: initial ? date : dateOnSave(date, openedOn), from, to, amount: amt, note: other ? "" : note.trim() };
       if (initial) store.updateMove(initial.id, body);
       else await addMove(body);
@@ -168,22 +188,29 @@ export function MoneyMoveSheet({
       {kind === "in" || kind === "out" ? (
         <Field label={kind === "in" ? "कहाँ से" : "कहाँ"}>
           <View style={styles.row}>
-            <Chip label={kind === "in" ? "बाहर से" : "बाहर"} active={!other} onPress={() => { setOther(false); setError(""); }} testID="move-outside" />
+            <Chip label={kind === "in" ? "बाहर से" : "बाहर"} active={!other && !borrowing} onPress={() => { setOther(false); setLoan(false); setError(""); }} testID="move-outside" />
+            {canLoan ? <Chip label="किसी से उधार लिया" active={borrowing} onPress={() => { setOther(false); setLoan(true); setError(""); }} testID="move-loan" /> : null}
             {canCross ? (
               <Chip
                 label={`${accountLabel(across)} ${kind === "in" ? "से" : "में"}`}
                 active={other}
-                onPress={() => { setOther(true); setError(""); }}
+                onPress={() => { setOther(true); setLoan(false); setError(""); }}
                 testID="move-across"
               />
             ) : null}
           </View>
+          {borrowing ? (
+            <View style={{ marginTop: spacing.sm }}>
+              <CustomerPicker choice={lender} label="किससे लिया" testPrefix="move-lender" />
+              <Text style={styles.hint}>उनके खाते में ‘देने हैं’ लिखा जाएगा; लौटाएँ तो उनके खाते में ‘पैसे दिए’ लिखें।</Text>
+            </View>
+          ) : null}
           {!other ? (
             <TextInput
               style={[inputStyle, { marginTop: spacing.sm }]}
               value={note}
               onChangeText={setNote}
-              placeholder={kind === "in" ? "जैसे घर से, उधार लिया" : "जैसे घर ले गए"}
+              placeholder={borrowing ? "नोट (वैकल्पिक)" : kind === "in" ? "जैसे घर से" : "जैसे घर ले गए"}
               placeholderTextColor={colors.muted}
               testID="move-note"
             />

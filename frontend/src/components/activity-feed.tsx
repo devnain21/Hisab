@@ -7,7 +7,7 @@ import { AEPS_META } from "@/src/lib/aeps";
 import type { Persona } from "@/src/lib/persona";
 import { accountLabel, isInflow, isInternal, personaOfEntry, walletTxns, type Move, type Pocket, type WalletSource, type WalletTxn } from "@/src/lib/wallet";
 import type { AepsTxn, Customer, Entry } from "@/src/lib/data";
-import type { Expense } from "@/src/lib/expenses";
+import { expensePersona, type Expense } from "@/src/lib/expenses";
 import { flowLabel, pocketTitle } from "@/src/components/pocket-card";
 
 /** Title, detail line and icon of one money movement, in the In / Out words. */
@@ -49,10 +49,13 @@ type Book = { entries: Entry[]; customers: Customer[]; aeps: AepsTxn[]; expenses
  */
 export function activityFeed(book: Book, persona: Persona, nameOf: (id: string) => string, limit: number): Activity[] {
   const rows: Activity[] = [];
+  const shownMoves = new Set<string>();
   for (const t of walletTxns(book, persona, () => true)) {
     if (t.src.kind === "move" && isInternal(t, persona)) {
-      if (t.key !== "moveOut") continue;
+      // One neutral row per transfer (a move to / from the shop has only one leg in this book).
       const m = t.src.move;
+      if (shownMoves.has(m.id)) continue;
+      shownMoves.add(m.id);
       rows.push({ id: m.id, date: t.date, createdAt: t.createdAt, tone: "neutral", amount: t.amount, title: `${accountLabel(m.from)} → ${accountLabel(m.to)}`, sub: m.note || "ट्रांसफर", icon: "swap-horizontal", src: t.src });
       continue;
     }
@@ -67,6 +70,12 @@ export function activityFeed(book: Book, persona: Persona, nameOf: (id: string) 
     if (!old && !onCredit) continue;
     const sub = [onCredit ? "उधार पर लिया" : "पुराना हिसाब", e.description].filter(Boolean).join(" · ");
     rows.push({ id: `${e.id}:khata`, date: e.date, createdAt: e.createdAt, tone: "neutral", amount: e.amount, title: nameOf(e.customerId), sub, icon: onCredit ? "cart-outline" : "history", src: { kind: "entry", entry: e } });
+  }
+  // Old expenses written in later never touch cash / bank, but they were still spent; list them so none goes missing.
+  for (const x of book.expenses) {
+    if (expensePersona(x) !== persona || !isBackdated(x.date, x.createdAt)) continue;
+    const sub = ["पुराना खर्च", x.notes].filter(Boolean).join(" · ");
+    rows.push({ id: `${x.id}:old`, date: x.date, createdAt: x.createdAt, tone: "neutral", amount: x.amount, title: x.title, sub, icon: "history", src: { kind: "expense", expense: x } });
   }
   rows.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
   return rows.slice(0, limit);

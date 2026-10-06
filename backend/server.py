@@ -1205,7 +1205,12 @@ async def public_ledger(token: str):
     due = round(sum(_entry_delta(e) for e in entries), 2)
     entries.sort(key=lambda e: (e.get("date", ""), e.get("createdAt", "")), reverse=True)
 
-    shop = escape(owner.get("shop_name") or owner.get("name") or "दुकान")
+    # A personal contact's page is from the owner, never the shop.
+    if customer.get("persona") == "personal":
+        sender = owner.get("owner_name") or owner.get("name") or "हिसाब"
+    else:
+        sender = owner.get("shop_name") or owner.get("name") or "दुकान"
+    shop = escape(sender)
     phone = escape(owner.get("shop_phone") or "")
     upi = (owner.get("shop_upi") or "").strip()
     if due > 0:
@@ -1215,7 +1220,7 @@ async def public_ledger(token: str):
     else:
         head = "<div class='label'>हिसाब</div><div class='big ok'>बराबर ✓</div>"
     if due > 0 and upi:
-        pay_url = f"upi://pay?pa={quote(upi)}&pn={quote(owner.get('shop_name') or 'Shop')}&am={due:.2f}&cu=INR"
+        pay_url = f"upi://pay?pa={quote(upi)}&pn={quote(sender)}&am={due:.2f}&cu=INR"
         head += f"<a class='pay' href='{escape(pay_url)}'>UPI से {_inr(due)} भेजें</a>"
 
     rows = []

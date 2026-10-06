@@ -29,15 +29,23 @@ export type ShareDoc = {
   fileName: string;
 };
 
-const fullShop = (s: Partial<ShopProfile> & { name?: string }): ShopProfile => ({
-  shop_name: accountName(s) || "बही खाता",
-  shop_phone: s.shop_phone || "",
-  shop_address: s.shop_address || "",
-  shop_gst: s.shop_gst || "",
-  shop_upi: s.shop_upi || "",
-  shop_logo: s.shop_logo || "",
-  shop_signature: s.shop_signature || "",
-});
+/**
+ * Who the slip is from. `contact` decides the book, not the mode the app is in: a shop customer's slip always
+ * carries the shop, a personal contact's carries the owner's own name and none of the shop's GST / address / logo.
+ */
+const fullShop = (s: Partial<ShopProfile> & { name?: string; persona?: string }, contact?: Pick<Customer, "persona"> | "business"): ShopProfile => {
+  const book = contact === undefined ? s.persona : contact === "business" ? "business" : contact.persona === "personal" ? "personal" : "business";
+  const personal = book === "personal";
+  return {
+    shop_name: accountName({ ...s, persona: book }) || "बही खाता",
+    shop_phone: s.shop_phone || "",
+    shop_address: personal ? "" : s.shop_address || "",
+    shop_gst: personal ? "" : s.shop_gst || "",
+    shop_upi: s.shop_upi || "",
+    shop_logo: personal ? "" : s.shop_logo || "",
+    shop_signature: s.shop_signature || "",
+  };
+};
 
 /** Whole-account position, worded for a customer (advance) or a personal contact (we owe them). */
 function accountLine(balance: number, isCustomer: boolean): Line {
@@ -123,7 +131,7 @@ export function receiptDoc(
   shopIn: Partial<ShopProfile>,
   ctx: { jobs?: Job[]; entries?: Entry[] } = {},
 ): ShareDoc {
-  const shop = fullShop(shopIn);
+  const shop = fullShop(shopIn, customer);
   const lines: Line[] = [];
   const purchase = entry.type === "purchase";
   const given = entry.type === "given";
@@ -280,7 +288,7 @@ export const workOrderNo = (e: Entry) => `WO-${e.date.slice(2, 4)}${e.date.slice
 
 /** Work order / payment voucher for one vendor order: scope, promised date, advance, balance and terms. */
 export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendor: Customer, shopIn: Partial<ShopProfile>, entries: Entry[] = []): ShareDoc {
-  const shop = fullShop(shopIn);
+  const shop = fullShop(shopIn, vendor);
   const items = itemsOf(entry, "काम / सामान");
   const paid = status?.received ?? entry.paid ?? 0;
   const left = status?.remaining ?? Math.max(0, entry.amount - paid);
@@ -398,7 +406,7 @@ export function statementDoc(
   shopIn: Partial<ShopProfile>,
   range?: { from: string; to: string },
 ): ShareDoc {
-  const shop = fullShop(shopIn);
+  const shop = fullShop(shopIn, customer);
   const sorted = [...entries].sort((a, b) => (a.date !== b.date ? a.date.localeCompare(b.date) : a.createdAt.localeCompare(b.createdAt)));
   // d raises what they owe, c lowers it. A purchase is goods they gave (c) less what we paid on the spot (d).
   const legs = (e: Entry) => ({
@@ -503,7 +511,7 @@ export function reminderDoc(
   balance: number,
   shopIn: Partial<ShopProfile>,
 ): ShareDoc {
-  const shop = fullShop(shopIn);
+  const shop = fullShop(shopIn, customer);
   const upiUrl = shop.shop_upi ? upiLink(shop.shop_upi, shop.shop_name, balance, `Hisab ${customer.name}`) : "";
 
   const lines: Line[] = [
@@ -939,7 +947,7 @@ export function reportDoc(shopIn: Partial<ShopProfile>, heading: string, period:
 /** Counter service receipt: what was done, through which channel, and where the money stands. */
 /** `kept`: money the customer left with the shop on this visit (khata jama), with its label. */
 export function aepsReceiptDoc(t: AepsTxn, shopIn: Partial<ShopProfile>, kept = 0, keptLabel = ""): ShareDoc {
-  const shop = fullShop(shopIn);
+  const shop = fullShop(shopIn, "business");
   const m = AEPS_META[t.type] ?? AEPS_META.other;
   const service = t.type === "other" && t.billerName ? t.billerName : m.label;
   const via = viaBill(t.via || defaultVia(t.type));

@@ -819,6 +819,7 @@ async function saveVendorAssign(v: ReturnType<typeof useVendorJob>, row: Entry |
   const job = await v.resolve();
   if (!job) return;
   const handedOn = v.assignDay;
+  if (v.vendorDue) dueDate = v.vendorDue;
   let rowId = row?.id ?? "";
   if (row) {
     store.updateEntry(row.id, { customerId: job.vendorId, date: handedOn, description: title, amount: job.cost, dueDate, assignedOn: handedOn });
@@ -847,6 +848,8 @@ function useVendorJob(visible: boolean) {
   const [advance, setAdvance] = useState("");
   /** Day the job was handed to the vendor ("" = today). */
   const [assignOn, setAssignOn] = useState("");
+  /** Day the vendor promised it back ("" = the customer's deadline). */
+  const [vendorDue, setVendorDue] = useState("");
   /** Vendor holding the job's open order when the sheet opened ("" = no order). */
   const [orderVendor, setOrderVendor] = useState("");
   /** Order taken back with money already given: returned, still with them, or it was the new vendor's all along. */
@@ -857,6 +860,7 @@ function useVendorJob(visible: boolean) {
 
   const resetOrder = () => {
     setAssignOn("");
+    setVendorDue("");
     setOrderVendor("");
     setFate("");
     setRefundAmt("");
@@ -880,9 +884,9 @@ function useVendorJob(visible: boolean) {
 
   /**
    * Fills the block from a vendor row already booked for the work, or (`order`) the open vendor order
-   * of a pending job.
+   * of a pending job (`customerDue`: that job's deadline).
    */
-  const load = (row: Entry | undefined, entries: Entry[], order = false) => {
+  const load = (row: Entry | undefined, entries: Entry[], order = false, customerDue = "") => {
     setExisting(!!row);
     setOn(!!row);
     choice.setCustomerId(row?.customerId ?? "");
@@ -896,6 +900,7 @@ function useVendorJob(visible: boolean) {
     if (row && order) {
       setOrderVendor(row.customerId);
       setAssignOn(row.assignedOn || row.date);
+      setVendorDue(row.dueDate && row.dueDate !== customerDue ? row.dueDate : "");
     }
   };
   /** An old fee that was really the vendor's charge: same money, same day, same pocket. */
@@ -926,6 +931,7 @@ function useVendorJob(visible: boolean) {
   /** Dates in order: handed out after the job came in, money moved only after it was handed out. */
   const datesOk = (start: string, assigning: boolean) => {
     if (on && assigning && assignDay < start) return false;
+    if (on && assigning && !!vendorDue && vendorDue < assignDay) return false;
     if (on && assigning && advanceNum > 0 && (paidOn || assignDay) < assignDay) return false;
     if (on && !assigning && order && !releasing && paidNow && rest > 0 && !!paidOn && paidOn < assignDay) return false;
     if (refundNum > 0 && (refundOn || today) < firstPaid) return false;
@@ -939,7 +945,7 @@ function useVendorJob(visible: boolean) {
   };
   return {
     choice, on, setOn, cost, setCost, costNum, paidNow, setPaidNow, mode, setMode, paidOn, setPaidOn, laterPaid, paidBefore, rest, existing, ready, resolve, load, fromFee, advance, setAdvance, advanceNum,
-    order, orderVendor, assignOn, setAssignOn, assignDay, changed, releasing, needFate, oldPaid, firstPaid, fate, setFate, refundAmt, setRefundAmt, refundMode, setRefundMode, refundOn, setRefundOn, refund, datesOk,
+    order, orderVendor, assignOn, setAssignOn, assignDay, vendorDue, setVendorDue, changed, releasing, needFate, oldPaid, firstPaid, fate, setFate, refundAmt, setRefundAmt, refundMode, setRefundMode, refundOn, setRefundOn, refund, datesOk,
   };
 }
 
@@ -1064,6 +1070,8 @@ function VendorOutsource({
           {assign ? (
             <>
               <DateField label="कब सौंपा" value={v.assignDay} onChange={(d) => v.setAssignOn(d === today ? "" : d)} min={start} testID="input-job-vendor-assign-date" />
+              <DateField label="Vendor कब तक देगा" value={v.vendorDue || workDate} onChange={(d) => v.setVendorDue(d === workDate ? "" : d)} min={v.assignDay} future testID="input-job-vendor-due" />
+              {v.vendorDue && v.vendorDue > workDate ? <Text style={[styles.hint, { color: colors.warning, fontWeight: "700" }]}>ग्राहक की तारीख ({formatDate(workDate)}) के बाद</Text> : null}
               <Field label="Vendor को एडवांस (₹)">
                 <TextInput style={inputStyle} value={v.advance} onChangeText={v.setAdvance} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-vendor-advance" />
                 {v.rest < 0 ? <Text style={[styles.hint, { color: colors.error, fontWeight: "700" }]}>लागत से ज़्यादा नहीं</Text> : null}
@@ -1746,7 +1754,7 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
   }, [job]);
 
   useEffect(() => {
-    if (job) vendorJob.load(vendorRow, entries, true);
+    if (job) vendorJob.load(vendorRow, entries, true, job.dueDate);
     // Only when a different job is opened, not on every sync.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.id]);
@@ -2020,7 +2028,8 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
           amount: amt,
           received: money.receivedNum,
           date: day,
-          notes: remark.trim(),
+          // The remark is a note to self (and its own reminder); the work row prints on the customer's bill.
+          notes: self ? remark.trim() : "",
           mode: payMode,
           fee: feeNum,
           feeMode,
@@ -2250,7 +2259,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
 
   useEffect(() => {
     if (job) {
-      vendorJob.load(vendorRow, entries, true);
+      vendorJob.load(vendorRow, entries, true, job.dueDate);
       setAction(vendorRow ? "vendor" : "self");
       split.reset();
       const est = job.estimatedAmount > 0 ? job.estimatedAmount : 0;

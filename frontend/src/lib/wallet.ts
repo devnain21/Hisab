@@ -197,11 +197,16 @@ export function computeFlows(book: Book, persona: Persona, keep: (date: string) 
   return f;
 }
 
-/** A transfer between two of this book's own accounts: it changes neither its In nor its Out. */
+/**
+ * A transfer between two of this book's own accounts: it changes neither its In nor its Out. For the personal
+ * book money to / from the owner's own shop is the same: taking ₹5,000 from the galla home is not income.
+ * (The shop still sees it leave its galla.)
+ */
 export function isInternal(t: WalletTxn, persona: Persona): boolean {
   if (t.src.kind !== "move") return false;
   const { from, to } = t.src.move;
-  return from.startsWith(`${persona}:`) && to.startsWith(`${persona}:`);
+  if (!from || !to) return false;
+  return persona === "personal" || (from.startsWith(`${persona}:`) && to.startsWith(`${persona}:`));
 }
 
 export type CashTotals = { ins: number; outs: number; net: number; byKey: Map<FlowKey, number> };

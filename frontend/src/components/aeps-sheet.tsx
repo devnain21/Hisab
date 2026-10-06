@@ -33,7 +33,7 @@ import { aepsDueEntry, aepsJamaEntry, createAeps, jamaKindOf, saveAeps, type Jam
 import { dateOnSave, formatINR, nowHM, parseAmount, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { IconLabel } from "@/src/components/ui";
-import { Chip, CustomerPicker, DateField, Field, PrimaryButton, SheetShell, inputStyle, useCustomerChoice } from "@/src/components/sheets";
+import { Chip, CustomerPicker, DateField, Field, PrimaryButton, SheetShell, confirmOldDate, inputStyle, useCustomerChoice } from "@/src/components/sheets";
 
 type LineStatus = AepsStatus | "later";
 const LINE_STATUS: { id: LineStatus; label: string; icon: string; color: string }[] = [
@@ -342,7 +342,8 @@ export function AepsSheet({ visible, initial, onClose }: { visible: boolean; ini
     };
   };
 
-  const save = async () => {
+  const save = () => (initial ? confirmOldDate(initial.date, date, initial.createdAt, "गल्ला", saveNow) : saveNow());
+  const saveNow = async () => {
     if (!valid) return;
     setSaving(true);
     try {

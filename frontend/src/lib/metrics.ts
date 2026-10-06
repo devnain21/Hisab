@@ -1,6 +1,6 @@
 import { isRepayment, isVendor, type AepsTxn, type Customer, type Entry } from "./data";
 import { expensePersona, type Expense } from "./expenses";
-import { commissionDate } from "./aeps";
+import { commissionEarnedOn } from "./aeps";
 import { isWorkVendorCost } from "./records";
 import { roundMoney } from "./format";
 import { personaOfEntry } from "./wallet";
@@ -36,7 +36,7 @@ export function metricRows(book: Book, persona: Persona, kind: MetricKind, from:
   } else if (kind === "commission") {
     if (persona !== "business") return rows;
     for (const t of book.aeps) {
-      const day = t.commission > 0 ? commissionDate(t) : null;
+      const day = commissionEarnedOn(t);
       if (day && inRange(day)) rows.push({ key: t.id, date: day, amount: t.commission, source: "aeps", txn: t });
     }
   } else {
@@ -79,4 +79,18 @@ function createdOf(r: MetricRow): string {
 
 export function metricSum(book: Book, persona: Persona, kind: MetricKind, from: string, to: string): number {
   return roundMoney(metricRows(book, persona, kind, from, to).reduce((s, r) => s + r.amount, 0));
+}
+
+/**
+ * कमाई of the shop, the one rule every screen shows: work + commission − expenses − portal fees − vendor cost.
+ * बचत is only ever the galla / bank change; the work margin (work − fees − vendor cost of that work) is "मार्जिन".
+ */
+export function shopProfit(book: Book, from: string, to: string) {
+  const sum = (k: MetricKind) => metricSum(book, "business", k, from, to);
+  const work = sum("work");
+  const commission = sum("commission");
+  const expense = sum("expense");
+  const fee = sum("fee");
+  const vendor = sum("vendor");
+  return { work, commission, expense, fee, vendor, profit: roundMoney(work + commission - expense - fee - vendor) };
 }

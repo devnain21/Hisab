@@ -1,6 +1,4 @@
-import { formatDate, formatINR, formatPhone, todayISO } from "./format";
-import type { Customer, Entry, Job, AepsTxn } from "./data";
-import type { Expense } from "./expenses";
+import { formatDate, formatINR } from "./format";
 import type { ShopProfile } from "../context/AuthContext";
 import { shareMessage } from "./share-text";
 import type { PocketFlow } from "./wallet";
@@ -60,7 +58,7 @@ export function buildDayCloseMessage(data: DaySummaryData): string {
 
   if (data.workFees > 0) lines.push(`  • पोर्टल/सरकारी फीस कटी: -${formatINR(data.workFees)}`);
   if (data.workVendor > 0) lines.push(`  • Vendor लागत: -${formatINR(data.workVendor)}`);
-  if (data.workFees > 0 || data.workVendor > 0) lines.push(`  • काम से शुद्ध बचत: ${formatINR(data.workProfit)}`);
+  if (data.workFees > 0 || data.workVendor > 0) lines.push(`  • काम का मार्जिन: ${formatINR(data.workProfit)}`);
 
   lines.push(
     `  • नकद मिले: ${formatINR(data.workCash)}`,
@@ -132,7 +130,7 @@ export function buildDayCloseMessage(data: DaySummaryData): string {
   lines.push(
     `--------------------------------`,
     `🎯 *आज गल्ले में बदलाव:* ${data.expectedCash - data.openingCash < 0 ? "−" : "+"}${formatINR(Math.abs(data.expectedCash - data.openingCash))}`,
-    `✨ *आज की शुद्ध बचत (काम − फीस + कमीशन − खर्च):* ${formatINR(realNetProfit)}`,
+    `✨ *आज की कमाई (काम + कमीशन − खर्च − फीस − Vendor):* ${formatINR(realNetProfit)}`,
     `--------------------------------`,
     `🙏 हिसाब पूरा हुआ · शुभ रात्रि!`,
   );

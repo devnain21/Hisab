@@ -492,7 +492,7 @@ export const store = {
   deleteAeps(id: string) {
     const list = queryClient.getQueryData<AepsTxn[]>(["aeps"]);
     const target = list?.find((x) => x.id === id);
-    if (target) void putInTrash("aeps", target);
+    if (target && !captureTrash("aeps", target)) void putInTrash("aeps", target);
     enqueue({ kind: "delete", coll: "aeps", itemId: id });
   },
   createExpense(item: Expense) {

@@ -6,7 +6,7 @@ import { Pressable } from "@/src/components/tap";
 import { addExpense, deleteExpense, expensePersona, EXPENSE_CATEGORIES, PERSONAL_EXPENSE_CATEGORIES, type Expense, type ExpenseMode } from "@/src/lib/expenses";
 import { usePersona } from "@/src/lib/persona";
 import { OLD_ENTRY_DAYS, dateOnSave, formatDateShort, formatINR, isBackdated, isValidISO, parseAmount, todayISO } from "@/src/lib/format";
-import { DangerLink, DateField, MoreInfo, SheetShell } from "@/src/components/sheets";
+import { DangerLink, DateField, MoreInfo, SheetShell, confirmOldDate } from "@/src/components/sheets";
 import { store } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
 import { EditHistory } from "@/src/components/edit-history";
@@ -63,7 +63,8 @@ export function AddExpenseSheet({
   // An edit that moves the row too far before the day it was typed takes it out of galla / bank.
   const nowOld = initial ? isBackdated(date, initial.createdAt) && !isBackdated(initial.date, initial.createdAt) : false;
 
-  const handleSave = async () => {
+  const handleSave = () => (initial ? confirmOldDate(initial.date, date, initial.createdAt, labels.cash, saveNow) : saveNow());
+  const saveNow = async () => {
     if (!valid) return;
     setSaving(true);
     try {

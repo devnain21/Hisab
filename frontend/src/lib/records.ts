@@ -96,10 +96,11 @@ function legacyAdvancesForWork(work: Entry, entries: Entry[]): Entry[] {
  * Money that changed hands on another day is a past galla / bank event: it stays on the khata
  * (unlinked) instead of disappearing with the entry it was booked against.
  */
-function dropOrKeep(rows: Entry[], day: string) {
+function dropOrKeep(rows: Entry[], day: string, owned: Set<string> = new Set()) {
   rows.forEach((p) => {
-    // An old advance found only by its note may belong to another job of the same name; it stays on the khata.
-    if (!p.linkId && p.description === ADVANCE) return;
+    // An old advance found only by its note may belong to another job of the same name; it stays on the khata
+    // unless it surely belongs to this row.
+    if (!p.linkId && p.description === ADVANCE && !owned.has(p.id)) return;
     if (p.date === day) store.deleteEntry(p.id);
     else if (p.linkId) {
       noteRelink(p);
@@ -166,9 +167,13 @@ export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]
     }
     const job = jobForWork(work, jobs);
     const linked = new Map<string, Entry>();
-    [...settlementsFor(work, entries), ...legacyAdvancesForWork(work, entries), ...(job ? advancesForJob(job, entries) : [])].forEach((p) => linked.set(p.id, p));
+    const legacy = legacyAdvancesForWork(work, entries);
+    [...settlementsFor(work, entries), ...legacy, ...(job ? advancesForJob(job, entries) : [])].forEach((p) => linked.set(p.id, p));
+    // An old note-only advance written with this work: surely its own when no other work of the customer has that name.
+    const onlyOne = entries.filter((w) => w.type === "work" && w.customerId === work.customerId && w.description === work.description).length === 1;
+    const owned = new Set(legacy.filter((p) => onlyOne && p.date === work.date).map((p) => p.id));
     store.deleteEntry(work.id);
-    dropOrKeep([...linked.values()], work.date);
+    dropOrKeep([...linked.values()], work.date, owned);
     vendorCostsFor(work, entries).forEach((v) => removeVendorCost(v, entries));
     if (job) store.deleteJob(job.id);
     remindersFor(work, jobs).forEach((j) => store.deleteJob(j.id));
@@ -176,12 +181,12 @@ export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]
 }
 
 /**
- * Removes an open job card. An advance taken today goes with it; one taken on an earlier day
- * already sits in that day's galla / bank, so it stays on the khata as the customer's advance.
+ * Removes an open job card. Same rule as removing work: money booked together with it (on the day the job
+ * came in) goes; an advance taken on a later day was its own visit and stays on the khata as the customer's advance.
  */
 export function removeJobWithAdvances(job: Job, entries: Entry[]) {
   trashGroup(() => {
-    dropOrKeep(advancesForJob(job, entries), todayISO());
+    dropOrKeep(advancesForJob(job, entries), jobStart(job, entries));
     vendorOrdersForJob(job, entries).forEach((v) => removeVendorCost(v, entries));
     store.deleteJob(job.id);
   });
@@ -208,10 +213,10 @@ export function isWorkVendorCost(e: Entry, workIds: Set<string>): boolean {
   return e.type === "purchase" && !!e.refId && workIds.has(e.refId);
 }
 
-/** Advance rows of this job that were taken before today (they stay when the job is removed). */
+/** Advance rows of this job taken on a later day than it came in (they stay when the job is removed). */
 export function olderAdvances(job: Job, entries: Entry[]): Entry[] {
-  const today = todayISO();
-  return advancesForJob(job, entries).filter((p) => p.date !== today);
+  const start = jobStart(job, entries);
+  return advancesForJob(job, entries).filter((p) => p.date !== start || (!p.linkId && p.description === ADVANCE));
 }
 
 /** Follow-up reminders saved together with this work ("पिछला काम: …", same customer, same save). */

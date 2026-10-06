@@ -5,8 +5,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, spacing, radius, semantic } from "@/src/theme";
 import { useAeps, type AepsTxn, type AepsType } from "@/src/lib/data";
-import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, bankLegDate, cashLegDate, cashOf, commissionDate, isLater } from "@/src/lib/aeps";
-import { formatDateShort, formatINR, todayISO } from "@/src/lib/format";
+import { AEPS_META, AEPS_TYPES, STATUS_META, aepsDetailLine, aepsTotals, bankLegDate, cashLegDate, cashOf, commissionDate, commissionEarnedOn, isLater } from "@/src/lib/aeps";
+import { formatDateShort, formatINR, roundMoney, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
 import { AepsSheet } from "@/src/components/aeps-sheet";
@@ -75,7 +75,7 @@ export default function AepsScreen() {
   };
   // Same rule as the totals: a row belongs to every day one of its sides moved money.
   const inRange = useMemo(
-    () => txns.filter((t) => [t.date, cashLegDate(t), bankLegDate(t), commissionDate(t)].some((d) => !!d && inRangeDate(d))),
+    () => txns.filter((t) => [t.date, cashLegDate(t), bankLegDate(t), commissionDate(t), commissionEarnedOn(t)].some((d) => !!d && inRangeDate(d))),
     [txns, inRangeDate],
   );
 
@@ -118,12 +118,11 @@ export default function AepsScreen() {
   }, [inRange, type, search, typesInRange.length, leg]);
 
   const totals = useMemo(() => aepsTotals(txns, inRangeDate), [txns, inRangeDate]);
-  // Commission per day it was earned, newest first; same day rule as the totals.
+  // Commission per day it was earned, newest first; the same rule as Home and the report.
   const commByDay = useMemo(() => {
     const m = new Map<string, { sum: number; count: number }>();
     for (const t of txns) {
-      if (!(t.commission > 0)) continue;
-      const d = commissionDate(t);
+      const d = commissionEarnedOn(t);
       if (!d || !inRangeDate(d)) continue;
       const s = m.get(d) ?? { sum: 0, count: 0 };
       s.sum += t.commission;
@@ -132,6 +131,7 @@ export default function AepsScreen() {
     }
     return [...m].sort((a, b) => b[0].localeCompare(a[0]));
   }, [txns, inRangeDate]);
+  const earned = roundMoney(commByDay.reduce((s, [, v]) => s + v.sum, 0));
   const [showDays, setShowDays] = useState(false);
   const multiDay = range === "month" || range === "all" || (range === "custom" && custom.from !== custom.to);
   const signed = (n: number) => `${n < 0 ? "−" : "+"}${formatINR(Math.abs(n))}`;
@@ -170,13 +170,13 @@ export default function AepsScreen() {
           <View style={styles.statDivider} />
           <Stat label="बैंक" value={hide(signed(totals.bankNet))} sub={`⬇ ${hide(formatINR(totals.bankIn))} · ⬆ ${hide(formatINR(totals.bankOut))}`} tone={totals.bankNet < 0 ? semantic.due : semantic.received} active={leg === "bank"} onPress={() => toggleLeg("bank")} testID="aeps-stat-bank" />
           <View style={styles.statDivider} />
-          <Stat label="कमीशन" value={hide(formatINR(totals.commission))} sub={`कैश ${hide(formatINR(totals.commissionCash))} · बैंक ${hide(formatINR(totals.commissionBank))}`} tone={colors.brandSecondary} active={leg === "comm"} onPress={() => toggleLeg("comm")} testID="aeps-stat-comm" />
+          <Stat label="कमीशन" value={hide(formatINR(earned))} sub={`मिला: गल्ला ${hide(formatINR(totals.commissionCash))} · बैंक ${hide(formatINR(totals.commissionBank))}`} tone={colors.brandSecondary} active={leg === "comm"} onPress={() => toggleLeg("comm")} testID="aeps-stat-comm" />
         </View>
         {multiDay && commByDay.length > 0 ? (
           <View style={styles.daysBox}>
             <Pressable style={styles.daysHead} onPress={() => setShowDays((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: showDays }} testID="aeps-comm-days">
               <MaterialIcon name="calendar-text-outline" size={16} color={colors.brandPrimary} />
-              <Text style={styles.daysTitle}>रोज़ का कमीशन · {commByDay.length} दिन · औसत {hide(formatINR(Math.round(totals.commission / commByDay.length)))}</Text>
+              <Text style={styles.daysTitle}>रोज़ का कमीशन · {commByDay.length} दिन · औसत {hide(formatINR(Math.round(earned / commByDay.length)))}</Text>
               <MaterialIcon name={showDays ? "chevron-up" : "chevron-down"} size={18} color={colors.muted} />
             </Pressable>
             {showDays

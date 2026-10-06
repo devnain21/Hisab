@@ -12,7 +12,7 @@ import {
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
-import { advanceOf, computeBalance, isVendor, itemsOf, useCustomers, useEntries, useJobs, type Customer, type Entry, type EntryItem, type EntryType, type Job } from "@/src/lib/data";
+import { advanceOf, computeBalance, isVendor, itemsOf, useAeps, useCustomers, useEntries, useJobs, type Customer, type Entry, type EntryItem, type EntryType, type Job } from "@/src/lib/data";
 import { ADVANCE, advancesForJob, buildLedger, jobForWork, jobStart, linkedPayment, olderAdvances, releaseVendorOrder, removeEntryWithLinks, removeJobWithAdvances, removeVendorCost, settlementsFor, vendorCostsFor, vendorOrdersForJob, workForJob, workForPayment, type VendorRefund } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
@@ -1103,6 +1103,17 @@ function createPaid(base: Omit<Entry, "id" | "createdAt" | "mode" | "amount">, a
   return first.id;
 }
 
+/** An edit that moves a row too far before the day it was typed takes its money out of galla / bank; ask first. */
+export function confirmOldDate(was: string, next: string, createdAt: string | undefined, cashLabel: string, go: () => unknown) {
+  if (!createdAt || was === next || !isBackdated(next, createdAt) || isBackdated(was, createdAt)) return void go();
+  confirmAction(
+    "पुरानी तारीख?",
+    `${OLD_ENTRY_DAYS} दिन से पुरानी तारीख पर यह एंट्री खाते में बनी रहेगी, पर इसका पैसा ${cashLabel} / बैंक में नहीं गिना जाएगा।`,
+    "हाँ, बदलें",
+    () => void go(),
+  );
+}
+
 export function PrimaryButton({ label, onPress, disabled, saving, color, testID }: { label: string; onPress: () => void; disabled?: boolean; saving?: boolean; color?: string; testID?: string }) {
   return (
     <Pressable
@@ -1351,7 +1362,9 @@ export function AddEntrySheet({
   // Personal: lent money, or goods still to be paid for, can carry a "by when" that lands in मेरे काम.
   const canRemind = !initial && isPersonalBook && (kind === "given" || (isPurchase && amt - paidNow > 0));
 
-  const save = async () => {
+  const cashWord = usePersona().labels.cash;
+  const save = () => (initial ? confirmOldDate(initial.date, date, initial.createdAt, cashWord, saveNow) : saveNow());
+  const saveNow = async () => {
     if (!valid) return;
     setSaving(true);
     try {
@@ -1600,7 +1613,9 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   const amt = money.totalNum;
   const valid = items.titled && (amt > 0 || parseAmount(govtFee) > 0 || vendorJob.costNum > 0) && vendorJob.ready;
 
-  const save = async () => {
+  const cashWord = usePersona().labels.cash;
+  const save = () => (entry ? confirmOldDate(entry.date, date, entry.createdAt, cashWord, saveNow) : undefined);
+  const saveNow = async () => {
     if (!entry || !valid) return;
     setSaving(true);
     try {
@@ -1697,8 +1712,8 @@ function confirmRemoveJob(job: Job, entries: Entry[], hasVendor: boolean, onDone
   const kept = olderAdvances(job, entries).reduce((s, e) => s + e.amount, 0);
   const gone = all - kept;
   const lines = [job.title];
-  if (gone > 0) lines.push(`आज का एडवांस ${formatINR(gone)} भी हटेगा।`);
-  if (kept > 0) lines.push(`पहले लिया एडवांस ${formatINR(kept)} खाते में जमा रहेगा (लौटाएँ तो "पैसे दिए" लिखें)।`);
+  if (gone > 0) lines.push(`काम लेते समय लिया एडवांस ${formatINR(gone)} भी हटेगा।`);
+  if (kept > 0) lines.push(`बाद में लिया एडवांस ${formatINR(kept)} खाते में जमा रहेगा (लौटाएँ तो "पैसे दिए" लिखें)।`);
   if (hasVendor) lines.push("Vendor को दिया काम भी हटेगा; उन्हें पिछले दिनों दिया एडवांस उन पर बकाया रहेगा।");
   confirmAction("काम हटाएँ?", lines.join("\n"), "हटा दें", () => {
     removeJobWithAdvances(job, entries);
@@ -1789,8 +1804,11 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
 export function EditRecordSheet({ entry, job, onClose }: { entry?: Entry | null; job?: Job | null; onClose: () => void }) {
   const entries = useEntries().data ?? [];
   const router = useRouter();
-  const aepsId = entry?.type === "aeps" ? entry.linkId : "";
-  // A counter-service due is edited on its AEPS row.
+  const aepsRows = useAeps().data ?? [];
+  const jamaOf = entry?.type === "payment" && entry.linkId && aepsRows.some((t) => t.id === entry.linkId) ? entry.linkId : "";
+  const aepsId = entry?.type === "aeps" ? entry.linkId : jamaOf;
+  // A counter-service due, and money left with the shop on it (जमा), are edited on their AEPS row,
+  // so galla, the counter row and its slip never disagree.
   useEffect(() => {
     if (!aepsId) return;
     onClose();
@@ -1808,7 +1826,7 @@ export function EditRecordSheet({ entry, job, onClose }: { entry?: Entry | null;
       if (job.customerId && job.status !== "done") openJob = job;
       else plainJob = job;
     }
-  } else if (entry && entry.type !== "aeps") {
+  } else if (entry && !aepsId) {
     if (entry.type === "work") work = entry;
     else if (entry.type === "given" || entry.type === "purchase") plainEntry = entry;
     else {

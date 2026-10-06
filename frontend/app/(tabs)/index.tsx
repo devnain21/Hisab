@@ -771,7 +771,7 @@ function HomeBody() {
               </Pressable>
             ))}
             <Pressable style={styles.breakTotal} onPress={() => { setWorkSheet(false); setTimeout(() => router.push({ pathname: "/day", params: { type: "work" } }), 250); }} accessibilityRole="button" testID="today-work-net">
-              <Text style={styles.breakTotalLabel}>शुद्ध बचत (मार्जिन)</Text>
+              <Text style={styles.breakTotalLabel}>काम का मार्जिन</Text>
               <Text style={[styles.breakTotalValue, todayWork.net < 0 && { color: semantic.due }]} numberOfLines={1}>{money(todayWork.net)}</Text>
               <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
             </Pressable>

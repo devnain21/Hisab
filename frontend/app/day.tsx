@@ -19,7 +19,7 @@ import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet
 import { PocketCard } from "@/src/components/pocket-card";
 import { DayCloseModal } from "@/src/components/day-close-modal";
 import { isWorkVendorCost } from "@/src/lib/records";
-import type { MetricKind } from "@/src/lib/metrics";
+import { shopProfit, type MetricKind } from "@/src/lib/metrics";
 import { useAuth } from "@/src/context/AuthContext";
 import { usePersona } from "@/src/lib/persona";
 import { accountKey, accountLabel, addMove, balanceOf, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
@@ -121,10 +121,19 @@ export default function DayScreen() {
   const workVendor = dayEntries.reduce((s, e) => s + (isWorkVendorCost(e, workIds) ? e.amount : 0), 0);
   const workProfit = workTotal - workFees - workVendor;
   // Khata totals include old (backdated) rows; only the galla / bank cards leave them out.
-  const workCash = workEntries.filter((e) => e.mode !== "online").reduce((s, e) => s + (e.paid ?? 0), 0);
-  const workOnline = workEntries.filter((e) => e.mode === "online").reduce((s, e) => s + (e.paid ?? 0), 0);
-  const workUdhaar = workTotal - (workCash + workOnline);
-  const dayPayments = dayEntries.filter((e) => e.type === "payment");
+  // Paid against the day's own work (the online part of a split, or the rest paid later that day) is that work's
+  // money, not old udhaar coming back.
+  const dayWorkIds = new Set(workEntries.map((e) => e.id));
+  const forDayWork = (e: Entry) => e.type === "payment" && !!e.linkId && dayWorkIds.has(e.linkId);
+  const withWork = dayEntries.filter(forDayWork);
+  const workCash =
+    workEntries.filter((e) => e.mode !== "online").reduce((s, e) => s + (e.paid ?? 0), 0) +
+    withWork.filter((e) => e.mode !== "online").reduce((s, e) => s + e.amount, 0);
+  const workOnline =
+    workEntries.filter((e) => e.mode === "online").reduce((s, e) => s + (e.paid ?? 0), 0) +
+    withWork.filter((e) => e.mode === "online").reduce((s, e) => s + e.amount, 0);
+  const workUdhaar = Math.max(0, roundMoney(workTotal - (workCash + workOnline)));
+  const dayPayments = dayEntries.filter((e) => e.type === "payment" && !forDayWork(e));
   const paymentCash = dayPayments.filter((e) => e.mode !== "online").reduce((s, e) => s + e.amount, 0);
   const paymentOnline = dayPayments.filter((e) => e.mode === "online").reduce((s, e) => s + e.amount, 0);
 
@@ -219,8 +228,7 @@ export default function DayScreen() {
     bankDiff: null,
     cashFlow: flows.cash,
     bankFlow: flows.bank,
-    // Same basis as the week / month view: the day's work, fees and expenses by their date.
-    netProfitEstimate: workProfit + flows.cash.commission + flows.bank.commission - expenseTotal,
+    netProfitEstimate: isPersonal ? 0 : shopProfit(book, date, date).profit,
   };
 
   return (
@@ -323,7 +331,7 @@ export default function DayScreen() {
               <View style={styles.workProfitRow}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                   <MaterialIcon name="star-outline" size={15} color={colors.brandPrimary} />
-                  <Text style={styles.profitLabel}>कमाई</Text>
+                  <Text style={styles.profitLabel}>मार्जिन</Text>
                 </View>
                 <Text style={styles.profitValue}>{formatINR(workProfit)}</Text>
               </View>
@@ -701,7 +709,6 @@ function RangeView({
     const inRange = (d: string) => d >= from && d <= to;
     const flows = computeFlows(book, persona, inRange);
     const entries = book.entries.filter((e) => inRange(e.date) && mineIds.has(e.customerId));
-    const workIds = new Set(book.entries.filter((e) => e.type === "work").map((e) => e.id));
     const expenses = book.expenses.filter((x) => inRange(x.date) && expensePersona(x) === persona);
     // Personal: money lent out (not paying back goods); shop: work done.
     const out = (e: Entry) => (isPersonal ? (e.type === "given" && !isRepayment(e) ? e.amount : 0) : e.type === "work" ? e.amount : 0);
@@ -716,9 +723,9 @@ function RangeView({
     const byTitle = new Map<string, number>();
     expenses.forEach((x) => byTitle.set(x.title, (byTitle.get(x.title) ?? 0) + x.amount));
     const work = entries.reduce((s, e) => s + out(e), 0);
-    const fees = isPersonal ? 0 : entries.reduce((s, e) => s + (e.type === "work" ? e.fee ?? 0 : isWorkVendorCost(e, workIds) ? e.amount : 0), 0);
     const exp = expenses.reduce((s, x) => s + x.amount, 0);
-    const commission = flows.cash.commission + flows.bank.commission;
+    const shop = isPersonal ? null : shopProfit(book, from, to);
+    const commission = shop?.commission ?? 0;
     return {
       days,
       work,
@@ -726,7 +733,7 @@ function RangeView({
       got: entries.reduce((s, e) => s + got(e), 0),
       exp,
       commission,
-      profit: work - fees + commission - exp,
+      profit: shop?.profit ?? 0,
       cashNet: pocketNet(flows.cash),
       bankNet: pocketNet(flows.bank),
       byTitle: [...byTitle.entries()].sort((a, b) => b[1] - a[1]),
@@ -743,7 +750,7 @@ function RangeView({
         <RangeCell label={isPersonal ? "⬇ लोगों से" : "⬇ ग्राहकों से"} value={formatINR(data.got)} color={colors.success} onPress={() => openMetric("collected")} />
         {isPersonal ? <RangeCell label="सामान / सेवा" value={formatINR(data.goods)} color={colors.warning} /> : null}
         <RangeCell label="खर्च" value={formatINR(data.exp)} color={colors.error} onPress={() => openMetric("expense")} />
-        {isPersonal ? null : <RangeCell label="कमीशन" value={formatINR(data.commission)} color={colors.brandPrimary} />}
+        {isPersonal ? null : <RangeCell label="कमीशन" value={formatINR(data.commission)} color={colors.brandPrimary} onPress={() => openMetric("commission")} />}
         {isPersonal ? null : <RangeCell label="कमाई" value={formatINR(data.profit)} color={data.profit < 0 ? colors.error : colors.brandPrimary} />}
         <RangeCell label={`${cashLabel} / बैंक बदलाव`} value={`${signed(data.cashNet)} / ${signed(data.bankNet)}`} color={colors.onSurface} small />
       </View>

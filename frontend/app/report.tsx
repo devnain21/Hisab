@@ -9,7 +9,7 @@ import { Pressable } from "@/src/components/tap";
 import { usePersona, type Persona } from "@/src/lib/persona";
 import { computeBalance, isVendor } from "@/src/lib/data";
 import { cashTotals, computeFlows, pocketIn, pocketNet, pocketOut, useMoneyBook, type FlowKey, type Pocket } from "@/src/lib/wallet";
-import { metricRows, metricSum, type MetricKind } from "@/src/lib/metrics";
+import { metricRows, metricSum, shopProfit, type MetricKind } from "@/src/lib/metrics";
 import { useBudget } from "@/src/lib/budget";
 import { useAuth } from "@/src/context/AuthContext";
 import { pdfSupported, reportDoc, sharePdf, type Line } from "@/src/lib/receipt";
@@ -60,7 +60,7 @@ function periodStats(book: Book, persona: Persona, from: string, to: string): St
   const given = sum("given");
   const paidOut = sum("paidOut");
   const vendorCost = sum("vendor");
-  const result = persona === "business" ? billed + commission - expense - fee - vendorCost : collected - given - paidOut - expense;
+  const result = persona === "business" ? shopProfit(book, from, to).profit : collected - given - paidOut - expense;
   return {
     billed,
     billedCount: work.length,
@@ -133,7 +133,8 @@ export default function ReportScreen() {
       return { p, opening, ins: pocketIn(during[p]), outs: pocketOut(during[p]), closing: roundMoney(opening + pocketNet(during[p])) };
     });
   }, [book, persona, from, to]);
-  const now = useMemo(() => periodStats(book, persona, from, end), [book, persona, from, end]);
+  // Rows dated after today are plans, not money yet; the cash figures stop at today too.
+  const now = useMemo(() => periodStats(book, persona, from, to), [book, persona, from, to]);
   const prev = useMemo(() => periodStats(book, persona, prevFrom, prevTo), [book, persona, prevFrom, prevTo]);
 
   const balances = useMemo(() => {
@@ -163,7 +164,7 @@ export default function ReportScreen() {
         { label: "पोर्टल फीस", value: now.fee, sign: "−", kind: "fee" },
         ...(now.vendorCost > 0 ? [{ label: "Vendor लागत", value: now.vendorCost, sign: "−" as const, kind: "vendor" as const }] : []),
       ];
-  const openMetric = (kind: MetricKind) => router.push({ pathname: "/entries" as never, params: { kind, from, to: end } });
+  const openMetric = (kind: MetricKind) => router.push({ pathname: "/entries" as never, params: { kind, from, to } });
   const resultChange = change(now.result, prev.result);
 
   const sourceRows = (rows: typeof IN_ROWS) => rows.map((r) => ({ r, v: flow.byKey.get(r.key) ?? 0 })).filter((x) => x.v > 0);

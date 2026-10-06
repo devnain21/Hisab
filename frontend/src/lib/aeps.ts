@@ -222,6 +222,15 @@ export function commissionDate(t: LegRow & { amount?: number }): string | null {
   return t.collected >= t.amount ? leg : null;
 }
 
+/**
+ * Day the commission is earned (कमीशन / कमाई figures): when the service went through, the way work counts on its
+ * day even on udhaar. When the money itself reached galla / bank is commissionDate, used only for the pockets.
+ */
+export function commissionEarnedOn(t: LegRow & { commission: number }): string | null {
+  if (!(t.commission > 0) || t.status !== "success") return null;
+  return bankLegDate(t);
+}
+
 export const COMMISSION_MODES: { id: Exclude<AepsCommissionMode, "">; label: string }[] = [
   { id: "cash", label: "ग्राहक से कैश" },
   { id: "online", label: "ग्राहक से ऑनलाइन" },

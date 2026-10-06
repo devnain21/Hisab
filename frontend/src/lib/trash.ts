@@ -13,7 +13,7 @@ export type TrashColl = "customers" | "entries" | "jobs" | "aeps" | "expenses" |
 export type CustomerBundle = { entries: Entry[]; jobs: Job[]; aepsIds: string[]; jamaMoveIds?: string[] };
 
 /** Rows one delete took away together (a work with its payments, vendor cost, job card), and links it cut. */
-export type TrashGroup = { entries: Entry[]; jobs: Job[]; relink: { id: string; linkId: string; notes: string }[] };
+export type TrashGroup = { entries: Entry[]; jobs: Job[]; relink: { id: string; linkId: string; notes: string }[]; aeps?: AepsTxn[] };
 
 export type TrashItem = {
   id: string;
@@ -94,7 +94,7 @@ export function describeTrash(item: TrashItem): { title: string; subtitle: strin
 
 function describe(coll: TrashColl, data: Record<string, any>, bundle?: CustomerBundle, group?: TrashGroup) {
   const d = describeOne(coll, data, bundle);
-  const n = group ? group.entries.length + group.jobs.length : 0;
+  const n = group ? group.entries.length + group.jobs.length + (group.aeps?.length ?? 0) : 0;
   return n > 1 ? { ...d, subtitle: `${d.subtitle} · साथ में ${n - 1} और` } : d;
 }
 
@@ -152,14 +152,19 @@ let openGroup: TrashGroup | null = null;
  */
 export function trashGroup(fn: () => void) {
   if (openGroup) return fn();
-  const g: TrashGroup = { entries: [], jobs: [], relink: [] };
+  const g: TrashGroup = { entries: [], jobs: [], relink: [], aeps: [] };
   openGroup = g;
   try {
     fn();
   } finally {
     openGroup = null;
+    const counter = g.aeps ?? [];
     const n = g.entries.length + g.jobs.length;
-    if (n === 1 && !g.relink.length) void putInTrash(g.entries.length ? "entries" : "jobs", g.entries[0] ?? g.jobs[0]);
+    if (counter.length) {
+      // A counter row with its khata due / jama: one bin item, restored together so the due is never doubled.
+      if (n === 0 && counter.length === 1) void putInTrash("aeps", counter[0]);
+      else void putInTrash("aeps", counter[0], undefined, g);
+    } else if (n === 1 && !g.relink.length) void putInTrash(g.entries.length ? "entries" : "jobs", g.entries[0] ?? g.jobs[0]);
     else if (n > 0) {
       const lead = g.entries.find((e) => e.type === "work") ?? g.jobs[0] ?? g.entries[0];
       void putInTrash(g.entries.includes(lead as Entry) ? "entries" : "jobs", lead, undefined, g);
@@ -168,10 +173,11 @@ export function trashGroup(fn: () => void) {
 }
 
 /** Store hook: true when the row was taken into the open group instead of its own bin item. */
-export function captureTrash(coll: TrashColl, row: Entry | Job): boolean {
+export function captureTrash(coll: TrashColl, row: Entry | Job | AepsTxn): boolean {
   if (!openGroup) return false;
   if (coll === "entries") openGroup.entries.push(row as Entry);
   else if (coll === "jobs") openGroup.jobs.push(row as Job);
+  else if (coll === "aeps") (openGroup.aeps ??= []).push(row as AepsTxn);
   else return false;
   return true;
 }
@@ -183,6 +189,8 @@ export function noteRelink(row: Entry) {
 
 function restoreGroup(g: TrashGroup) {
   const live = new Set(cached<Customer>("customers").map((c) => c.id));
+  // Counter rows keep their money even if their customer is gone; they just come back unlinked (and without a khata due).
+  for (const t of g.aeps ?? []) store.restoreRaw("aeps", (t.customerId && !live.has(t.customerId) ? { ...t, customerId: "" } : t) as any);
   for (const e of g.entries) if (live.has(e.customerId)) store.restoreRaw("entries", e as any);
   for (const j of g.jobs) if (!j.customerId || live.has(j.customerId)) store.restoreRaw("jobs", j as any);
   const entries = cached<Entry>("entries");
@@ -281,6 +289,13 @@ export async function restoreTrashItem(trashId: string): Promise<RestoreResult> 
     restoreGroup(item.group);
   } else {
     let data = item.data;
+    if (item.coll === "entries" && data.type === "aeps") {
+      // Binned on its own by older versions: the counter row (restored, or still there) already has its due,
+      // and with the row gone it would be udhaar with nothing behind it.
+      const rowLive = cached<AepsTxn>("aeps").some((t) => t.id === data.linkId);
+      const hasDue = cached<Entry>("entries").some((e) => e.type === "aeps" && e.linkId === data.linkId);
+      if (!rowLive || hasDue) return "ok";
+    }
     // A counter row keeps its money even if its customer is gone; it just comes back unlinked.
     if (item.coll === "aeps" && customerId && !cached<Customer>("customers").some((c) => c.id === customerId)) data = { ...data, customerId: "" };
     store.restoreRaw(item.coll, data as any);

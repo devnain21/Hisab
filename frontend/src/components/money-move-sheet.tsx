@@ -4,7 +4,7 @@ import { colors, spacing } from "@/src/theme";
 import { dateOnSave, formatINR, isValidISO, parseAmount, todayISO } from "@/src/lib/format";
 import { usePersona, type Persona } from "@/src/lib/persona";
 import { accountKey, accountLabel, addMove, balanceOf, deleteMove, pocketName, useMoneyBook, type AccountKey, type Move, type Pocket } from "@/src/lib/wallet";
-import { Chip, DangerLink, DateField, Field, PrimaryButton, SheetShell, inputStyle } from "@/src/components/sheets";
+import { Chip, DangerLink, DateField, Field, PrimaryButton, SheetShell, confirmOldDate, inputStyle } from "@/src/components/sheets";
 import { store } from "@/src/lib/store";
 import { confirmAction } from "@/src/lib/confirm";
 import { EditHistory } from "@/src/components/edit-history";
@@ -37,7 +37,8 @@ export function MoneyMoveSheet({
   initial?: Move | null;
   initialPocket?: Pocket;
 }) {
-  const { persona, hasShop } = usePersona();
+  const { persona, hasShop, labels } = usePersona();
+  const cashWord = labels.cash;
   const book = useMoneyBook();
   const kind = initial ? readMove(initial, persona).kind : newKind;
   const [pocket, setPocket] = useState<Pocket>("cash");
@@ -104,7 +105,8 @@ export function MoneyMoveSheet({
   const short = !!from && amt > available;
   const valid = amt > 0 && isValidISO(date);
 
-  const save = () => {
+  const save = () => (initial ? confirmOldDate(initial.date, date, initial.createdAt, cashWord, checkShort) : checkShort());
+  const checkShort = () => {
     if (!kind || !valid) return;
     // The app's figure can lag the real drawer (an entry not written yet), so warn instead of blocking.
     if (short) {

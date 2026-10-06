@@ -4,9 +4,10 @@
 import { queryClient } from "@/src/query-client";
 import { store } from "@/src/lib/store";
 import type { AepsTxn, Entry } from "@/src/lib/data";
-import { AEPS_META, aepsDue, cashLegDate, cashOf, viaBill } from "@/src/lib/aeps";
+import { AEPS_META, aepsBill, aepsDue, cashLegDate, cashOf, viaBill } from "@/src/lib/aeps";
 import { todayISO } from "@/src/lib/format";
 import { settlementsFor } from "@/src/lib/records";
+import { trashGroup } from "@/src/lib/trash";
 
 type AepsBody = Omit<AepsTxn, "id" | "createdAt">;
 
@@ -33,10 +34,11 @@ export function syncAepsDue(id: string, t: AepsBody) {
   const paid = existing ? khataPaid(id) : 0;
   // A failed row or one moved to someone else owes nothing here; what was paid stays with that customer as advance.
   const stillTheirs = !!existing && existing.customerId === t.customerId && t.status !== "failed";
-  // Once the customer paid something on the khata the entry must keep covering it, or that payment turns into a false advance.
-  const due = stillTheirs ? Math.max(aepsDue(t), paid) : aepsDue(t);
+  // Once the customer paid something on the khata the entry must keep covering it, or that payment turns into a false
+  // advance; but only up to the bill: paid above a corrected (lower) bill really is the customer's advance.
+  const due = stillTheirs ? Math.max(aepsDue(t), Math.min(paid, aepsBill(t).total)) : aepsDue(t);
   const body = { type: "aeps" as const, date: t.doneDate || t.date, description: dueTitle(t), amount: due, notes: t.reference ? `Txn ${t.reference}` : "", linkId: id };
-  if (existing && paid > 0 && stillTheirs) {
+  if (existing && paid > 0 && stillTheirs && due > 0) {
     store.updateEntry(existing.id, { ...body, amount: due });
     return;
   }
@@ -151,9 +153,11 @@ export function failAeps(t: AepsTxn) {
 }
 
 export function removeAeps(t: AepsTxn) {
-  const due = aepsDueEntry(t.id);
-  if (due) store.deleteEntry(due.id);
-  const jama = aepsJamaEntry(t.id);
-  if (jama) store.deleteEntry(jama.id);
-  store.deleteAeps(t.id);
+  trashGroup(() => {
+    const due = aepsDueEntry(t.id);
+    if (due) store.deleteEntry(due.id);
+    const jama = aepsJamaEntry(t.id);
+    if (jama) store.deleteEntry(jama.id);
+    store.deleteAeps(t.id);
+  });
 }

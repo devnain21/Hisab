@@ -15,8 +15,8 @@ import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint
 import { usePersona } from "@/src/lib/persona";
 import { HIDDEN, usePrefs } from "@/src/lib/prefs";
 
-type Filter = "open" | "vendor" | "done" | "all" | "today" | "late" | "unpaid";
-const FILTERS: Filter[] = ["open", "vendor", "done", "all", "today", "late", "unpaid"];
+type Filter = "open" | "vendor" | "done" | "all" | "today" | "late" | "unpaid" | "doneToday";
+const FILTERS: Filter[] = ["open", "vendor", "done", "all", "today", "late", "unpaid", "doneToday"];
 /** The segmented control; today / late / unpaid are reached from the summary tiles. */
 const TABS: { key: Filter; label: string }[] = [
   { key: "open", label: "बाकी" },
@@ -24,7 +24,7 @@ const TABS: { key: Filter; label: string }[] = [
   { key: "done", label: "पूरे" },
   { key: "all", label: "सभी" },
 ];
-const TILE_FILTER_LABEL: Partial<Record<Filter, string>> = { today: "आज देने हैं", late: "देर से", unpaid: "पैसे बाकी" };
+const TILE_FILTER_LABEL: Partial<Record<Filter, string>> = { today: "आज देने हैं", late: "देर से", unpaid: "पैसे बाकी", doneToday: "आज पूरे" };
 
 /** The vendor side of a job: who has it, what they charge, and what has been given to them so far. */
 type VendorSide = { name: string; cost: number; given: number; due: string; back: boolean };
@@ -50,6 +50,7 @@ function matches(i: JobInfo, f: Filter, today: string) {
   if (f === "today") return open && i.job.dueDate === today;
   if (f === "late") return open && i.job.dueDate < today;
   if (f === "unpaid") return !open && !!i.pay && i.pay.remaining > 0;
+  if (f === "doneToday") return !open && i.job.dueDate === today;
   return true;
 }
 
@@ -81,7 +82,6 @@ function ShopWork() {
   const [open, setOpen] = useState(false);
   const [completing, setCompleting] = useState<Job | null>(null);
   const [editing, setEditing] = useState<Job | null>(null);
-  const [settling, setSettling] = useState<Entry | null>(null);
   const today = todayISO();
 
   useEffect(() => {
@@ -122,7 +122,7 @@ function ShopWork() {
 
   const stats = useMemo(() => {
     const open = infos.filter((i) => i.job.status !== "done");
-    const unpaid = infos.filter((i) => matches(i, "unpaid", today));
+    const doneToday = infos.filter((i) => i.job.status === "done" && i.job.dueDate === today);
     return {
       open: open.length,
       value: roundMoney(open.reduce((s, i) => s + (i.job.estimatedAmount || 0), 0)),
@@ -131,8 +131,8 @@ function ShopWork() {
       late: open.filter((i) => i.job.dueDate < today).length,
       vendor: open.filter((i) => !!i.vendor).length,
       vendorDue: roundMoney(open.reduce((s, i) => s + (i.vendor ? Math.max(0, i.vendor.cost - i.vendor.given) : 0), 0)),
-      unpaid: unpaid.length,
-      unpaidSum: roundMoney(unpaid.reduce((s, i) => s + (i.pay?.remaining ?? 0), 0)),
+      doneToday: doneToday.length,
+      doneTodaySum: roundMoney(doneToday.reduce((s, i) => s + (i.work?.amount ?? 0), 0)),
     };
   }, [infos, today]);
 
@@ -146,9 +146,10 @@ function ShopWork() {
       (i.vendor?.name.toLowerCase().includes(needle) ?? false);
     const list = infos.filter((i) => matches(i, filter, today) && hit(i));
     const openList = list.filter((i) => i.job.status !== "done").sort((a, b) => a.job.dueDate.localeCompare(b.job.dueDate));
+    // Finished work: most recent first (day finished, then when it was written).
     const doneList = list
       .filter((i) => i.job.status === "done")
-      .sort((a, b) => Number((b.pay?.remaining ?? 0) > 0) - Number((a.pay?.remaining ?? 0) > 0) || b.job.dueDate.localeCompare(a.job.dueDate));
+      .sort((a, b) => b.job.dueDate.localeCompare(a.job.dueDate) || (b.work?.createdAt ?? b.job.createdAt).localeCompare(a.work?.createdAt ?? a.job.createdAt));
     const out: Row[] = [];
     const group = (key: string, label: string, tone: string, items: JobInfo[]) => {
       if (!items.length) return;
@@ -160,8 +161,7 @@ function ShopWork() {
     group("today", "आज", colors.brandPrimary, openList.filter((i) => i.job.dueDate === today));
     group("tomorrow", "कल", colors.info, openList.filter((i) => i.job.dueDate === tomorrow));
     group("later", "आगे", colors.muted, openList.filter((i) => i.job.dueDate > tomorrow));
-    group("unpaid", "पूरे · पैसे बाकी", colors.error, doneList.filter((i) => (i.pay?.remaining ?? 0) > 0));
-    group("done", "पूरे", colors.success, doneList.filter((i) => (i.pay?.remaining ?? 0) <= 0));
+    group("done", "पूरे", colors.success, doneList);
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [infos, filter, today, q, nameById]);
@@ -186,7 +186,7 @@ function ShopWork() {
           <Tile icon="calendar-today" label="आज देने" value={String(stats.today)} active={filter === "today"} onPress={() => setFilter(filter === "today" ? "open" : "today")} testID="work-tile-today" />
           <Tile icon="alert-circle-outline" label="देर से" value={String(stats.late)} warn={stats.late > 0} active={filter === "late"} onPress={() => setFilter(filter === "late" ? "open" : "late")} testID="work-tile-late" />
           <Tile icon="truck-outline" label="Vendor के पास" value={String(stats.vendor)} sub={stats.vendorDue > 0 ? `देने ${money(stats.vendorDue)}` : ""} active={filter === "vendor"} onPress={() => setFilter(filter === "vendor" ? "open" : "vendor")} testID="work-tile-vendor" />
-          <Tile icon="cash-clock" label="पैसे बाकी" value={money(stats.unpaidSum)} sub={stats.unpaid ? `${stats.unpaid} काम` : ""} warn={stats.unpaid > 0} active={filter === "unpaid"} onPress={() => setFilter(filter === "unpaid" ? "open" : "unpaid")} testID="work-tile-unpaid" />
+          <Tile icon="check-circle-outline" label="आज पूरे" value={String(stats.doneToday)} sub={stats.doneTodaySum > 0 ? money(stats.doneTodaySum) : ""} active={filter === "doneToday"} onPress={() => setFilter(filter === "doneToday" ? "open" : "doneToday")} testID="work-tile-done-today" />
         </View>
       </View>
 
@@ -258,7 +258,6 @@ function ShopWork() {
                   money={money}
                   onOpen={() => setEditing(r.info.job)}
                   onComplete={() => complete(r.info.job)}
-                  onSettle={() => r.info.work && setSettling(r.info.work)}
                 />
               </Animated.View>
             )
@@ -273,7 +272,6 @@ function ShopWork() {
       <AddJobSheet visible={open} onClose={() => setOpen(false)} />
       <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
       <EditRecordSheet job={editing} onClose={() => setEditing(null)} />
-      <SettleSheet work={settling} onClose={() => setSettling(null)} />
     </View>
   );
 }
@@ -299,14 +297,13 @@ function dueText(j: Job, today: string): { text: string; tone: string } {
   return { text: `${formatDate(j.dueDate)} तक`, tone: colors.onSurfaceSecondary };
 }
 
-function JobCard({ info, today, customer, money, onOpen, onComplete, onSettle }: {
+function JobCard({ info, today, customer, money, onOpen, onComplete }: {
   info: JobInfo;
   today: string;
   customer: string;
   money: (n: number) => string;
   onOpen: () => void;
   onComplete: () => void;
-  onSettle: () => void;
 }) {
   const { job: j, vendor, advance, pay, work } = info;
   const done = j.status === "done";
@@ -314,7 +311,7 @@ function JobCard({ info, today, customer, money, onOpen, onComplete, onSettle }:
   const late = !done && j.dueDate < today;
   const left = pay?.remaining ?? 0;
   const amount = done && work ? work.amount : j.estimatedAmount;
-  const accent = done ? (left > 0 ? colors.error : colors.success) : late ? colors.warning : vendor ? colors.info : colors.brandPrimary;
+  const accent = done ? colors.success : late ? colors.warning : vendor ? colors.info : colors.brandPrimary;
   const notes = done ? stripPayNote(j.notes) : j.notes;
   return (
     <Pressable style={styles.card} onPress={onOpen} testID={`job-card-${j.id}`}>
@@ -322,7 +319,21 @@ function JobCard({ info, today, customer, money, onOpen, onComplete, onSettle }:
       <View style={styles.cardBody}>
         <View style={styles.cardTop}>
           <Text style={styles.cardTitle} numberOfLines={2}>{j.title}</Text>
-          {amount > 0 ? <Text style={styles.cardAmount}>{money(amount)}</Text> : null}
+          {amount > 0 ? (
+            <View style={{ alignItems: "flex-end" }}>
+              <Text style={styles.cardAmount}>{money(amount)}</Text>
+              {done && pay ? (
+                left > 0 ? (
+                  <View style={styles.udhaarMark} accessibilityLabel={`उधार ${formatINR(left)}`} testID={`job-udhaar-${j.id}`}>
+                    <MaterialIcon name="clock-outline" size={11} color={semantic.due} />
+                    <Text style={styles.udhaarText}>उधार</Text>
+                  </View>
+                ) : (
+                  <MaterialIcon name="check-circle" size={14} color={semantic.received} style={{ marginTop: 3 }} accessibilityLabel="पूरे मिले" />
+                )
+              ) : null}
+            </View>
+          ) : null}
         </View>
         <View style={styles.cardMeta}>
           <View style={styles.avatar}><Text style={styles.avatarText}>{(customer.trim()[0] ?? "?").toUpperCase()}</Text></View>
@@ -358,23 +369,12 @@ function JobCard({ info, today, customer, money, onOpen, onComplete, onSettle }:
             </View>
           ) : null}
           {!done && advance > 0 && j.estimatedAmount > advance ? <Text style={styles.moneyHint}>बाकी {money(roundMoney(j.estimatedAmount - advance))}</Text> : null}
-          {done && pay ? (
-            <View style={[styles.moneyChip, { backgroundColor: left > 0 ? semantic.dueSoft : semantic.receivedSoft }]}>
-              <MaterialIcon name={left > 0 ? "clock-outline" : "check-circle"} size={13} color={left > 0 ? semantic.due : semantic.received} />
-              <Text style={[styles.moneyChipText, { color: left > 0 ? semantic.due : semantic.received }]}>{left > 0 ? `${money(left)} बाकी` : "पूरे मिले"}</Text>
-            </View>
-          ) : null}
           {done && !work && j.customerId ? <Text style={styles.moneyHint}>मुफ़्त</Text> : null}
         </View>
 
         {notes ? <Text style={styles.notes} numberOfLines={2}>{notes}</Text> : null}
 
-        {done && work && left > 0 ? (
-          <Pressable style={[styles.action, { backgroundColor: colors.success }]} onPress={onSettle} testID={`settle-job-${j.id}`}>
-            <MaterialIcon name="cash-check" size={16} color="#fff" />
-            <Text style={styles.actionText}>पैसे मिले · {money(left)}</Text>
-          </Pressable>
-        ) : !done ? (
+        {!done ? (
           <Pressable style={[styles.action, { backgroundColor: colors.brandPrimary }]} onPress={onComplete} testID={`complete-${j.id}`}>
             <MaterialIcon name="check" size={16} color="#fff" />
             <Text style={styles.actionText}>पूरा करें</Text>
@@ -584,6 +584,8 @@ const styles = StyleSheet.create({
   cardTop: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
   cardTitle: { flex: 1, minWidth: 0, fontSize: 16, fontWeight: "700", color: colors.onSurface, lineHeight: 22 },
   cardAmount: { fontSize: 16, fontWeight: "800", color: colors.onSurface, fontVariant: ["tabular-nums"] },
+  udhaarMark: { flexDirection: "row", alignItems: "center", gap: 2, marginTop: 3, paddingHorizontal: 5, paddingVertical: 1, borderRadius: radius.pill, backgroundColor: semantic.dueSoft },
+  udhaarText: { fontSize: 10, fontWeight: "800", color: semantic.due },
   cardMeta: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm },
   avatar: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
   avatarText: { fontSize: 11, fontWeight: "800", color: colors.brandSecondary },

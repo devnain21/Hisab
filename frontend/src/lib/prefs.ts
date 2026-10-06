@@ -19,7 +19,14 @@ export type Prefs = {
   lastBackupAt: string;
   /** Terms printed on vendor work orders; the last ones typed become the default. */
   vendorTerms: string;
+  /** Last line of a shared slip text while money is still due; "" uses DUE_NOTE_DEFAULT. */
+  dueNote: string;
+  /** Last line of a shared slip text once fully paid; "" uses PAID_NOTE_DEFAULT. */
+  paidNote: string;
 };
+
+export const DUE_NOTE_DEFAULT = "कृपया बकाया राशि का भुगतान जल्द करें। धन्यवाद 🙏";
+export const PAID_NOTE_DEFAULT = "आपके भुगतान के लिए धन्यवाद। फिर सेवा का अवसर दें 🙏";
 
 /** What a masked amount looks like while `hideAmounts` is on. */
 export const HIDDEN = "₹ ••••";
@@ -43,6 +50,8 @@ const DEFAULTS: Prefs = {
   lockAfterMs: 30_000,
   lastBackupAt: "",
   vendorTerms: "",
+  dueNote: "",
+  paidNote: "",
 };
 
 let memory: Prefs | null = null;

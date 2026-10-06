@@ -115,7 +115,8 @@ export default function DayScreen() {
   const workEntries = useMemo(() => dayEntries.filter((e) => e.type === "work"), [dayEntries]);
   const workTotal = workEntries.reduce((s, e) => s + e.amount, 0);
   const workFees = workEntries.reduce((s, e) => s + (e.fee ?? 0), 0);
-  const workProfit = workTotal - workFees;
+  const workVendor = dayEntries.reduce((s, e) => s + (e.type === "purchase" && e.refId ? e.amount : 0), 0);
+  const workProfit = workTotal - workFees - workVendor;
   // Khata totals include old (backdated) rows; only the galla / bank cards leave them out.
   const workCash = workEntries.filter((e) => e.mode !== "online").reduce((s, e) => s + (e.paid ?? 0), 0);
   const workOnline = workEntries.filter((e) => e.mode === "online").reduce((s, e) => s + (e.paid ?? 0), 0);
@@ -191,6 +192,7 @@ export default function DayScreen() {
     shop: user || {},
     workTotal,
     workFees,
+    workVendor,
     workProfit,
     workCash,
     workOnline,
@@ -305,7 +307,16 @@ export default function DayScreen() {
                 <Text style={styles.feeValue}>-{formatINR(workFees)}</Text>
               </View>
             ) : null}
-            {workFees > 0 ? (
+            {workVendor > 0 ? (
+              <View style={styles.workFeeRow}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <MaterialIcon name="truck-outline" size={14} color={colors.error} />
+                  <Text style={styles.feeLabel}>Vendor लागत</Text>
+                </View>
+                <Text style={styles.feeValue}>-{formatINR(workVendor)}</Text>
+              </View>
+            ) : null}
+            {workFees > 0 || workVendor > 0 ? (
               <View style={styles.workProfitRow}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                   <MaterialIcon name="star-outline" size={15} color={colors.brandPrimary} />
@@ -701,7 +712,7 @@ function RangeView({
     const byTitle = new Map<string, number>();
     expenses.forEach((x) => byTitle.set(x.title, (byTitle.get(x.title) ?? 0) + x.amount));
     const work = entries.reduce((s, e) => s + out(e), 0);
-    const fees = isPersonal ? 0 : entries.reduce((s, e) => s + (e.type === "work" ? e.fee ?? 0 : 0), 0);
+    const fees = isPersonal ? 0 : entries.reduce((s, e) => s + (e.type === "work" ? e.fee ?? 0 : e.type === "purchase" && e.refId ? e.amount : 0), 0);
     const exp = expenses.reduce((s, x) => s + x.amount, 0);
     const commission = flows.cash.commission + flows.bank.commission;
     return {

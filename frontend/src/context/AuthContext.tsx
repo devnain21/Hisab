@@ -35,6 +35,9 @@ export type ShopProfile = {
   shop_upi?: string;
   owner_name?: string;
   persona?: "business" | "personal";
+  /** Printed on slips; data URIs kept on the server (logo ≤ 100 KB, signature ≤ 25 KB). */
+  shop_logo?: string;
+  shop_signature?: string;
 };
 type User = { user_id: string; email: string; name: string; picture?: string | null } & Partial<ShopProfile>;
 type AuthState = { status: "loading" | "authenticated" | "unauthenticated"; user: User | null };

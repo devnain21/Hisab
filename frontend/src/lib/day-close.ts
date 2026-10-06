@@ -11,6 +11,8 @@ export type DaySummaryData = {
   // Work & Collections
   workTotal: number;
   workFees: number;
+  /** Cost of work done through vendors that day. */
+  workVendor: number;
   workProfit: number;
   workCash: number;
   workOnline: number;
@@ -56,10 +58,9 @@ export function buildDayCloseMessage(data: DaySummaryData): string {
     `💼 *आज की कुल बिक्री / काम:* ${formatINR(data.workTotal)}`,
   ];
 
-  if (data.workFees > 0) {
-    lines.push(`  • पोर्टल/सरकारी फीस कटी: -${formatINR(data.workFees)}`);
-    lines.push(`  • काम से शुद्ध बचत: ${formatINR(data.workProfit || data.workTotal - data.workFees)}`);
-  }
+  if (data.workFees > 0) lines.push(`  • पोर्टल/सरकारी फीस कटी: -${formatINR(data.workFees)}`);
+  if (data.workVendor > 0) lines.push(`  • Vendor लागत: -${formatINR(data.workVendor)}`);
+  if (data.workFees > 0 || data.workVendor > 0) lines.push(`  • काम से शुद्ध बचत: ${formatINR(data.workProfit)}`);
 
   lines.push(
     `  • नकद मिले: ${formatINR(data.workCash)}`,

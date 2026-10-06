@@ -218,7 +218,7 @@ function HomeBody() {
   const sendReceipt = (work: Entry) => {
     const c = customers.find((x) => x.id === work.customerId);
     if (!c) return;
-    setShareDoc(receiptDoc(work, buildAllLedgers(entries).get(work.id), c, computeBalance(entries, c.id), true, user ?? {}));
+    setShareDoc(receiptDoc(work, buildAllLedgers(entries).get(work.id), c, computeBalance(entries, c.id), true, user ?? {}, { entries }));
   };
 
   const loading = customersQ.isLoading || entriesQ.isLoading || jobsQ.isLoading;
@@ -423,13 +423,13 @@ function HomeBody() {
             {!isPersonal && (stats.totalDue > 0 || stats.vendorPayable > 0) ? (
               <View style={styles.duesStrip}>
                 <Pressable style={styles.duesCell} onPress={() => go("/(tabs)/customers", { filter: "due", book: "customer" })} accessibilityRole="button" testID="stat-total-due">
-                  <Text style={styles.duesLabel} numberOfLines={1}>⬇ ग्राहकों से मिलेंगे</Text>
+                  <Text style={styles.duesLabel} numberOfLines={1}>⬇ मिलेंगे</Text>
                   <Text style={[styles.duesValue, { color: stats.totalDue > 0 ? semantic.received : colors.muted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(stats.totalDue)}</Text>
                   <Text style={styles.duesSub} numberOfLines={1}>{stats.dueCustomers} ग्राहक</Text>
                 </Pressable>
                 <View style={styles.walletDivider} />
                 <Pressable style={styles.duesCell} onPress={() => go("/(tabs)/customers", { filter: "owe", book: "vendor" })} accessibilityRole="button" testID="stat-vendor-payable">
-                  <Text style={styles.duesLabel} numberOfLines={1}>⬆ Vendor को देने हैं</Text>
+                  <Text style={styles.duesLabel} numberOfLines={1}>⬆ देने हैं</Text>
                   <Text style={[styles.duesValue, { color: stats.vendorPayable > 0 ? semantic.due : colors.muted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(stats.vendorPayable)}</Text>
                   <Text style={styles.duesSub} numberOfLines={1}>{stats.vendorCount} Vendor</Text>
                 </Pressable>
@@ -674,7 +674,6 @@ function HomeBody() {
               <MaterialIcon name="truck-plus-outline" size={22} color={colors.onBrandPrimary} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.vendorNewTitle}>नया Vendor ऑर्डर</Text>
-                <Text style={styles.vendorNewSub}>बाहर से काम करवाया या सामान मँगाया</Text>
               </View>
               <MaterialIcon name="chevron-right" size={20} color={colors.onBrandPrimary} />
             </Pressable>
@@ -744,7 +743,6 @@ const styles = StyleSheet.create({
   duesSub: { fontSize: 11, color: colors.muted, fontWeight: "600" },
   vendorNew: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
   vendorNewTitle: { fontSize: 15, fontWeight: "800", color: colors.onBrandPrimary },
-  vendorNewSub: { fontSize: 12, color: colors.onBrandPrimary, opacity: 0.85, marginTop: 2 },
   vendorHead: { ...type.caption, color: colors.muted, fontWeight: "800", textTransform: "uppercase", marginTop: spacing.lg, marginBottom: spacing.xs },
   vendorEmpty: { fontSize: 13, color: colors.muted, paddingVertical: spacing.md },
   vendorRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 56, paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },

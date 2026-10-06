@@ -377,7 +377,7 @@ export default function ReportScreen() {
           <Pressable style={[styles.card, styles.rowBetween]} onPress={openVendors} testID="report-vendor-payable">
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexShrink: 1 }}>
               <MaterialIcon name="truck-outline" size={18} color={colors.info} />
-              <Text style={styles.cardTitle} numberOfLines={1}>Vendor को देने हैं · {vendorsOwed.length}</Text>
+              <Text style={styles.cardTitle} numberOfLines={1}>Payable · {vendorsOwed.length}</Text>
             </View>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
               <Text style={[styles.rowValue, { color: semantic.due, fontSize: 16 }]}>{money(vendorPayable)}</Text>

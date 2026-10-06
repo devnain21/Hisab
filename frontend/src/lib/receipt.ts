@@ -2,14 +2,14 @@ import { Platform } from "react-native";
 import { requireOptionalNativeModule } from "expo";
 import * as Sharing from "expo-sharing";
 import { File, Paths } from "expo-file-system";
-import { itemsOf, type Customer, type Entry, type AepsTxn } from "@/src/lib/data";
+import { itemsOf, type Customer, type Entry, type AepsTxn, type Job } from "@/src/lib/data";
 import type { Ledger, WorkStatus } from "@/src/lib/records";
-import { formatDate, formatDateShort, formatINR, formatPhone, todayISO } from "@/src/lib/format";
+import { formatDate, formatDateShort, formatINR, formatPhone, roundMoney, todayISO } from "@/src/lib/format";
 import type { ShopProfile } from "@/src/context/AuthContext";
 import { AEPS_META, aepsBill, customerCharge, defaultVia, maskAccount, statusLabel, viaBill } from "@/src/lib/aeps";
 import { accountName } from "@/src/lib/persona";
 import { TERMS, docBalanceTerm } from "@/src/lib/terms";
-import { getPrefs } from "@/src/lib/prefs";
+import { DUE_NOTE_DEFAULT, PAID_NOTE_DEFAULT, getPrefs } from "@/src/lib/prefs";
 import { qrSvg, upiLink } from "@/src/lib/qr";
 
 type Tone = "due" | "ok";
@@ -34,6 +34,8 @@ const fullShop = (s: Partial<ShopProfile> & { name?: string }): ShopProfile => (
   shop_address: s.shop_address || "",
   shop_gst: s.shop_gst || "",
   shop_upi: s.shop_upi || "",
+  shop_logo: s.shop_logo || "",
+  shop_signature: s.shop_signature || "",
 });
 
 /** Whole-account position, worded for a customer (advance) or a personal contact (we owe them). */
@@ -58,9 +60,45 @@ function upiQrHtml(shop: ShopProfile, amount: number, customerName: string): str
   </div>`;
 }
 
+/** "Ramesh_Bill_09-08-2026.pdf": whose it is, what it is, and the day it is about. */
+export function docFileName(name: string, kind: string, isoDate: string): string {
+  const who = name.trim().replace(/[\\/:*?"<>|]+/g, "").replace(/\s+/g, "_").slice(0, 40) || "Customer";
+  const [y, m, d] = isoDate.split("-");
+  return `${who}_${kind}_${d}-${m}-${y}.pdf`;
+}
+
+const payMode = (m?: string) => (m === "online" ? "Online" : "Cash");
+
+/** Last lines of a shared slip text: the owner's note for money still due (with the UPI link), or the thank-you note. */
+function shareFooter(shop: ShopProfile, due: number, customerName: string): string[] {
+  const prefs = getPrefs();
+  if (due > 0) return [prefs.dueNote.trim() || DUE_NOTE_DEFAULT, ...(shop.shop_upi ? [`UPI: ${upiLink(shop.shop_upi, shop.shop_name, due, `Hisab ${customerName}`)}`] : [])];
+  return [prefs.paidNote.trim() || PAID_NOTE_DEFAULT];
+}
+
+/**
+ * How the money on a work row came in, worded by when it came: on or after the work day it is a
+ * भुगतान, before it (taken while booking the job) an एडवांस. Jama from earlier applied to it comes last.
+ */
+function workParts(entry: Entry, status: WorkStatus | undefined): Line[] {
+  const parts = new Map<string, number>();
+  let room = entry.amount;
+  const take = (label: string, amt: number) => {
+    const a = Math.min(amt, room);
+    room -= a;
+    if (a > 0.004) parts.set(label, (parts.get(label) ?? 0) + a);
+  };
+  for (const p of status?.settlements ?? []) if (p.date < entry.date) take(`एडवांस (${payMode(p.mode)})`, p.amount);
+  take(`भुगतान (${payMode(entry.mode)})`, status?.paidAtBooking ?? Math.min(entry.paid ?? 0, entry.amount));
+  for (const p of status?.settlements ?? []) if (p.date >= entry.date) take(`भुगतान (${payMode(p.mode)})`, p.amount);
+  if ((status?.fromJama ?? 0) > 0.004) parts.set("पिछली जमा से", status!.fromJama);
+  return [...parts].map(([label, amount]) => ({ label, value: formatINR(roundMoney(amount)), tone: "ok" as Tone }));
+}
+
 /**
  * Receipt for one ledger row. `balance` is the customer's whole-account balance
  * (positive = they owe us) so dues from other entries are shown too.
+ * `ctx` lets a payment be worded as an एडवांस when it came before its work (or the job is still open).
  */
 export function receiptDoc(
   entry: Entry,
@@ -69,55 +107,81 @@ export function receiptDoc(
   balance: number,
   isCustomer: boolean,
   shopIn: Partial<ShopProfile>,
+  ctx: { jobs?: Job[]; entries?: Entry[] } = {},
 ): ShareDoc {
   const shop = fullShop(shopIn);
   const lines: Line[] = [];
   const purchase = entry.type === "purchase";
   const given = entry.type === "given";
   const fallback = entry.type === "payment" ? "भुगतान" : given ? "पैसे दिए" : purchase ? "सामान / सेवा" : "काम";
-  const items = itemsOf(entry, fallback);
+  let items = itemsOf(entry, fallback);
   let itemDue = 0;
+  let itemBalance = 0;
   let stamp: { text: string; tone: Tone };
+  let heading = entry.type === "work" ? "बिल" : "रसीद";
 
   if (entry.type === "payment") {
-    lines.push({ label: "पैसे मिले", value: formatINR(entry.amount), tone: "ok" });
-    stamp = { text: "पैसे मिले", tone: "ok" };
+    const job = entry.linkId ? ctx.jobs?.find((j) => j.id === entry.linkId && j.status !== "done") : undefined;
+    const work = entry.linkId && !job ? ctx.entries?.find((e) => e.id === entry.linkId && e.type === "work") : undefined;
+    const early = !!job || (!!work && entry.date < work.date);
+    const label = `${early ? "एडवांस" : "भुगतान"} (${payMode(entry.mode)})`;
+    if (job) {
+      // Advance on a job not done yet: show it against the job's estimate.
+      const est = job.estimatedAmount > 0 ? job.estimatedAmount : 0;
+      const before = (ctx.entries ?? []).filter((e) => e.type === "payment" && e.linkId === job.id && e.id !== entry.id && (e.date < entry.date || (e.date === entry.date && e.createdAt < entry.createdAt))).reduce((s, e) => s + e.amount, 0);
+      items = [{ title: job.title, amount: est }];
+      heading = "एडवांस रसीद";
+      if (est > 0) lines.push({ label: "कुल", value: formatINR(est) });
+      if (before > 0) lines.push({ label: "पहले एडवांस", value: formatINR(before), tone: "ok" });
+      lines.push({ label, value: formatINR(entry.amount), tone: "ok" });
+      itemDue = est > 0 ? Math.max(0, roundMoney(est - before - entry.amount)) : 0;
+      if (itemDue > 0) lines.push({ label: TERMS.docDueShort, value: formatINR(itemDue), tone: "due" });
+      itemBalance = itemDue;
+    } else {
+      lines.push({ label, value: formatINR(entry.amount), tone: "ok" });
+    }
+    stamp = { text: early ? "एडवांस मिला" : "भुगतान मिला", tone: "ok" };
+  } else if (entry.type === "work") {
+    itemDue = status?.remaining ?? Math.max(0, entry.amount - (entry.paid ?? 0));
+    lines.push({ label: "कुल", value: formatINR(entry.amount) }, ...workParts(entry, status));
+    if (itemDue > 0) lines.push({ label: TERMS.docDueShort, value: formatINR(itemDue), tone: "due" });
+    stamp = itemDue > 0 ? { text: TERMS.docDueShort, tone: "due" } : { text: "पूरा भुगतान", tone: "ok" };
+    itemBalance = itemDue;
   } else {
-    const received = status?.received ?? (entry.type === "work" || purchase ? entry.paid ?? 0 : 0);
+    const received = status?.received ?? (purchase ? entry.paid ?? 0 : 0);
     itemDue = status?.remaining ?? Math.max(0, entry.amount - received);
     lines.push({ label: given ? "पैसे दिए" : "कुल", value: formatINR(entry.amount) });
     lines.push({ label: given ? "वापस मिले" : purchase ? "चुकाए" : "जमा", value: formatINR(received), tone: received > 0 ? "ok" : undefined });
     lines.push({ label: TERMS.docDueShort, value: formatINR(itemDue), tone: itemDue > 0 ? "due" : "ok" });
     stamp = itemDue > 0 ? { text: TERMS.docDueShort, tone: "due" } : { text: given ? "वापस मिले" : purchase ? "चुकता" : "पूरा भुगतान", tone: "ok" };
+    itemBalance = purchase ? -itemDue : itemDue;
   }
   // The whole-account box only adds something when other rows change the picture.
-  const itemBalance = purchase ? -itemDue : itemDue;
-  const account = entry.type === "payment" || balance !== itemBalance ? accountLine(balance, isCustomer) : undefined;
+  const account = (entry.type === "payment" && !itemBalance) || balance !== itemBalance ? accountLine(balance, isCustomer) : undefined;
 
   const no = entry.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase();
-  const heading = entry.type === "work" ? "बिल" : "रसीद";
-  const title = entry.description || fallback;
+  const title = heading === "एडवांस रसीद" ? items[0].title : entry.description || fallback;
   const many = items.length > 1;
+  const upiDue = purchase || given ? 0 : itemDue > 0 ? itemDue : balance > 0 ? balance : 0;
 
   const message = [
-    ...messageHead(shop),
-    `${heading} नं. ${no} · ${formatDate(entry.date)}`,
-    `${customer.persona === "personal" ? "नाम" : "ग्राहक"}: ${customer.name}`,
+    `*${shop.shop_name}*`,
+    `📅 ${formatDate(entry.date)}`,
     "",
-    ...items.map((it, i) => `${many ? `${i + 1}. ` : ""}${it.title} — ${formatINR(it.amount)}`),
+    `*${customer.name}*`,
+    ...items.map((it, i) => `${many ? `${i + 1}. ` : ""}${it.title}${it.amount > 0 ? ` — ${formatINR(it.amount)}` : ""}`),
     "──────────",
     ...lines.map(lineText),
+    ...(itemDue <= 0 && entry.type === "work" ? ["पूरा भुगतान ✓"] : []),
     ...(account ? ["", `*${account.label}: ${account.value}*`] : []),
     "",
-    "धन्यवाद 🙏",
+    ...(isCustomer && !purchase && !given ? shareFooter(shop, upiDue, customer.name) : ["धन्यवाद 🙏"]),
   ].join("\n");
-
-  const upiDue = purchase ? 0 : itemDue > 0 ? itemDue : balance > 0 ? balance : 0;
 
   const body = `
   <table class="items">
     <tr><th class="no">क्र.</th><th>विवरण</th><th class="amt">रकम</th></tr>
-    ${items.map((it, i) => `<tr class="item"><td class="no">${i + 1}</td><td>${esc(it.title)}</td><td class="amt">${esc(formatINR(it.amount))}</td></tr>`).join("")}
+    ${items.map((it, i) => `<tr class="item"><td class="no">${i + 1}</td><td>${esc(it.title)}</td><td class="amt">${it.amount > 0 ? esc(formatINR(it.amount)) : ""}</td></tr>`).join("")}
   </table>
   <table class="sum">${lines.map(sumRow).join("")}</table>
   ${account ? accountBox(account) : ""}
@@ -127,15 +191,16 @@ export function receiptDoc(
   return {
     heading,
     title,
-    sub: `${customer.name} · ${formatDate(entry.date)} · नं. ${no}`,
+    sub: `${customer.name} · ${formatDate(entry.date)}`,
     phone: customer.phone,
     lines,
     account,
     message,
     html: page(shop, heading, `नं. ${esc(no)}<br/>${esc(formatDate(entry.date))}`, customer, body, "A5"),
-    fileName: `${entry.type === "work" ? "Bill" : "Rasid"}-${no}-${fileSafe(customer.name)}.pdf`,
+    fileName: docFileName(customer.name, entry.type === "work" ? "Bill" : heading === "एडवांस रसीद" ? "Advance" : "Receipt", entry.date),
   };
 }
+
 /** Order number printed on a vendor work order: WO-YYMM- plus a short id, stable for the same row. */
 export const workOrderNo = (e: Entry) => `WO-${e.date.slice(2, 4)}${e.date.slice(5, 7)}-${e.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase()}`;
 
@@ -151,21 +216,24 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
   const late = !delivered && !!entry.dueDate && entry.dueDate < todayISO();
   const state = left <= 0 ? "पूरा भुगतान" : delivered ? "डिलीवर · भुगतान बाकी" : late ? "तारीख निकल गई" : "ऑर्डर दिया";
   const stampTone: Tone = left <= 0 ? "ok" : "due";
-  const mode = entry.mode === "online" ? "बैंक / UPI" : "नकद";
+  // An outsourced job (refId) is paid for work already done; an order paid up front is an advance.
+  const job = !!entry.refId;
+  const heading = job ? "VOUCHER" : "WORK ORDER";
+  const jobRef = job ? `JOB-${entry.refId!.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase()}` : "";
 
   const lines: Line[] = [
-    { label: "तय रकम", value: formatINR(entry.amount) },
-    { label: `एडवांस दिया${advance > 0 ? ` (${mode})` : ""}`, value: formatINR(advance), tone: advance > 0 ? "ok" : undefined },
-    ...(paid - advance > 0 ? [{ label: "बाद में दिए", value: formatINR(paid - advance), tone: "ok" as Tone }] : []),
-    { label: "बाकी देने हैं", value: formatINR(left), tone: left > 0 ? "due" : "ok" },
+    { label: job ? "तय भुगतान" : "तय रकम", value: formatINR(entry.amount) },
+    ...(advance > 0 ? [{ label: `${job ? "भुगतान" : "एडवांस"} (${payMode(entry.mode)})`, value: formatINR(advance), tone: "ok" as Tone }] : []),
+    ...(paid - advance > 0 ? [{ label: "बाद में भुगतान", value: formatINR(paid - advance), tone: "ok" as Tone }] : []),
+    { label: TERMS.docDueShort, value: formatINR(left), tone: left > 0 ? "due" : "ok" },
   ];
   const terms = (entry.terms ?? "").trim();
   const many = items.length > 1;
 
   const message = [
     ...messageHead(shop),
-    `*WORK ORDER* · ${no}`,
-    `तारीख: ${formatDate(entry.date)}${entry.dueDate ? ` · कब तक: *${formatDate(entry.dueDate)}*` : ""}`,
+    `*${heading}* · ${no}${jobRef ? ` · ${jobRef}` : ""}`,
+    `📅 ${formatDate(entry.date)}${entry.dueDate ? ` · कब तक: *${formatDate(entry.dueDate)}*` : ""}`,
     `Vendor: ${vendor.name}`,
     "",
     ...items.map((it, i) => `${many ? `${i + 1}. ` : ""}${it.title} — ${formatINR(it.amount)}`),
@@ -175,7 +243,7 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
     ...(terms ? ["", "शर्तें:", terms] : []),
   ].join("\n");
 
-  const meta = [`नं. ${esc(no)}`, `तारीख: ${esc(formatDate(entry.date))}`, entry.dueDate ? `<b>कब तक: ${esc(formatDate(entry.dueDate))}</b>` : ""].filter(Boolean).join("<br/>");
+  const meta = [`नं. ${esc(no)}`, jobRef ? `काम: ${esc(jobRef)}` : "", `तारीख: ${esc(formatDate(entry.date))}`, entry.dueDate ? `<b>कब तक: ${esc(formatDate(entry.dueDate))}</b>` : ""].filter(Boolean).join("<br/>");
   const body = `
   <table class="items">
     <tr><th class="no">क्र.</th><th>काम / सामान</th><th class="amt">रकम</th></tr>
@@ -184,21 +252,17 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
   <table class="sum">${lines.map(sumRow).join("")}</table>
   <div class="stamp" style="border-color:${toneColor(stampTone)};color:${toneColor(stampTone)}">${esc(state)}</div>
   ${terms ? `<div class="note"><b>शर्तें</b><br/>${esc(terms)}</div>` : ""}
-  ${entry.notes ? `<div class="note">${esc(entry.notes)}</div>` : ""}
-  <div style="display:flex;justify-content:space-between;gap:24px;margin-top:40px;font-size:11px;color:#555;">
-    <div style="flex:1;border-top:1px solid #999;padding-top:6px;text-align:center;">${esc(shop.shop_name)} (हस्ताक्षर)</div>
-    <div style="flex:1;border-top:1px solid #999;padding-top:6px;text-align:center;">${esc(vendor.name)} (हस्ताक्षर)</div>
-  </div>`;
+  ${entry.notes ? `<div class="note">${esc(entry.notes)}</div>` : ""}`;
 
   return {
-    heading: "WORK ORDER",
+    heading,
     title: entry.description || items[0]?.title || "Vendor ऑर्डर",
     sub: `${vendor.name} · ${no}${entry.dueDate ? ` · कब तक ${formatDate(entry.dueDate)}` : ""}`,
     phone: vendor.phone,
     lines,
     message,
-    html: page(shop, "WORK ORDER", meta, vendor, body, "A5", { toLabel: "Vendor / कारीगर", foot: "Generated with Hisab", hideNote: true }),
-    fileName: `${no}-${fileSafe(vendor.name)}.pdf`,
+    html: page(shop, heading, meta, vendor, body, "A5", { toLabel: "Vendor / कारीगर", foot: "Generated with Hisab", hideNote: true, counterSign: vendor.name }),
+    fileName: docFileName(vendor.name, job ? "Voucher" : "WorkOrder", entry.date),
   };
 }
 
@@ -302,7 +366,7 @@ export function statementDoc(
     account,
     message,
     html: page(shop, "खाता विवरण", esc(formatDate(today)), customer, body, "A4"),
-    fileName: `Hisab-${fileSafe(customer.name)}-${today}.pdf`,
+    fileName: docFileName(customer.name, "Statement", today),
   };
 }
 
@@ -361,7 +425,7 @@ export function reminderDoc(
     account: { label: `कुल ${TERMS.docDue}`, value: formatINR(balance), tone: "due" },
     message,
     html: page(shop, "भुगतान रिमाइंडर", esc(formatDate(today)), customer, body, "A5"),
-    fileName: `Reminder-${fileSafe(customer.name)}-${today}.pdf`,
+    fileName: docFileName(customer.name, "Reminder", today),
   };
 }
 
@@ -379,13 +443,26 @@ const sumRow = (l: Line) => `<tr><td>${esc(l.label)}</td><td class="amt" style="
 const accountBox = (l: Line) =>
   `<div class="account" style="border-color:${toneColor(l.tone)}"><span>${esc(l.label)}</span><b style="color:${toneColor(l.tone)}">${esc(l.value)}</b></div>`;
 
-type PageOpts = { toLabel?: string; foot?: string; hideNote?: boolean };
+/** `counterSign`: a second signature line on the left, e.g. the vendor's on a work order. */
+type PageOpts = { toLabel?: string; foot?: string; hideNote?: boolean; counterSign?: string };
+
+const IMAGE_URI = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
 
 function page(shop: ShopProfile, heading: string, docMeta: string, customer: Customer, body: string, size: "A4" | "A5", opts: PageOpts = {}): string {
   const personal = customer.persona === "personal";
   const prefs = getPrefs();
   const note = !personal && customer.id !== OWN_BOOK && !opts.hideNote ? prefs.receiptNote.trim() : "";
-  const logo = !personal && /^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(prefs.logo) ? prefs.logo : "";
+  // The phone-only logo of older versions is used until the owner saves one to the server.
+  const logoSrc = shop.shop_logo || prefs.logo;
+  const logo = !personal && IMAGE_URI.test(logoSrc) ? logoSrc : "";
+  const signImg = shop.shop_signature && IMAGE_URI.test(shop.shop_signature) ? shop.shop_signature : "";
+  const signBlock =
+    personal || customer.id === OWN_BOOK
+      ? ""
+      : `<div class="signs">
+    ${opts.counterSign ? `<div class="sign"><div class="signSpace"></div><div class="signLine">${esc(opts.counterSign)}</div></div>` : "<div></div>"}
+    <div class="sign">${signImg ? `<img class="signImg" src="${signImg}" alt=""/>` : `<div class="signSpace"></div>`}<div class="signLine">अधिकृत हस्ताक्षर</div></div>
+  </div>`;
   const shopMeta = [shop.shop_address, shop.shop_phone ? `फ़ोन: ${formatPhone(shop.shop_phone)}` : "", shop.shop_gst && !personal && prefs.showGst ? `GSTIN: ${shop.shop_gst}` : ""]
     .filter(Boolean)
     .map((s) => `<div>${esc(s)}</div>`)
@@ -425,6 +502,11 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
   .stamp { display: inline-block; margin-top: 16px; border: 2px solid; padding: 4px 14px; border-radius: 6px; font-weight: 800; transform: rotate(-4deg); }
   .note { margin-top: 18px; padding: 8px 10px; background: #F7F7F7; border-radius: 6px; color: #444; font-size: 11px; white-space: pre-line; }
   .foot { margin-top: 24px; text-align: center; color: #777; font-size: 12px; border-top: 1px solid #EEE; padding-top: 10px; }
+  .signs { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; margin-top: 28px; page-break-inside: avoid; }
+  .sign { width: 42%; text-align: center; }
+  .signImg { max-width: 140px; max-height: 56px; object-fit: contain; display: block; margin: 0 auto 2px; }
+  .signSpace { height: 40px; }
+  .signLine { border-top: 1px solid #999; padding-top: 4px; font-size: 11px; color: #555; }
 </style></head><body>
   <div class="head">
     <div class="brand">${logo ? `<img class="logo" src="${logo}" alt=""/>` : ""}<div><div class="shop">${esc(shop.shop_name)}</div><div class="meta">${shopMeta}</div></div></div>
@@ -433,6 +515,7 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
   ${customer.id === OWN_BOOK ? `<div class="to"><div class="name">${esc(customer.name)}</div></div>` : `<div class="to"><div class="label">${esc(opts.toLabel ?? (customer.persona === "personal" ? "नाम" : "ग्राहक"))}</div><div class="name">${esc(customer.name)}</div>${customer.phone ? `<div class="meta">${esc(formatPhone(customer.phone))}</div>` : ""}</div>`}
   ${body}
   ${note ? `<div class="note">${esc(note)}</div>` : ""}
+  ${signBlock}
   <div class="foot">${opts.foot ?? (customer.id === OWN_BOOK ? `बनाया: ${esc(formatDate(todayISO()))}` : personal ? "धन्यवाद 🙏" : "धन्यवाद, फिर पधारें 🙏")}</div>
 </body></html>`;
 }
@@ -632,7 +715,7 @@ export function aepsReceiptDoc(t: AepsTxn, shopIn: Partial<ShopProfile>, kept = 
     lines: summary,
     message,
     html: page(shop, heading, `नं. ${esc(no)}<br/>${esc(formatDate(t.date))}`, customer, body, "A5"),
-    fileName: `${m.short}-${no}-${fileSafe(name)}.pdf`,
+    fileName: docFileName(name, "Receipt", t.date),
   };
 }
 

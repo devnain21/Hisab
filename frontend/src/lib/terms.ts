@@ -38,6 +38,6 @@ export function totalTerm(owedToYou: boolean, personal: boolean): string {
 /** Word for a balance printed on a slip the other person reads. */
 export function docBalanceTerm(balance: number, isCustomer: boolean, short = false): string {
   if (balance > 0) return short ? TERMS.docDueShort : TERMS.docDue;
-  if (balance < 0) return isCustomer ? (short ? TERMS.advanceShort : TERMS.advance) : TERMS.docTheirs;
+  if (balance < 0) return isCustomer ? "जमा" : TERMS.docTheirs;
   return TERMS.docSettled;
 }

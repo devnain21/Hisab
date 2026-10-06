@@ -13,7 +13,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
 import { advanceOf, computeBalance, isVendor, itemsOf, useCustomers, useEntries, useJobs, type Customer, type Entry, type EntryItem, type EntryType, type Job } from "@/src/lib/data";
-import { ADVANCE, advancesForJob, buildLedger, jobForWork, linkedPayment, olderAdvances, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
+import { ADVANCE, advancesForJob, buildLedger, jobForWork, linkedPayment, olderAdvances, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, vendorCostsFor, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
 import { OLD_ENTRY_DAYS, cleanAmountInput, dateOnSave, formatDate, formatINR, isBackdated, isValidISO, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
@@ -658,7 +658,7 @@ function FeeField({ fee, setFee, feeMode, setFeeMode, amount }: { fee: string; s
   const cashFrom = usePersona().isPersonal ? "कैश से" : "गल्ले से";
   return (
     <>
-      <Field label="फीस / लागत (₹)">
+      <Field label="सरकारी फीस (₹)">
         <TextInput style={inputStyle} value={fee} onChangeText={setFee} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-fee" />
         {n > 0 && amount > 0 ? (
           <Text style={[styles.hint, { color: amount - n >= 0 ? colors.brandPrimary : colors.error, fontWeight: "700" }]}>
@@ -692,6 +692,7 @@ function recordWork({
   feeMode = "online",
   items = [],
   split = null,
+  vendor = null,
 }: {
   customerId: string;
   title: string;
@@ -705,9 +706,11 @@ function recordWork({
   items?: EntryItem[];
   /** Paid partly cash, partly online (adds up to `received`). */
   split?: { cash: number; online: number } | null;
+  /** Work done by a vendor: books their cost as a purchase tied to this work row. */
+  vendor?: VendorJob | null;
 }): string {
-  // Free work is still booked when the shop paid a fee for it, so the cost shows up.
-  if (amount <= 0 && !(fee > 0 && customerId)) return "";
+  // Free work is still booked when the shop paid a fee or a vendor for it, so the cost shows up.
+  if (amount <= 0 && !((fee > 0 || (vendor?.cost ?? 0) > 0) && customerId)) return "";
   // Split: the cash part sits on the work row, the online part is a linked payment the same day.
   const cashPart = split ? split.cash : received;
   const rowMode = split ? "cash" : mode;
@@ -731,7 +734,82 @@ function recordWork({
     if (onlinePaid > 0) store.createEntry({ customerId, type: "payment", date, description: settleDescription(title), amount: onlinePaid, mode: "online", notes: "", linkId: work.id });
     bookAdvance(customerId, split.online - onlinePaid, date, title, work.id, "online");
   }
+  if (vendor && vendor.cost > 0) {
+    store.createEntry({
+      customerId: vendor.vendorId,
+      type: "purchase",
+      date,
+      description: title,
+      amount: vendor.cost,
+      paid: vendor.paidNow ? vendor.cost : 0,
+      mode: vendor.mode,
+      notes: "",
+      refId: work.id,
+      status: "delivered",
+      dueDate: "",
+    });
+  }
   return work.id;
+}
+
+type VendorJob = { vendorId: string; cost: number; paidNow: boolean; mode: PayMode };
+
+/** "वेंडर से कराया" state for a job: off by default; picks the vendor and what they charged. */
+function useVendorJob(visible: boolean) {
+  const choice = useCustomerChoice(visible, undefined, "vendor");
+  const [on, setOn] = useState(false);
+  const [cost, setCost] = useState("");
+  const [paidNow, setPaidNow] = useState(true);
+  const [mode, setMode] = useState<PayMode>("cash");
+
+  useEffect(() => {
+    if (visible) {
+      setOn(false);
+      setCost("");
+      setPaidNow(true);
+      setMode(getPrefs().defaultMode);
+    }
+  }, [visible]);
+
+  const costNum = on ? parseAmount(cost) : 0;
+  const ready = !on || (choice.ready && costNum > 0);
+  const resolve = async (): Promise<VendorJob | null> => {
+    if (!on || costNum <= 0) return null;
+    const vendorId = await choice.resolve();
+    return vendorId ? { vendorId, cost: costNum, paidNow, mode } : null;
+  };
+  return { choice, on, setOn, cost, setCost, costNum, paidNow, setPaidNow, mode, setMode, ready, resolve };
+}
+
+function VendorOutsource({ v, amount, fee }: { v: ReturnType<typeof useVendorJob>; amount: number; fee: number }) {
+  const left = roundMoney(amount - fee - v.costNum);
+  return (
+    <View style={styles.vendorBox}>
+      <Pressable style={styles.vendorToggle} onPress={() => v.setOn(!v.on)} testID="toggle-job-vendor">
+        <MaterialIcon name="truck-outline" size={20} color={v.on ? colors.brandPrimary : colors.muted} />
+        <Text style={[styles.vendorToggleText, v.on && { color: colors.onSurface }]}>वेंडर से कराया</Text>
+        <MaterialIcon name={v.on ? "toggle-switch" : "toggle-switch-off-outline"} size={34} color={v.on ? colors.brandPrimary : colors.muted} />
+      </Pressable>
+      {v.on ? (
+        <View style={{ marginTop: spacing.sm }}>
+          <CustomerPicker choice={v.choice} label="Vendor" testPrefix="chip-job-vendor" />
+          <Field label="Vendor लागत (₹)">
+            <TextInput style={inputStyle} value={v.cost} onChangeText={v.setCost} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-vendor-cost" />
+            {v.costNum > 0 && amount > 0 ? (
+              <Text style={[styles.hint, { color: left >= 0 ? colors.brandPrimary : colors.error, fontWeight: "700" }]}>
+                {left >= 0 ? "बचत" : "घाटा"} {formatINR(Math.abs(left))}
+              </Text>
+            ) : null}
+          </Field>
+          <View style={[styles.chipRow, { marginBottom: spacing.md }]}>
+            <Chip label="तुरंत चुकाए" icon="check" active={v.paidNow} onPress={() => v.setPaidNow(true)} testID="chip-vendor-paid" />
+            <Chip label="उधारी" icon="timer-sand" active={!v.paidNow} onPress={() => v.setPaidNow(false)} testID="chip-vendor-later" />
+          </View>
+          {v.paidNow && v.costNum > 0 ? <PayModeField label="कहाँ से दिए" value={v.mode} onChange={v.setMode} cashLabel="गल्ले से" onlineLabel="बैंक से" /> : null}
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 /** One payment row, or two (cash + online) when it was split. */
@@ -1121,9 +1199,7 @@ export function AddEntrySheet({
           />
           {remind ? (
             <View style={{ marginTop: spacing.sm }}>
-              <DateField label={kind === "given" ? "कब तक वापस मिलेंगे" : "कब तक चुकाने हैं"} value={returnDate} onChange={setReturnDate} future testID="input-entry-return" />
-              <Text style={styles.hint}>उस दिन “मेरे काम” में याद दिलाएगा</Text>
-            </View>
+              <DateField label={kind === "given" ? "कब तक वापस मिलेंगे" : "कब तक चुकाने हैं"} value={returnDate} onChange={setReturnDate} future testID="input-entry-return" />            </View>
           ) : null}
         </View>
       ) : null}
@@ -1137,7 +1213,7 @@ export function AddEntrySheet({
           <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-entry-notes" />
         </Field>
         {vendor ? (
-          <Field label="शर्तें (Work Order पर छपेंगी)">
+          <Field label="शर्तें">
             <TextInput style={[inputStyle, { minHeight: 72, textAlignVertical: "top" }]} value={terms} onChangeText={setTerms} multiline placeholder="जैसे बाकी भुगतान डिलीवरी पर · सैंपल जैसी क्वालिटी" placeholderTextColor={colors.muted} testID="input-vendor-terms" />
           </Field>
         ) : null}
@@ -1217,6 +1293,9 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   const extraSum = extras.reduce((s, e) => s + e.amount, 0);
   // Every other payment booked against this work, shown so it can be seen / removed here.
   const later = entry ? settlementsFor(entry, entries).filter((p) => p.id !== legacyLink?.id && !extras.some((e) => e.id === p.id)) : [];
+  const vendorRows = entry ? vendorCostsFor(entry, entries) : [];
+  const allContacts = useCustomers().data ?? [];
+  const router = useRouter();
 
   useEffect(() => {
     if (!entry) return;
@@ -1234,7 +1313,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   }, [entry?.id]);
 
   const amt = money.totalNum;
-  const valid = items.titled && (amt > 0 || parseAmount(govtFee) > 0);
+  const valid = items.titled && (amt > 0 || parseAmount(govtFee) > 0 || vendorRows.length > 0);
 
   const save = () => {
     if (!entry || !valid) return;
@@ -1258,6 +1337,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       extras.forEach((e) => store.deleteEntry(e.id));
       // Money taken on the work day (online part of a split, other-mode advance) moves with the work's date.
       if (date !== entry.date) later.filter((p) => p.date === entry.date && p.linkId === entry.id).forEach((p) => store.updateEntry(p.id, { date }));
+      if (date !== entry.date) vendorRows.filter((v) => v.date === entry.date).forEach((v) => store.updateEntry(v.id, { date }));
       bookAdvance(entry.customerId, taken - amt, date, t, entry.id, payMode);
       // Old two-row cash records: the same-day jama is now carried by `paid`.
       if (legacyLink) store.deleteEntry(legacyLink.id);
@@ -1278,6 +1358,27 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       <MoneyFields money={money} receivedLabel="उस दिन मिले (₹)" hideTotal />
       {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
       <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
+      {vendorRows.length > 0 ? (
+        <Field label="Vendor">
+          {vendorRows.map((v) => {
+            const left = roundMoney(v.amount - (v.paid ?? 0) - settlementsFor(v, entries).reduce((s, p) => s + p.amount, 0));
+            return (
+              <Pressable
+                key={v.id}
+                style={styles.settleRow}
+                onPress={() => { onClose(); router.push(`/customer/${v.customerId}`); }}
+                testID={`work-vendor-${v.id}`}
+              >
+                <MaterialIcon name="truck-outline" size={16} color={colors.brandPrimary} />
+                <Text style={styles.settleText} numberOfLines={1}>
+                  {allContacts.find((c) => c.id === v.customerId)?.name ?? "Vendor"} · {formatINR(v.amount)} · {left > 0 ? `बाकी ${formatINR(left)}` : "चुकता"}
+                </Text>
+                <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
+              </Pressable>
+            );
+          })}
+        </Field>
+      ) : null}
       {later.length > 0 ? (
         <Field label="अलग से मिले पैसे">
           {later.map((p) => (
@@ -1530,6 +1631,8 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   const [openedOn, setOpenedOn] = useState(todayISO());
   const [saving, setSaving] = useState(false);
   const split = useSplitPay();
+  const vendorJob = useVendorJob(visible);
+  const { isPersonal } = usePersona();
 
   useEffect(() => {
     if (visible) {
@@ -1566,7 +1669,9 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
 
   const amt = self ? 0 : money.totalNum;
   const advance = choice.existingId ? advanceOf(entries, choice.existingId) : 0;
-  const valid = choice.ready && (itemized ? items.titled : !!title.trim()) && (mode !== "now" || self || amt <= 0 || money.answered);
+  const outsource = mode === "now" && !self && !isPersonal;
+  const valid =
+    choice.ready && (itemized ? items.titled : !!title.trim()) && (mode !== "now" || self || amt <= 0 || money.answered) && (!outsource || vendorJob.ready);
   const saveLabel = mode === "later" ? "आगे का काम जोड़ें" : self ? "सेव करें" : amt > 0 ? "काम सेव करें" : "मुफ़्त काम सेव करें";
 
   const save = async () => {
@@ -1578,6 +1683,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       const feeNum = parseAmount(govtFee);
       const day = dateOnSave(date, openedOn);
       if (mode === "now") {
+        const vendor = outsource && customerId ? await vendorJob.resolve() : null;
         const entryId = recordWork({
           customerId,
           title: t,
@@ -1590,6 +1696,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
           feeMode,
           items: itemized ? items.saved() : [],
           split: splitOf(split, money.receivedNum),
+          vendor,
         });
         // Free work books no row, but money taken with it still came in and stays with the customer as advance.
         if (!entryId && !self && customerId && money.receivedNum > 0) {
@@ -1634,6 +1741,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
         <>
           <MoneyFields money={money} advance={advance} freeAllowed hideTotal />
           {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={money.receivedNum} /> : null}
+          {outsource ? <VendorOutsource v={vendorJob} amount={amt} fee={parseAmount(govtFee)} /> : null}
         </>
       ) : (
         <Field label="रकम (₹)">
@@ -1773,6 +1881,9 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
   const [openedOn, setOpenedOn] = useState(todayISO());
   const [saving, setSaving] = useState(false);
   const split = useSplitPay();
+  const vendorJob = useVendorJob(!!job);
+  const { isPersonal } = usePersona();
+  const outsource = !!job?.customerId && !isPersonal;
 
   useEffect(() => {
     if (job) {
@@ -1802,6 +1913,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
       const cashDate = dateOnSave(cashDay, openedOn);
       const sameDay = cashDate === workDate;
       const parts = splitOf(split, got);
+      const vendor = outsource ? await vendorJob.resolve() : null;
       const entryId = recordWork({
         customerId: job.customerId,
         title: job.title,
@@ -1813,6 +1925,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
         fee: parseAmount(fee),
         feeMode,
         split: sameDay ? parts : null,
+        vendor,
       });
       if (entryId) {
         jobAdvances.forEach((p) => store.updateEntry(p.id, { linkId: entryId }));
@@ -1836,12 +1949,13 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
           <MoneyFields money={money} advance={advance} receivedLabel="आज मिले (₹)" freeAllowed />
           {got > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={got} /> : null}
           <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
+          {outsource ? <VendorOutsource v={vendorJob} amount={amt} fee={parseAmount(fee)} /> : null}
         </>
       ) : null}
       <DateField label="काम की तारीख" value={workDay} onChange={(d) => { setWorkDate(d); setCashDate(d); }} testID="input-complete-date" />
       {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDay} onChange={setCashDate} money testID="input-complete-cash-date" /> : null}
       {job?.customerId ? <LimitWarning customerId={job.customerId} extra={roundMoney(amt - got)} /> : null}
-      <PrimaryButton label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"} onPress={save} disabled={!!job?.customerId && amt > 0 && !money.answered} saving={saving} testID="save-complete-btn" />
+      <PrimaryButton label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"} onPress={save} disabled={(!!job?.customerId && amt > 0 && !money.answered) || (outsource && !vendorJob.ready)} saving={saving} testID="save-complete-btn" />
     </SheetShell>
   );
 }
@@ -1867,6 +1981,9 @@ const styles = StyleSheet.create({
   moreInfoHint: { flex: 1, fontSize: 12, color: colors.muted, textAlign: "right" },
   resultBox: { marginBottom: spacing.md, paddingVertical: spacing.sm, paddingHorizontal: spacing.md, borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed" },
   resultText: { fontSize: 14, fontWeight: "700" },
+  vendorBox: { marginBottom: spacing.md, padding: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
+  vendorToggle: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 40 },
+  vendorToggleText: { flex: 1, fontSize: 14, fontWeight: "700", color: colors.onSurfaceSecondary },
   pickedRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 48, paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.border },
   pickedName: { flex: 1, fontSize: 15, fontWeight: "700", color: colors.onSurface },
   changeText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },

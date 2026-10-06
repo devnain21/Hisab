@@ -147,7 +147,7 @@ export default function CustomerDetail() {
     const txn = e.type === "aeps" ? aepsList.find((t) => t.id === e.linkId) : undefined;
     const jama = txn ? aepsJamaEntry(txn.id, entries) : undefined;
     const keptLabel = jama ? (jamaKindOf(jama) === "old" ? "पुरानी उधारी में कटे" : "खाते में जमा") : "";
-    setShareDoc(txn ? aepsReceiptDoc(txn, user ?? {}, jama?.amount ?? 0, keptLabel) : receiptDoc(e, ledger.work.get(e.id), customer, due, isCustomer, user ?? {}));
+    setShareDoc(txn ? aepsReceiptDoc(txn, user ?? {}, jama?.amount ?? 0, keptLabel) : receiptDoc(e, ledger.work.get(e.id), customer, due, isCustomer, user ?? {}, { jobs: jobsQ.data ?? [], entries: entriesQ.data ?? [] }));
   };
   const openStatement = () => setStmt("all");
   const stmtDoc = stmt ? statementDoc(entries, ledger, customer, isCustomer, user ?? {}, stmtRange(stmt)) : null;
@@ -169,7 +169,7 @@ export default function CustomerDetail() {
   const primary = vendor ? (openOrders.length > 0 ? actPay : actOrder) : due > 0 ? actGot : due < 0 ? actReturn : isCustomer ? actWork : actGiven;
   const secondary = vendor ? (primary === actPay ? actOrder : actPay) : isCustomer ? (primary === actWork ? actGot : actWork) : primary === actGot ? actGiven : actGot;
   const moreActions: Action[] = [];
-  if (vendor) moreActions.push(actOrder, actPay, { key: "advance", label: "एडवांस दिया (बिना ऑर्डर)", icon: "arrow-top-right", color: semantic.due, run: () => setEntrySheet("given") }, { key: "refund", label: "पैसे वापस मिले", icon: "arrow-bottom-left", color: semantic.received, run: () => setEntrySheet("payment") });
+  if (vendor) moreActions.push(actOrder, actPay, { key: "advance", label: "एडवांस", icon: "arrow-top-right", color: semantic.due, run: () => setEntrySheet("given") }, { key: "refund", label: "पैसे वापस मिले", icon: "arrow-bottom-left", color: semantic.received, run: () => setEntrySheet("payment") });
   else {
     if (isCustomer) moreActions.push(actWork, { key: "later", label: "आगे का काम / रिमार्क", icon: "calendar-clock", run: () => setJobSheet("later") });
     moreActions.push(actGot, actGiven);

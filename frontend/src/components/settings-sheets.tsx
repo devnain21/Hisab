@@ -1,107 +1,161 @@
 import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TextInput, Switch, Image } from "react-native";
+import { View, Text, StyleSheet, TextInput, Switch, Image, ActivityIndicator } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import * as ImagePicker from "expo-image-picker";
 import { showNotice } from "@/src/lib/confirm";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { Field, PrimaryButton, SheetShell, inputStyle } from "@/src/components/sheets";
-import { REMINDER_PLACEHOLDERS, savePrefs, usePrefs } from "@/src/lib/prefs";
+import { DUE_NOTE_DEFAULT, PAID_NOTE_DEFAULT, REMINDER_PLACEHOLDERS, savePrefs, usePrefs } from "@/src/lib/prefs";
 import { fillReminder } from "@/src/lib/receipt";
+import { useAuth } from "@/src/context/AuthContext";
+import { dataUriBytes, useImageShrink } from "@/src/components/image-shrink";
 
-/** Every slip carries the logo inline, so it has to stay small. */
-const MAX_LOGO_CHARS = 400_000;
+const LOGO_MAX = 100 * 1024;
+const SIGN_MAX = 25 * 1024;
 
 const NOTE_EXAMPLES = ["बिका हुआ माल वापस नहीं होगा", "सामान 7 दिन में बदला जा सकता है", "भुगतान 15 दिन में करें"];
+const DUE_EXAMPLES = [DUE_NOTE_DEFAULT, "सुविधानुसार बकाया भुगतान कर दें 🙏", "अगली बार आने पर बकाया चुका दें।"];
+const PAID_EXAMPLES = [PAID_NOTE_DEFAULT, "पूरा भुगतान मिला, धन्यवाद 🙏", "फिर पधारें 🙏"];
 
-/** What every slip carries besides the entry: a footer note, and whether the GSTIN is printed. */
+type Picked = "logo" | "sign";
+
+/** Slip settings: logo and signature (kept on the server), footer note, share-text notes and GSTIN. */
 export function ReceiptSettingsSheet({ visible, onClose, hasGst }: { visible: boolean; onClose: () => void; hasGst: boolean }) {
   const prefs = usePrefs();
+  const { user, setShop } = useAuth();
+  const img = useImageShrink();
   const [note, setNote] = useState("");
+  const [dueNote, setDueNote] = useState("");
+  const [paidNote, setPaidNote] = useState("");
   const [showGst, setShowGst] = useState(true);
   const [logo, setLogo] = useState("");
+  const [sign, setSign] = useState("");
+  const [busy, setBusy] = useState<Picked | null>(null);
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     if (!visible) return;
     setNote(prefs.receiptNote);
+    setDueNote(prefs.dueNote);
+    setPaidNote(prefs.paidNote);
     setShowGst(prefs.showGst);
-    setLogo(prefs.logo);
+    // A logo saved on this phone by an older version moves to the server on the next save.
+    setLogo(user?.shop_logo || prefs.logo);
+    setSign(user?.shop_signature || "");
     // Only when the sheet opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  const pickLogo = async () => {
+  const pick = async (kind: Picked) => {
     try {
-      const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsEditing: true, aspect: [1, 1], quality: 0.3, base64: true });
+      const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsEditing: true, ...(kind === "logo" ? { aspect: [1, 1] as [number, number] } : {}), quality: 0.9, base64: true });
       const a = r.canceled ? undefined : r.assets[0];
       if (!a) return;
-      const uri = a.base64 ? `data:${a.mimeType === "image/png" ? "image/png" : "image/jpeg"};base64,${a.base64}` : a.uri.startsWith("data:image/") ? a.uri : "";
-      if (!uri) return;
-      if (uri.length > MAX_LOGO_CHARS) {
-        showNotice("फ़ोटो बहुत बड़ी है", "छोटी या साफ़ बैकग्राउंड वाली लोगो फ़ोटो चुनें।");
-        return;
-      }
-      setLogo(uri);
-    } catch {
-      showNotice("फ़ोटो नहीं खुली", "दोबारा कोशिश करें।");
+      const mime = a.mimeType === "image/png" || a.mimeType === "image/webp" ? a.mimeType : "image/jpeg";
+      const raw = a.base64 ? `data:${mime};base64,${a.base64}` : a.uri.startsWith("data:image/") ? a.uri : "";
+      if (!raw) return;
+      setBusy(kind);
+      const uri = await img.shrink(raw, kind === "logo" ? { maxSide: 512, maxBytes: LOGO_MAX } : { maxSide: 600, maxBytes: SIGN_MAX, clearWhite: true });
+      if (kind === "logo") setLogo(uri);
+      else setSign(uri);
+    } catch (e) {
+      showNotice(
+        (e as Error)?.message === "big" ? "फ़ोटो बहुत बड़ी है" : "फ़ोटो नहीं खुली",
+        (e as Error)?.message === "big" ? `${kind === "logo" ? "लोगो 100 KB" : "हस्ताक्षर 25 KB"} तक ही रख सकते हैं। छोटी फ़ोटो चुनें।` : "दोबारा कोशिश करें।",
+      );
+    } finally {
+      setBusy(null);
     }
   };
 
-  const save = () => {
-    void savePrefs({ receiptNote: note.trim(), showGst, logo });
-    onClose();
+  const save = async () => {
+    setSaving(true);
+    try {
+      void savePrefs({ receiptNote: note.trim(), dueNote: dueNote.trim(), paidNote: paidNote.trim(), showGst });
+      const logoOk = !logo || dataUriBytes(logo) <= LOGO_MAX;
+      if (user && (logo !== (user.shop_logo || "") || sign !== (user.shop_signature || ""))) {
+        await setShop({
+          shop_name: user.shop_name || "",
+          shop_phone: user.shop_phone || "",
+          shop_address: user.shop_address || "",
+          shop_gst: user.shop_gst || "",
+          shop_logo: logoOk ? logo : user.shop_logo || "",
+          shop_signature: sign,
+        });
+      }
+      if (logoOk && prefs.logo) void savePrefs({ logo: "" });
+      if (!logoOk) showNotice("पुराना लोगो बड़ा है", "लोगो दोबारा चुनें — 100 KB तक ही सेव होगा।");
+      onClose();
+    } catch {
+      showNotice("सेव नहीं हुआ", "इंटरनेट देखकर दोबारा कोशिश करें।");
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const imageRow = (kind: Picked) => {
+    const value = kind === "logo" ? logo : sign;
+    return (
+      <View style={styles.logoRow}>
+        <View style={[styles.logoBox, kind === "sign" && styles.signBox]}>
+          {busy === kind ? (
+            <ActivityIndicator color={colors.brandPrimary} />
+          ) : value ? (
+            <Image source={{ uri: value }} style={kind === "sign" ? styles.signImg : styles.logoImg} resizeMode="contain" />
+          ) : (
+            <MaterialIcon name={kind === "logo" ? "image-outline" : "draw-pen"} size={26} color={colors.muted} />
+          )}
+        </View>
+        <View style={{ flex: 1, gap: spacing.xs }}>
+          <Pressable style={styles.logoBtn} onPress={() => void pick(kind)} disabled={!!busy} testID={`pick-${kind}`}>
+            <Text style={styles.logoBtnText}>{kind === "logo" ? (logo ? "लोगो बदलें" : "लोगो चुनें") : sign ? "हस्ताक्षर बदलें" : "हस्ताक्षर जोड़ें"}</Text>
+          </Pressable>
+          {value ? (
+            <Pressable onPress={() => (kind === "logo" ? setLogo("") : setSign(""))} hitSlop={6} testID={`remove-${kind}`}>
+              <Text style={{ color: colors.error, fontWeight: "700", fontSize: 12 }}>हटाएँ</Text>
+            </Pressable>
+          ) : (
+            <Text style={styles.sub}>{kind === "logo" ? "PNG · JPG · WebP · 100 KB" : "सफ़ेद काग़ज़ पर · 25 KB"}</Text>
+          )}
+        </View>
+      </View>
+    );
+  };
+
+  const chips = (list: string[], set: (t: string) => void) => (
+    <View style={styles.chips}>
+      {list.map((t) => (
+        <Pressable key={t} style={styles.chip} onPress={() => set(t)}>
+          <Text style={styles.chipText}>{t}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
 
   return (
     <SheetShell visible={visible} onClose={onClose} title="बिल / रसीद सेटिंग" testID="sheet-receipt-settings">
-      <Field label="दुकान का लोगो (वैकल्पिक)">
-        <View style={styles.logoRow}>
-          <View style={styles.logoBox}>
-            {logo ? <Image source={{ uri: logo }} style={styles.logoImg} /> : <MaterialIcon name="image-outline" size={26} color={colors.muted} />}
-          </View>
-          <View style={{ flex: 1, gap: spacing.xs }}>
-            <Pressable style={styles.logoBtn} onPress={pickLogo} testID="pick-logo">
-              <Text style={styles.logoBtnText}>{logo ? "लोगो बदलें" : "लोगो चुनें"}</Text>
-            </Pressable>
-            {logo ? (
-              <Pressable onPress={() => setLogo("")} hitSlop={6} testID="remove-logo">
-                <Text style={{ color: colors.error, fontWeight: "700", fontSize: 12 }}>लोगो हटाएँ</Text>
-              </Pressable>
-            ) : (
-              <Text style={styles.sub}>चौकोर फ़ोटो सबसे अच्छी लगती है</Text>
-            )}
-          </View>
-        </View>
-      </Field>
+      <Field label="दुकान का लोगो (वैकल्पिक)">{imageRow("logo")}</Field>
+      <Field label="हस्ताक्षर (वैकल्पिक)">{imageRow("sign")}</Field>
       <Field label="रसीद के नीचे लिखा जाए (वैकल्पिक)">
-        <TextInput
-          style={[inputStyle, { minHeight: 80, textAlignVertical: "top" }]}
-          value={note}
-          onChangeText={setNote}
-          placeholder="जैसे: बिका हुआ माल वापस नहीं होगा"
-          placeholderTextColor={colors.muted}
-          multiline
-          maxLength={200}
-          testID="input-receipt-note"
-        />
+        <TextInput style={[inputStyle, styles.multi]} value={note} onChangeText={setNote} placeholder="जैसे: बिका हुआ माल वापस नहीं होगा" placeholderTextColor={colors.muted} multiline maxLength={200} testID="input-receipt-note" />
       </Field>
-      <View style={styles.chips}>
-        {NOTE_EXAMPLES.map((t) => (
-          <Pressable key={t} style={styles.chip} onPress={() => setNote(t)}>
-            <Text style={styles.chipText}>{t}</Text>
-          </Pressable>
-        ))}
-      </View>
+      {chips(NOTE_EXAMPLES, setNote)}
+      <Field label="बकाया होने पर संदेश">
+        <TextInput style={[inputStyle, styles.multi]} value={dueNote} onChangeText={setDueNote} placeholder={DUE_NOTE_DEFAULT} placeholderTextColor={colors.muted} multiline maxLength={200} testID="input-due-note" />
+      </Field>
+      {chips(DUE_EXAMPLES, setDueNote)}
+      <Field label="पूरा भुगतान होने पर संदेश">
+        <TextInput style={[inputStyle, styles.multi]} value={paidNote} onChangeText={setPaidNote} placeholder={PAID_NOTE_DEFAULT} placeholderTextColor={colors.muted} multiline maxLength={200} testID="input-paid-note" />
+      </Field>
+      {chips(PAID_EXAMPLES, setPaidNote)}
       {hasGst ? (
         <View style={styles.switchRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.switchTitle}>रसीद पर GSTIN छापें</Text>
-            <Text style={styles.sub}>बंद करने पर GST नंबर बिल पर नहीं दिखेगा</Text>
-          </View>
+          <Text style={[styles.switchTitle, { flex: 1 }]}>रसीद पर GSTIN छापें</Text>
           <Switch value={showGst} onValueChange={setShowGst} trackColor={{ true: colors.brandPrimary }} testID="toggle-show-gst" />
         </View>
       ) : null}
-      <Text style={[styles.sub, { marginBottom: spacing.md }]}>यह नोट ग्राहक की रसीद, खाता विवरण और AEPS रसीद में दिखेगा। निजी खाते की पर्ची में नहीं।</Text>
-      <PrimaryButton label="सेव करें" onPress={save} testID="save-receipt-settings" />
+      <PrimaryButton label="सेव करें" onPress={() => void save()} saving={saving} disabled={!!busy} testID="save-receipt-settings" />
+      {img.element}
     </SheetShell>
   );
 }
@@ -204,6 +258,9 @@ const styles = StyleSheet.create({
   logoRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   logoBox: { width: 64, height: 64, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   logoImg: { width: 64, height: 64 },
+  signBox: { width: 128 },
+  signImg: { width: 120, height: 56 },
+  multi: { minHeight: 64, textAlignVertical: "top" },
   logoBtn: { alignSelf: "flex-start", paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.md, backgroundColor: colors.brandTertiary },
   logoBtnText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },

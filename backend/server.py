@@ -110,6 +110,28 @@ class UserOut(BaseModel):
     shop_upi: str = ""
     owner_name: str = ""
     persona: str = "business"
+    shop_logo: str = ""
+    shop_signature: str = ""
+
+
+_IMAGE_URI = re.compile(r"^data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$")
+
+
+def _image_uri(max_bytes: int):
+    """An inline image for slips: "" (none) or a png / jpeg / webp data URI no bigger than max_bytes."""
+
+    def check(v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return v
+        m = _IMAGE_URI.match(v)
+        if not m:
+            raise ValueError("image must be a png, jpeg or webp data URI")
+        b64 = m.group(2)
+        if len(b64) * 3 // 4 - b64.count("=") > max_bytes:
+            raise ValueError(f"image is larger than {max_bytes // 1024} KB")
+        return v
+
+    return AfterValidator(check)
 
 
 class ProfileUpdate(BaseModel):
@@ -120,6 +142,8 @@ class ProfileUpdate(BaseModel):
     shop_upi: Optional[str] = Field(default=None, max_length=50)
     owner_name: Optional[str] = Field(default=None, max_length=60)
     persona: Optional[str] = Field(default=None, max_length=20)
+    shop_logo: Annotated[Optional[str], _image_uri(100 * 1024)] = None
+    shop_signature: Annotated[Optional[str], _image_uri(25 * 1024)] = None
 
 
 class AuthResponse(BaseModel):
@@ -208,6 +232,8 @@ class Entry(BaseModel):
     dueDate: str = ""
     status: str = ""
     terms: str = ""
+    # Vendor cost row of an outsourced job: id of the customer's work row it belongs to.
+    refId: str = ""
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updatedAt: Optional[str] = None
 
@@ -234,6 +260,7 @@ class EntryCreate(BaseModel):
     dueDate: OptISODate = ""
     status: VendorStatus = ""
     terms: Notes = ""
+    refId: str = Field("", max_length=64)
 
     @model_validator(mode="after")
     def validate_paid(self):
@@ -256,6 +283,7 @@ class EntryUpdate(BaseModel):
     dueDate: Optional[OptISODate] = None
     status: Optional[VendorStatus] = None
     terms: Optional[Notes] = None
+    refId: Optional[str] = Field(None, max_length=64)
 
     @model_validator(mode="after")
     def validate_paid(self):
@@ -628,6 +656,8 @@ def _user_out(user: dict) -> UserOut:
         shop_upi=user.get("shop_upi", ""),
         owner_name=user.get("owner_name", ""),
         persona=user.get("persona", "business"),
+        shop_logo=user.get("shop_logo", ""),
+        shop_signature=user.get("shop_signature", ""),
     )
 
 

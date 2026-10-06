@@ -51,6 +51,8 @@ export type Entry = {
   dueDate?: string;
   status?: "" | "ordered" | "delivered";
   terms?: string;
+  /** Vendor cost row of an outsourced job: id of the customer's work row it belongs to. */
+  refId?: string;
   createdAt: string;
 };
 // customerId "" = the shopkeeper's own task (no customer, no money).

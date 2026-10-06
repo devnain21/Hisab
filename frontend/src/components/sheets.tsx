@@ -13,7 +13,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
 import { advanceOf, computeBalance, isVendor, itemsOf, useCustomers, useEntries, useJobs, type Customer, type Entry, type EntryItem, type EntryType, type Job } from "@/src/lib/data";
-import { ADVANCE, advancesForJob, buildLedger, jobForWork, linkedPayment, olderAdvances, removeEntryWithLinks, removeJobWithAdvances, removeVendorCost, settlementsFor, vendorCostsFor, vendorOrdersForJob, workForJob, workForPayment } from "@/src/lib/records";
+import { ADVANCE, advancesForJob, buildLedger, jobForWork, jobStart, linkedPayment, olderAdvances, releaseVendorOrder, removeEntryWithLinks, removeJobWithAdvances, removeVendorCost, settlementsFor, vendorCostsFor, vendorOrdersForJob, workForJob, workForPayment, type VendorRefund } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
 import { OLD_ENTRY_DAYS, cleanAmountInput, dateOnSave, formatDate, formatINR, isBackdated, isValidISO, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
@@ -176,6 +176,7 @@ export function DateField({
   future,
   money,
   createdAt,
+  min,
   testID,
 }: {
   label: string;
@@ -185,6 +186,8 @@ export function DateField({
   money?: boolean;
   /** When the row was first typed; a new row counts from now. */
   createdAt?: string;
+  /** Earliest day that makes sense (e.g. a job can't finish before it was handed out). */
+  min?: string;
   testID?: string;
 }) {
   const [calendar, setCalendar] = useState(false);
@@ -192,9 +195,11 @@ export function DateField({
   const today = todayISO();
   const old = money && isValidISO(value) && isBackdated(value, createdAt ?? new Date().toISOString());
   const ahead = !future && isValidISO(value) && value > today;
-  const presets = future
+  const early = !!min && isValidISO(value) && value < min;
+  const presets = (future
     ? [{ label: "आज", d: today }, { label: "कल", d: todayISO(1) }, { label: "परसों", d: todayISO(2) }, { label: "1 हफ़्ता", d: todayISO(7) }]
-    : [{ label: "आज", d: today }, { label: "कल (बीता)", d: todayISO(-1) }];
+    : [{ label: "आज", d: today }, { label: "कल (बीता)", d: todayISO(-1) }]
+  ).filter((p) => !min || p.d >= min);
   const onPreset = presets.some((p) => p.d === value);
   return (
     <Field label={label}>
@@ -210,12 +215,14 @@ export function DateField({
           testID={testID ? `${testID}-cal` : undefined}
         />
       </View>
-      {ahead ? (
+      {early ? (
+        <Text style={[styles.hint, { color: colors.error, fontWeight: "700", marginTop: 6 }]}>{formatDate(min!)} से पहले की तारीख नहीं हो सकती</Text>
+      ) : ahead ? (
         <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>आगे की तारीख है — {formatDate(value)}</Text>
       ) : old ? (
         <Text style={[styles.hint, { color: colors.warning, marginTop: 6 }]}>{OLD_ENTRY_DAYS} दिन से पुरानी तारीख — खाते में जुड़ेगा, पर उस दिन का लेन-देन {cashLabel} / बैंक में नहीं गिना जाएगा</Text>
       ) : null}
-      <CalendarModal visible={calendar} value={isValidISO(value) ? value : today} onPick={onChange} onClose={() => setCalendar(false)} max={future ? undefined : today} />
+      <CalendarModal visible={calendar} value={isValidISO(value) ? value : today} onPick={onChange} onClose={() => setCalendar(false)} max={future ? undefined : today} min={min} />
     </Field>
   );
 }
@@ -768,10 +775,12 @@ function bookVendorCost(v: VendorJob, workId: string, title: string, date: strin
 
 /** Saves the "वेंडर से कराया" block of an already written work row: adds, changes or drops its vendor cost. */
 async function saveVendorEdit(v: ReturnType<typeof useVendorJob>, row: Entry | undefined, workId: string, title: string, date: string, entries: Entry[]) {
-  if (!v.on) {
-    if (row) removeVendorCost(row, entries);
-    return;
-  }
+  if (row && v.releasing) {
+    // The job's vendor order: taken back (done in-house) or finished by someone else.
+    releaseVendorOrder(row, entries, v.refund());
+    row = undefined;
+  } else if (!v.on && row) removeVendorCost(row, entries);
+  if (!v.on) return;
   const job = await v.resolve();
   if (!job) return;
   if (!row) return bookVendorCost(job, workId, title, date);
@@ -802,22 +811,24 @@ async function saveVendorEdit(v: ReturnType<typeof useVendorJob>, row: Entry | u
  * job is finished). Money given to them now is its own payment row on the day it was given.
  */
 async function saveVendorAssign(v: ReturnType<typeof useVendorJob>, row: Entry | undefined, jobId: string, title: string, dueDate: string, entries: Entry[]) {
-  if (!v.on) {
-    if (row) removeVendorCost(row, entries);
-    return;
+  if (row && v.releasing) {
+    releaseVendorOrder(row, entries, v.refund());
+    row = undefined;
   }
+  if (!v.on) return;
   const job = await v.resolve();
   if (!job) return;
-  const today = todayISO();
+  const handedOn = v.assignDay;
   let rowId = row?.id ?? "";
   if (row) {
-    store.updateEntry(row.id, { customerId: job.vendorId, description: title, amount: job.cost, dueDate });
+    store.updateEntry(row.id, { customerId: job.vendorId, date: handedOn, description: title, amount: job.cost, dueDate });
+    // Picked the wrong vendor earlier: what was given really went to this one.
     if (job.vendorId !== row.customerId) settlementsFor(row, entries).forEach((p) => store.updateEntry(p.id, { customerId: job.vendorId }));
   } else {
-    rowId = store.createEntry({ customerId: job.vendorId, type: "purchase", date: today, description: title, amount: job.cost, paid: 0, mode: job.mode, notes: "", refId: jobId, status: "ordered", dueDate }).id;
+    rowId = store.createEntry({ customerId: job.vendorId, type: "purchase", date: handedOn, description: title, amount: job.cost, paid: 0, mode: job.mode, notes: "", refId: jobId, status: "ordered", dueDate }).id;
   }
   if (v.advanceNum > 0) {
-    store.createEntry({ customerId: job.vendorId, type: "given", date: job.paidOn || today, description: ADVANCE, amount: v.advanceNum, mode: job.mode, notes: `${title} के लिए`, linkId: rowId });
+    store.createEntry({ customerId: job.vendorId, type: "given", date: job.paidOn || handedOn, description: ADVANCE, amount: v.advanceNum, mode: job.mode, notes: `${title} के लिए`, linkId: rowId });
   }
 }
 
@@ -834,6 +845,24 @@ function useVendorJob(visible: boolean) {
   const [existing, setExisting] = useState(false);
   /** Pending job: money handed to the vendor now, before the work is done. */
   const [advance, setAdvance] = useState("");
+  /** Day the job was handed to the vendor ("" = today). */
+  const [assignOn, setAssignOn] = useState("");
+  /** Vendor holding the job's open order when the sheet opened ("" = no order). */
+  const [orderVendor, setOrderVendor] = useState("");
+  /** Order taken back with money already given: returned, still with them, or it was the new vendor's all along. */
+  const [fate, setFate] = useState<"" | "back" | "keep" | "fix">("");
+  const [refundAmt, setRefundAmt] = useState("");
+  const [refundMode, setRefundMode] = useState<PayMode>("cash");
+  const [refundOn, setRefundOn] = useState("");
+
+  const resetOrder = () => {
+    setAssignOn("");
+    setOrderVendor("");
+    setFate("");
+    setRefundAmt("");
+    setRefundMode(getPrefs().defaultMode);
+    setRefundOn("");
+  };
 
   useEffect(() => {
     if (visible) {
@@ -845,20 +874,29 @@ function useVendorJob(visible: boolean) {
       setLaterPaid([]);
       setExisting(false);
       setAdvance("");
+      resetOrder();
     }
   }, [visible]);
 
-  /** Fills the block from a vendor row already booked for the work (or the open order of a pending job). */
-  const load = (row: Entry | undefined, entries: Entry[]) => {
+  /**
+   * Fills the block from a vendor row already booked for the work, or (`order`) the open vendor order
+   * of a pending job.
+   */
+  const load = (row: Entry | undefined, entries: Entry[], order = false) => {
     setExisting(!!row);
     setOn(!!row);
     choice.setCustomerId(row?.customerId ?? "");
     setCost(row ? String(row.amount) : "");
-    setPaidNow(row && row.status !== "ordered" ? (row.paid ?? 0) > 0 : true);
+    setPaidNow(row && !order ? (row.paid ?? 0) > 0 : true);
     setMode(row?.mode ?? getPrefs().defaultMode);
     setPaidOn("");
     setLaterPaid(row ? settlementsFor(row, entries) : []);
     setAdvance("");
+    resetOrder();
+    if (row && order) {
+      setOrderVendor(row.customerId);
+      setAssignOn(row.date);
+    }
   };
   /** An old fee that was really the vendor's charge: same money, same day, same pocket. */
   const fromFee = (fee: string, feeMode: PayMode) => {
@@ -869,37 +907,113 @@ function useVendorJob(visible: boolean) {
     setPaidOn("");
   };
 
+  const today = todayISO();
+  const order = !!orderVendor;
+  const assignDay = assignOn || today;
+  const oldPaid = roundMoney(laterPaid.reduce((s, p) => s + p.amount, 0));
+  const firstPaid = laterPaid.reduce((d, p) => (p.date < d ? p.date : d), today);
+  const changed = order && on && choice.customerId !== orderVendor;
+  /** The open order leaves this vendor: taken back, or handed to another one. */
+  const releasing = order && (!on || (changed && fate !== "fix"));
+  const needFate = releasing && oldPaid > 0;
+  const paidBefore = releasing ? 0 : oldPaid;
   const costNum = on ? parseAmount(cost) : 0;
-  const paidBefore = laterPaid.reduce((s, p) => s + p.amount, 0);
   const advanceNum = on ? parseAmount(advance) : 0;
+  const refundNum = needFate && fate === "back" ? parseAmount(refundAmt) : 0;
   const rest = roundMoney(costNum - paidBefore - advanceNum);
-  const ready = !on || (choice.ready && costNum > 0 && rest >= 0);
+  const fateOk = !needFate || fate === "keep" || (fate === "back" && refundNum > 0 && refundNum <= oldPaid);
+  const ready = (!on || (choice.ready && costNum > 0 && rest >= 0)) && fateOk;
+  /** Dates in order: handed out after the job came in, money moved only after it was handed out. */
+  const datesOk = (start: string, assigning: boolean) => {
+    if (on && assigning && assignDay < start) return false;
+    if (on && assigning && advanceNum > 0 && (paidOn || assignDay) < assignDay) return false;
+    if (on && !assigning && order && !releasing && paidNow && rest > 0 && !!paidOn && paidOn < assignDay) return false;
+    if (refundNum > 0 && (refundOn || today) < firstPaid) return false;
+    return true;
+  };
+  const refund = (): VendorRefund => (refundNum > 0 ? { amount: refundNum, mode: refundMode, date: refundOn || today } : null);
   const resolve = async (): Promise<VendorJob | null> => {
     if (!on || costNum <= 0) return null;
     const vendorId = await choice.resolve();
     return vendorId ? { vendorId, cost: costNum, paidNow, mode, paidOn } : null;
   };
-  return { choice, on, setOn, cost, setCost, costNum, paidNow, setPaidNow, mode, setMode, paidOn, setPaidOn, laterPaid, paidBefore, rest, existing, ready, resolve, load, fromFee, advance, setAdvance, advanceNum };
+  return {
+    choice, on, setOn, cost, setCost, costNum, paidNow, setPaidNow, mode, setMode, paidOn, setPaidOn, laterPaid, paidBefore, rest, existing, ready, resolve, load, fromFee, advance, setAdvance, advanceNum,
+    order, orderVendor, assignOn, setAssignOn, assignDay, changed, releasing, needFate, oldPaid, firstPaid, fate, setFate, refundAmt, setRefundAmt, refundMode, setRefundMode, refundOn, setRefundOn, refund, datesOk,
+  };
+}
+
+/** Money already given to a vendor whose order is taken back: returned, or still owed by them. */
+function VendorRelease({ v, vendorName }: { v: ReturnType<typeof useVendorJob>; vendorName: string }) {
+  const today = todayISO();
+  const pick = (f: "back" | "keep" | "fix") => {
+    v.setFate(f);
+    if (f === "back" && !v.refundAmt) v.setRefundAmt(String(v.oldPaid));
+  };
+  return (
+    <Field label={`${vendorName} को दिए ${formatINR(v.oldPaid)}`}>
+      <View style={styles.chipRow}>
+        <Chip label="राशि वापस मिली" icon="cash-refund" active={v.fate === "back"} onPress={() => pick("back")} testID="chip-vendor-refund" />
+        <Chip label="Vendor पर बकाया" icon="account-clock-outline" active={v.fate === "keep"} onPress={() => pick("keep")} testID="chip-vendor-keep" />
+        {v.changed ? <Chip label="गलत Vendor चुना था" icon="swap-horizontal" active={v.fate === "fix"} onPress={() => pick("fix")} testID="chip-vendor-fix" /> : null}
+      </View>
+      {v.fate === "" ? <Text style={[styles.hint, { color: colors.warning, fontWeight: "700" }]}>चुनें कि यह राशि कहाँ है</Text> : null}
+      {v.fate === "keep" ? <Text style={styles.hint}>{vendorName} के खाते में {formatINR(v.oldPaid)} लेना बाकी रहेगा</Text> : null}
+      {v.fate === "fix" ? <Text style={styles.hint}>यह राशि नए Vendor के खाते में जाएगी</Text> : null}
+      {v.fate === "back" ? (
+        <View style={{ marginTop: spacing.sm }}>
+          <Field label="कितने वापस मिले (₹)">
+            <TextInput style={inputStyle} value={v.refundAmt} onChangeText={v.setRefundAmt} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-vendor-refund" />
+            {parseAmount(v.refundAmt) > v.oldPaid ? <Text style={[styles.hint, { color: colors.error, fontWeight: "700" }]}>{formatINR(v.oldPaid)} से ज़्यादा नहीं</Text> : null}
+            {parseAmount(v.refundAmt) > 0 && parseAmount(v.refundAmt) < v.oldPaid ? (
+              <Text style={styles.hint}>बाकी {formatINR(roundMoney(v.oldPaid - parseAmount(v.refundAmt)))} {vendorName} पर बकाया रहेंगे</Text>
+            ) : null}
+          </Field>
+          <PayModeField label="कहाँ आए" value={v.refundMode} onChange={v.setRefundMode} cashLabel="गल्ले में" onlineLabel="बैंक में" />
+          <DateField label="कब मिले" value={v.refundOn || today} onChange={(d) => v.setRefundOn(d === today ? "" : d)} min={v.firstPaid} money testID="input-vendor-refund-date" />
+        </View>
+      ) : null}
+    </Field>
+  );
 }
 
 /**
- * "वेंडर से कराया" block. `assign`: the job is still pending, so it records who has the work, the agreed
- * cost and any advance given; the rest is settled when the job is marked done.
+ * "वेंडर से कराया" block. `assign`: the job is still pending, so it records who has the work, since when,
+ * the agreed cost and any advance given; the rest is settled when the job is marked done. `start`: the day
+ * the job came in. At completion of a job that was handed out, it asks who finished it.
  */
-function VendorOutsource({ v, amount, fee, workDate, assign }: { v: ReturnType<typeof useVendorJob>; amount: number; fee: number; workDate: string; assign?: boolean }) {
+function VendorOutsource({ v, amount, fee, workDate, assign, start }: { v: ReturnType<typeof useVendorJob>; amount: number; fee: number; workDate: string; assign?: boolean; start?: string }) {
+  const customers = useCustomers().data ?? [];
+  const oldName = customers.find((c) => c.id === v.orderVendor)?.name ?? "Vendor";
   const left = roundMoney(amount - fee - v.costNum);
+  const finishing = !assign && v.order;
   const toggle = () => {
-    if (v.on && v.existing) confirmAction("Vendor हटाएँ?", assign ? "Vendor को दिया काम हटेगा (सेव करने पर)।" : "इस काम की Vendor लागत हटेगी (सेव करने पर)।", "हटा दें", () => v.setOn(false));
+    if (v.on && v.existing) confirmAction("Vendor हटाएँ?", assign ? "काम Vendor से वापस लिया जाएगा (सेव करने पर)।" : "इस काम की Vendor लागत हटेगी (सेव करने पर)।", "हटा दें", () => v.setOn(false));
     else v.setOn(!v.on);
   };
   const today = todayISO();
   return (
     <View style={styles.vendorBox}>
-      <Pressable style={styles.vendorToggle} onPress={toggle} testID="toggle-job-vendor">
-        <MaterialIcon name="truck-outline" size={20} color={v.on ? colors.brandPrimary : colors.muted} />
-        <Text style={[styles.vendorToggleText, v.on && { color: colors.onSurface }]}>{assign ? "वेंडर को दिया" : "वेंडर से कराया"}</Text>
-        <MaterialIcon name={v.on ? "toggle-switch" : "toggle-switch-off-outline"} size={34} color={v.on ? colors.brandPrimary : colors.muted} />
-      </Pressable>
+      {finishing ? (
+        <>
+          <View style={styles.vendorToggle}>
+            <MaterialIcon name="truck-outline" size={20} color={colors.brandPrimary} />
+            <Text style={[styles.vendorToggleText, { color: colors.onSurface }]}>{oldName} को दिया था · {formatDate(v.assignDay)}</Text>
+          </View>
+          <View style={[styles.chipRow, { marginTop: spacing.xs }]}>
+            <Chip label="Vendor ने पूरा किया" icon="truck-check-outline" active={v.on} onPress={() => v.setOn(true)} testID="chip-done-by-vendor" />
+            <Chip label="स्वयं पूरा किया" icon="account-check-outline" active={!v.on} onPress={() => v.setOn(false)} testID="chip-done-by-self" />
+          </View>
+          {!v.on ? <Text style={styles.hint}>काम Vendor से वापस लिया गया — उनकी लागत नहीं जुड़ेगी</Text> : null}
+        </>
+      ) : (
+        <Pressable style={styles.vendorToggle} onPress={toggle} testID="toggle-job-vendor">
+          <MaterialIcon name="truck-outline" size={20} color={v.on ? colors.brandPrimary : colors.muted} />
+          <Text style={[styles.vendorToggleText, v.on && { color: colors.onSurface }]}>{assign ? "वेंडर को दिया" : "वेंडर से कराया"}</Text>
+          <MaterialIcon name={v.on ? "toggle-switch" : "toggle-switch-off-outline"} size={34} color={v.on ? colors.brandPrimary : colors.muted} />
+        </Pressable>
+      )}
+      {!v.on && v.needFate ? <View style={{ marginTop: spacing.sm }}><VendorRelease v={v} vendorName={oldName} /></View> : null}
       {v.on ? (
         <View style={{ marginTop: spacing.sm }}>
           <CustomerPicker choice={v.choice} label="Vendor" testPrefix="chip-job-vendor" />
@@ -911,7 +1025,8 @@ function VendorOutsource({ v, amount, fee, workDate, assign }: { v: ReturnType<t
               </Text>
             ) : null}
           </Field>
-          {v.laterPaid.length > 0 ? (
+          {v.changed && v.oldPaid > 0 ? <VendorRelease v={v} vendorName={oldName} /> : null}
+          {v.laterPaid.length > 0 && !v.releasing ? (
             <Field label="दे चुके">
               {v.laterPaid.map((p) => (
                 <View key={p.id} style={styles.settleRow}>
@@ -924,6 +1039,7 @@ function VendorOutsource({ v, amount, fee, workDate, assign }: { v: ReturnType<t
           ) : null}
           {assign ? (
             <>
+              <DateField label="कब सौंपा" value={v.assignDay} onChange={(d) => v.setAssignOn(d === today ? "" : d)} min={start} testID="input-job-vendor-assign-date" />
               <Field label="Vendor को एडवांस (₹)">
                 <TextInput style={inputStyle} value={v.advance} onChangeText={v.setAdvance} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-vendor-advance" />
                 {v.rest < 0 ? <Text style={[styles.hint, { color: colors.error, fontWeight: "700" }]}>लागत से ज़्यादा नहीं</Text> : null}
@@ -931,7 +1047,7 @@ function VendorOutsource({ v, amount, fee, workDate, assign }: { v: ReturnType<t
               {v.advanceNum > 0 ? (
                 <>
                   <PayModeField label="कहाँ से दिए" value={v.mode} onChange={v.setMode} cashLabel="गल्ले से" onlineLabel="बैंक से" />
-                  <DateField label="कब दिए" value={v.paidOn || today} onChange={(d) => v.setPaidOn(d === today ? "" : d)} money testID="input-job-vendor-advance-date" />
+                  <DateField label="कब दिए" value={v.paidOn || v.assignDay} onChange={(d) => v.setPaidOn(d === v.assignDay ? "" : d)} min={v.assignDay} money testID="input-job-vendor-advance-date" />
                 </>
               ) : null}
             </>
@@ -944,7 +1060,7 @@ function VendorOutsource({ v, amount, fee, workDate, assign }: { v: ReturnType<t
               {v.paidNow ? (
                 <>
                   <PayModeField label="कहाँ से दिए" value={v.mode} onChange={v.setMode} cashLabel="गल्ले से" onlineLabel="बैंक से" />
-                  <DateField label="कब दिए" value={v.paidOn || workDate} onChange={(d) => v.setPaidOn(d === workDate ? "" : d)} money testID="input-job-vendor-paid-date" />
+                  <DateField label="कब दिए" value={v.paidOn || workDate} onChange={(d) => v.setPaidOn(d === workDate ? "" : d)} min={finishing && !v.releasing ? v.assignDay : undefined} money testID="input-job-vendor-paid-date" />
                 </>
               ) : null}
             </>
@@ -1565,6 +1681,7 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
   const vendorJob = useVendorJob(!!job);
   const canVendor = !!job?.customerId && job.status !== "done" && !isPersonal;
   const vendorRow = job ? vendorOrdersForJob(job, entries)[0] : undefined;
+  const start = job ? jobStart(job, entries) : todayISO();
 
   useEffect(() => {
     if (!job) return;
@@ -1576,13 +1693,15 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
   }, [job]);
 
   useEffect(() => {
-    if (job) vendorJob.load(vendorRow, entries);
+    if (job) vendorJob.load(vendorRow, entries, true);
     // Only when a different job is opened, not on every sync.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.id]);
 
+  const vendorOk = !canVendor || (vendorJob.ready && vendorJob.datesOk(start, true));
+
   const save = async () => {
-    if (!job || !title.trim() || !vendorJob.ready) return;
+    if (!job || !title.trim() || !vendorOk) return;
     setSaving(true);
     try {
       store.updateJob(job.id, { title: title.trim(), estimatedAmount: parseAmount(amount), dueDate: date, notes: notes.trim(), status });
@@ -1599,7 +1718,7 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
     const lines = [job.title];
     if (gone > 0) lines.push(`आज का एडवांस ${formatINR(gone)} भी हटेगा।`);
     if (kept > 0) lines.push(`पहले लिया एडवांस ${formatINR(kept)} खाते में जमा रहेगा (लौटाएँ तो "पैसे दिए" लिखें)।`);
-    if (vendorRow) lines.push("Vendor को दिया काम भी हटेगा; उन्हें पहले दिया एडवांस उनके खाते में रहेगा।");
+    if (vendorRow) lines.push("Vendor को दिया काम भी हटेगा; उन्हें पिछले दिनों दिया एडवांस उन पर बकाया रहेगा।");
     confirmAction("काम हटाएँ?", lines.join("\n"), "हटा दें", () => {
       removeJobWithAdvances(job, entries);
       onClose();
@@ -1608,6 +1727,7 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
 
   return (
     <SheetShell visible={!!job} onClose={onClose} title="काम बदलें" testID="sheet-edit-job">
+      {job?.customerId && job.status !== "done" ? <Text style={[styles.hint, { marginTop: 0, marginBottom: spacing.md }]}>काम आया: {formatDate(start)}</Text> : null}
       <Field label="स्थिति">
         <View style={styles.chipRow}>
           <Chip label="काम बाकी" active={status === "pending"} onPress={() => setStatus("pending")} testID="edit-job-status-pending" />
@@ -1624,11 +1744,11 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
         </Field>
       ) : null}
       <DateField label={status === "done" ? "तारीख" : job?.customerId ? "कब तक" : "कब करना है"} value={date} onChange={setDate} future={status !== "done"} testID="input-edit-job-date" />
-      {canVendor ? <VendorOutsource v={vendorJob} amount={parseAmount(amount)} fee={0} workDate={date} assign /> : null}
+      {canVendor ? <VendorOutsource v={vendorJob} amount={parseAmount(amount)} fee={0} workDate={date} assign start={start} /> : null}
       <Field label="नोट / रिमार्क">
         <TextInput style={[inputStyle, { minHeight: 56 }]} value={notes} onChangeText={setNotes} multiline placeholderTextColor={colors.muted} testID="input-edit-job-notes" />
       </Field>
-      <PrimaryButton label="बदलाव सेव करें" onPress={() => void save()} disabled={!title.trim() || !vendorJob.ready} saving={saving} testID="save-edit-job-btn" />
+      <PrimaryButton label="बदलाव सेव करें" onPress={() => void save()} disabled={!title.trim() || !vendorOk} saving={saving} testID="save-edit-job-btn" />
       <DangerLink label="यह काम हटाएँ" onPress={remove} testID="delete-job-link" />
       {job ? <EditHistory coll="jobs" id={job.id} /> : null}
     </SheetShell>
@@ -1783,6 +1903,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   const [remarkDate, setRemarkDate] = useState(todayISO(1));
   const [paidNow, setPaidNow] = useState("");
   const [paidDate, setPaidDate] = useState(todayISO());
+  const [takenOn, setTakenOn] = useState(todayISO());
   const [openedOn, setOpenedOn] = useState(todayISO());
   const [saving, setSaving] = useState(false);
   const split = useSplitPay();
@@ -1792,6 +1913,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   useEffect(() => {
     if (visible) {
       split.reset();
+      setTakenOn(todayISO());
       setMode(initialMode);
       setTitle("");
       items.reset();
@@ -1826,8 +1948,9 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   const advance = choice.existingId ? advanceOf(entries, choice.existingId) : 0;
   const canVendor = !self && !isPersonal;
   const outsource = mode === "now" && canVendor;
+  const pendingDatesOk = mode === "now" || self || ((parseAmount(paidNow) <= 0 || paidDate >= takenOn) && (!canVendor || vendorJob.datesOk(takenOn, true)));
   const valid =
-    choice.ready && (itemized ? items.titled : !!title.trim()) && (mode !== "now" || self || amt <= 0 || money.answered) && (!canVendor || vendorJob.ready);
+    choice.ready && (itemized ? items.titled : !!title.trim()) && (mode !== "now" || self || amt <= 0 || money.answered) && (!canVendor || vendorJob.ready) && pendingDatesOk;
   const saveLabel = mode === "later" ? "पेंडिंग काम सेव करें" : self ? "सेव करें" : amt > 0 ? "काम सेव करें" : "मुफ़्त काम सेव करें";
 
   const save = async () => {
@@ -1863,7 +1986,15 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
           await store.createJob({ customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
         }
       } else {
-        const job = store.createJob({ customerId, title: t, dueDate: day, estimatedAmount: amt, notes: remark.trim() });
+        const taken = self ? todayISO() : dateOnSave(takenOn, openedOn);
+        const job = store.createJob({
+          customerId,
+          title: t,
+          dueDate: day,
+          estimatedAmount: amt,
+          notes: remark.trim(),
+          ...(taken !== todayISO() ? { createdAt: new Date(`${taken}T12:00:00`).toISOString() } : {}),
+        });
         if (canVendor && customerId) await saveVendorAssign(vendorJob, undefined, job.id, t, day, entries);
         const got = parseAmount(paidNow);
         // The advance lands in the drawer/bank on the day it was received, not on the delivery day.
@@ -1904,16 +2035,17 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       )}
       {!self && mode === "later" ? (
         <>
+          <DateField label="काम कब आया" value={takenOn} onChange={(d) => { setTakenOn(d); setPaidDate(d); }} testID="input-job-taken-date" />
           <Field label="एडवांस मिला (₹)">
             <TextInput style={inputStyle} value={paidNow} onChangeText={setPaidNow} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-paid" />
           </Field>
           {parseAmount(paidNow) > 0 ? (
             <>
               <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={parseAmount(paidNow)} />
-              <DateField label="कब मिले" value={paidDate} onChange={setPaidDate} money testID="input-job-paid-date" />
+              <DateField label="कब मिले" value={paidDate} onChange={setPaidDate} min={takenOn} money testID="input-job-paid-date" />
             </>
           ) : null}
-          {canVendor ? <VendorOutsource v={vendorJob} amount={amt} fee={0} workDate={date} assign /> : null}
+          {canVendor ? <VendorOutsource v={vendorJob} amount={amt} fee={0} workDate={date} assign start={takenOn} /> : null}
         </>
       ) : null}
 
@@ -2041,10 +2173,11 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
   const outsource = !!job?.customerId && !isPersonal;
   // Given to a vendor while pending: its order (and advances) carry into this completion.
   const vendorRow = job ? vendorOrdersForJob(job, entries)[0] : undefined;
+  const start = job ? jobStart(job, entries) : todayISO();
 
   useEffect(() => {
     if (job) {
-      vendorJob.load(vendorRow, entries);
+      vendorJob.load(vendorRow, entries, true);
       split.reset();
       const est = job.estimatedAmount > 0 ? job.estimatedAmount : 0;
       // The advance for this job already sits in the drawer/bank; only the remainder is new money.
@@ -2062,9 +2195,13 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
 
   const amt = job?.customerId ? money.totalNum : 0;
   const got = money.receivedNum;
+  // Finished no earlier than it came in, or than it was handed to the vendor who finished it.
+  const doneMin = vendorJob.order && vendorJob.on && !vendorJob.releasing ? vendorJob.assignDay : start;
+  const vendorOk = !outsource || (vendorJob.ready && vendorJob.datesOk(start, false));
+  const datesOk = workDay >= doneMin && (got <= 0 || cashDay >= start);
 
   const save = async () => {
-    if (!job) return;
+    if (!job || !vendorOk || (job.customerId && !datesOk)) return;
     setSaving(true);
     try {
       const workDate = dateOnSave(workDay, openedOn);
@@ -2086,7 +2223,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
       });
       if (outsource) {
         if (entryId) await saveVendorEdit(vendorJob, vendorRow, entryId, job.title, workDate, entries);
-        else if (vendorRow) removeVendorCost(vendorRow, entries);
+        else if (vendorRow) releaseVendorOrder(vendorRow, entries, vendorJob.refund());
       }
       if (entryId) {
         jobAdvances.forEach((p) => store.updateEntry(p.id, { linkId: entryId }));
@@ -2110,13 +2247,19 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
           <MoneyFields money={money} advance={advance} receivedLabel="आज मिले (₹)" freeAllowed />
           {got > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={got} /> : null}
           <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
-          {outsource ? <VendorOutsource v={vendorJob} amount={amt} fee={parseAmount(fee)} workDate={workDay} /> : null}
+          {outsource ? <VendorOutsource v={vendorJob} amount={amt} fee={parseAmount(fee)} workDate={workDay} start={start} /> : null}
         </>
       ) : null}
-      <DateField label="काम की तारीख" value={workDay} onChange={(d) => { setWorkDate(d); setCashDate(d); }} testID="input-complete-date" />
-      {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDay} onChange={setCashDate} money testID="input-complete-cash-date" /> : null}
+      <DateField label="काम कब पूरा हुआ" value={workDay} onChange={(d) => { setWorkDate(d); setCashDate(d); }} min={job?.customerId ? doneMin : undefined} testID="input-complete-date" />
+      {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDay} onChange={setCashDate} min={start} money testID="input-complete-cash-date" /> : null}
       {job?.customerId ? <LimitWarning customerId={job.customerId} extra={roundMoney(amt - got)} /> : null}
-      <PrimaryButton label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"} onPress={save} disabled={(!!job?.customerId && amt > 0 && !money.answered) || (outsource && !vendorJob.ready)} saving={saving} testID="save-complete-btn" />
+      <PrimaryButton
+        label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"}
+        onPress={save}
+        disabled={(!!job?.customerId && amt > 0 && !money.answered) || !vendorOk || (!!job?.customerId && !datesOk)}
+        saving={saving}
+        testID="save-complete-btn"
+      />
     </SheetShell>
   );
 }

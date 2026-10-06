@@ -9,7 +9,7 @@ import { queryClient } from "@/src/query-client";
 import type { AepsTxn, Customer, Entry, Job } from "@/src/lib/data";
 import type { Expense } from "@/src/lib/expenses";
 import type { Move } from "@/src/lib/wallet";
-import { bundleFor, putInTrash } from "@/src/lib/trash";
+import { bundleFor, captureTrash, putInTrash } from "@/src/lib/trash";
 import { fileStore } from "@/src/lib/file-store";
 
 export type Coll = "customers" | "entries" | "jobs" | "aeps" | "expenses" | "moves";
@@ -399,10 +399,11 @@ export const store = {
   deleteEntry(id: string) {
     const list = queryClient.getQueryData<Entry[]>(["entries"]);
     const target = list?.find((x) => x.id === id);
-    if (target) void putInTrash("entries", target);
+    if (target && !captureTrash("entries", target)) void putInTrash("entries", target);
     enqueue({ kind: "delete", coll: "entries", itemId: id });
   },
-  createJob(b: Omit<Job, "id" | "createdAt" | "status"> & { status?: Job["status"] }): Job {
+  /** `createdAt` for a job written in later: the day it actually came in. */
+  createJob(b: Omit<Job, "id" | "createdAt" | "status"> & { status?: Job["status"]; createdAt?: string }): Job {
     const item: Job = { id: Crypto.randomUUID(), createdAt: now(), status: "pending", ...b };
     enqueue({ kind: "create", coll: "jobs", item });
     return item;
@@ -413,7 +414,7 @@ export const store = {
   deleteJob(id: string) {
     const list = queryClient.getQueryData<Job[]>(["jobs"]);
     const target = list?.find((x) => x.id === id);
-    if (target) void putInTrash("jobs", target);
+    if (target && !captureTrash("jobs", target)) void putInTrash("jobs", target);
     enqueue({ kind: "delete", coll: "jobs", itemId: id });
   },
   createAeps(b: Omit<AepsTxn, "id" | "createdAt">, createdAt?: string): AepsTxn {

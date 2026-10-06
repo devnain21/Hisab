@@ -207,9 +207,10 @@ class EntryItem(BaseModel):
 
 
 def _check_amount(m):
-    # Free work is still bookable when the shop paid a fee for it, so the cost shows up.
-    free_with_fee = m.amount == 0 and m.type == "work" and (m.fee or 0) > 0
-    if m.amount == 0 and not free_with_fee:
+    # Free work is still bookable when the shop paid a fee or a vendor for it, so the cost shows up
+    # (the vendor's cost is a separate purchase row pointing at this one).
+    free_work = m.amount == 0 and m.type == "work"
+    if m.amount == 0 and not free_work:
         raise ValueError("Amount must be greater than 0")
     return m
 
@@ -922,9 +923,9 @@ async def update_entry(entry_id: str, payload: EntryUpdate, user: dict = Depends
     if not existing:
         raise HTTPException(404, "Not found")
     _check_base(existing, base)
-    # Free work stays bookable when the shop paid a fee for it.
-    free_with_fee = payload.amount == 0 and payload.type == "work" and (payload.fee or 0) > 0
-    if payload.amount < 0 or (payload.amount == 0 and not free_with_fee):
+    # Free work stays bookable when the shop paid a fee or a vendor for it.
+    free_work = payload.amount == 0 and payload.type == "work"
+    if payload.amount < 0 or (payload.amount == 0 and not free_work):
         raise HTTPException(422, "Amount must be greater than 0")
     patch = payload.dict(exclude_none=True)
     paid = patch.get("paid", existing.get("paid", 0)) if payload.type in PAID_TYPES else 0

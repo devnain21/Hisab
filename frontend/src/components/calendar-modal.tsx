@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal, View, Text, StyleSheet, Pressable as RNPressable } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
@@ -7,13 +7,14 @@ import { formatMonth, isValidISO, monthRange, shiftISO, todayISO } from "@/src/l
 
 const WEEK = ["सो", "मं", "बु", "गु", "शु", "श", "र"];
 
-/** Month grid to pick one day. Days after `max` can't be chosen. */
+/** Month grid to pick one day. Days after `max` (or before `min`) can't be chosen. */
 export function CalendarModal({
   visible,
   value,
   onPick,
   onClose,
   max,
+  min,
   heading,
   keepOpen,
 }: {
@@ -22,6 +23,7 @@ export function CalendarModal({
   onPick: (d: string) => void;
   onClose: () => void;
   max?: string;
+  min?: string;
   heading?: string;
   /** The parent decides when to close (e.g. picking a from/to pair). */
   keepOpen?: boolean;
@@ -42,6 +44,8 @@ export function CalendarModal({
   while (days.length % 7) days.push(null);
   const today = todayISO();
   const nextOk = !max || monthRange(month, 1).from <= max;
+  const prevOk = !min || monthRange(month, -1).to >= min;
+  const todayOk = (!max || today <= max) && (!min || today >= min);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
@@ -49,8 +53,8 @@ export function CalendarModal({
         <RNPressable style={styles.card} onPress={() => {}}>
           {heading ? <Text style={styles.heading}>{heading}</Text> : null}
           <View style={styles.head}>
-            <Pressable onPress={() => setMonth(monthRange(month, -1).from)} hitSlop={10} testID="cal-prev">
-              <MaterialIcon name="chevron-left" size={26} color={colors.onSurface} />
+            <Pressable onPress={() => prevOk && setMonth(monthRange(month, -1).from)} hitSlop={10} disabled={!prevOk} testID="cal-prev">
+              <MaterialIcon name="chevron-left" size={26} color={prevOk ? colors.onSurface : colors.border} />
             </Pressable>
             <Text style={styles.title}>{formatMonth(month)}</Text>
             <Pressable onPress={() => nextOk && setMonth(monthRange(month, 1).from)} hitSlop={10} disabled={!nextOk} testID="cal-next">
@@ -63,7 +67,7 @@ export function CalendarModal({
             ))}
             {days.map((d, i) => {
               if (!d) return <View key={`x${i}`} style={styles.cell} />;
-              const off = !!max && d > max;
+              const off = (!!max && d > max) || (!!min && d < min);
               const on = d === value;
               return (
                 <Pressable
@@ -78,9 +82,11 @@ export function CalendarModal({
               );
             })}
           </View>
-          <Pressable style={styles.todayBtn} onPress={() => pick(today)} testID="cal-today">
-            <Text style={styles.todayText}>आज</Text>
-          </Pressable>
+          {todayOk ? (
+            <Pressable style={styles.todayBtn} onPress={() => pick(today)} testID="cal-today">
+              <Text style={styles.todayText}>आज</Text>
+            </Pressable>
+          ) : null}
         </RNPressable>
       </RNPressable>
     </Modal>

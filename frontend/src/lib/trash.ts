@@ -12,6 +12,9 @@ export type TrashColl = "customers" | "entries" | "jobs" | "aeps" | "expenses" |
 /** Rows the server removes (or unlinks) together with a customer, so a restore brings the whole khata back. */
 export type CustomerBundle = { entries: Entry[]; jobs: Job[]; aepsIds: string[]; jamaMoveIds?: string[] };
 
+/** Rows one delete took away together (a work with its payments, vendor cost, job card), and links it cut. */
+export type TrashGroup = { entries: Entry[]; jobs: Job[]; relink: { id: string; linkId: string; notes: string }[] };
+
 export type TrashItem = {
   id: string;
   coll: TrashColl;
@@ -20,6 +23,7 @@ export type TrashItem = {
   deletedAt: string;
   data: Record<string, any>;
   bundle?: CustomerBundle;
+  group?: TrashGroup;
 };
 
 export type RestoreResult = "ok" | "missing" | "no-customer";
@@ -82,13 +86,19 @@ const ENTRY_KIND: Record<string, { title: string; amount: string }> = {
 /** Labels are rebuilt from the saved record so items binned by older versions read right too. */
 export function describeTrash(item: TrashItem): { title: string; subtitle: string } {
   try {
-    return describe(item.coll, item.data ?? {}, item.bundle);
+    return describe(item.coll, item.data ?? {}, item.bundle, item.group);
   } catch {
     return { title: item.title, subtitle: item.subtitle };
   }
 }
 
-function describe(coll: TrashColl, data: Record<string, any>, bundle?: CustomerBundle) {
+function describe(coll: TrashColl, data: Record<string, any>, bundle?: CustomerBundle, group?: TrashGroup) {
+  const d = describeOne(coll, data, bundle);
+  const n = group ? group.entries.length + group.jobs.length : 0;
+  return n > 1 ? { ...d, subtitle: `${d.subtitle} · साथ में ${n - 1} और` } : d;
+}
+
+function describeOne(coll: TrashColl, data: Record<string, any>, bundle?: CustomerBundle) {
   if (coll === "customers") {
     const parts = [data.phone ? `फ़ोन: ${data.phone}` : "खाता"];
     if (bundle?.entries.length) parts.push(`${bundle.entries.length} एंट्री`);
@@ -118,19 +128,69 @@ function describe(coll: TrashColl, data: Record<string, any>, bundle?: CustomerB
   return { title: `${accountLabel(m.from)} → ${accountLabel(m.to)}`, subtitle: `${formatINR(m.amount || 0)} (${m.date || ""})` };
 }
 
-export function putInTrash(coll: TrashColl, data: Record<string, any>, bundle?: CustomerBundle): Promise<TrashItem> {
+export function putInTrash(coll: TrashColl, data: Record<string, any>, bundle?: CustomerBundle, group?: TrashGroup): Promise<TrashItem> {
   return mutateTrash(async (list) => {
     const trashItem: TrashItem = {
       id: `trash_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       coll,
-      ...describe(coll, data, bundle),
+      ...describe(coll, data, bundle, group),
       deletedAt: new Date().toISOString(),
       data,
       ...(bundle ? { bundle } : {}),
+      ...(group ? { group } : {}),
     };
     await save([trashItem, ...list].slice(0, MAX_TRASH_ITEMS));
     return trashItem;
   });
+}
+
+let openGroup: TrashGroup | null = null;
+
+/**
+ * Everything `fn` deletes goes to the bin as one item, so "वापस लाएं" brings the whole record back the
+ * way it was (payments, vendor cost, job card and the links that were cut), not one loose row.
+ */
+export function trashGroup(fn: () => void) {
+  if (openGroup) return fn();
+  const g: TrashGroup = { entries: [], jobs: [], relink: [] };
+  openGroup = g;
+  try {
+    fn();
+  } finally {
+    openGroup = null;
+    const n = g.entries.length + g.jobs.length;
+    if (n === 1 && !g.relink.length) void putInTrash(g.entries.length ? "entries" : "jobs", g.entries[0] ?? g.jobs[0]);
+    else if (n > 0) {
+      const lead = g.entries.find((e) => e.type === "work") ?? g.jobs[0] ?? g.entries[0];
+      void putInTrash(g.entries.includes(lead as Entry) ? "entries" : "jobs", lead, undefined, g);
+    }
+  }
+}
+
+/** Store hook: true when the row was taken into the open group instead of its own bin item. */
+export function captureTrash(coll: TrashColl, row: Entry | Job): boolean {
+  if (!openGroup) return false;
+  if (coll === "entries") openGroup.entries.push(row as Entry);
+  else if (coll === "jobs") openGroup.jobs.push(row as Job);
+  else return false;
+  return true;
+}
+
+/** A kept row whose link (and note) the delete changed; restored with the group. */
+export function noteRelink(row: Entry) {
+  openGroup?.relink.push({ id: row.id, linkId: row.linkId ?? "", notes: row.notes ?? "" });
+}
+
+function restoreGroup(g: TrashGroup) {
+  const live = new Set(cached<Customer>("customers").map((c) => c.id));
+  for (const e of g.entries) if (live.has(e.customerId)) store.restoreRaw("entries", e as any);
+  for (const j of g.jobs) if (!j.customerId || live.has(j.customerId)) store.restoreRaw("jobs", j as any);
+  const entries = cached<Entry>("entries");
+  for (const r of g.relink) {
+    const row = entries.find((e) => e.id === r.id);
+    // Only if nothing re-linked it meanwhile.
+    if (row && !row.linkId) store.updateEntry(r.id, { linkId: r.linkId, notes: r.notes });
+  }
 }
 
 /** Forget the cached list (sign-out); the stored copy is removed by the caller. */
@@ -217,6 +277,8 @@ export async function restoreTrashItem(trashId: string): Promise<RestoreResult> 
   const customerId = (item.data as { customerId?: string }).customerId;
   if (item.coll === "customers") {
     restoreCustomer(item);
+  } else if (item.group) {
+    restoreGroup(item.group);
   } else {
     let data = item.data;
     // A counter row keeps its money even if its customer is gone; it just comes back unlinked.

@@ -4,7 +4,8 @@
 import { useEffect, useRef } from "react";
 import { store } from "@/src/lib/store";
 import { isDebt, isRepayment, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
-import { roundMoney, todayISO } from "@/src/lib/format";
+import { localDay, roundMoney, todayISO } from "@/src/lib/format";
+import { noteRelink, trashGroup } from "@/src/lib/trash";
 
 const isLegacyPairFor = (work: Entry, e: Entry) =>
   work.type === "work" &&
@@ -100,7 +101,10 @@ function dropOrKeep(rows: Entry[], day: string) {
     // An old advance found only by its note may belong to another job of the same name; it stays on the khata.
     if (!p.linkId && p.description === ADVANCE) return;
     if (p.date === day) store.deleteEntry(p.id);
-    else if (p.linkId) store.updateEntry(p.id, { linkId: "" });
+    else if (p.linkId) {
+      noteRelink(p);
+      store.updateEntry(p.id, { linkId: "" });
+    }
   });
 }
 
@@ -114,31 +118,61 @@ export function vendorCostsFor(work: Entry, entries: Entry[]): Entry[] {
  * order of a pending job only today's advance goes (earlier ones already left the drawer that day).
  */
 export function removeVendorCost(row: Entry, entries: Entry[]) {
-  store.deleteEntry(row.id);
-  dropOrKeep(settlementsFor(row, entries), row.status === "ordered" ? todayISO() : row.date);
+  trashGroup(() => {
+    store.deleteEntry(row.id);
+    const onWork = entries.some((e) => e.type === "work" && e.id === row.refId);
+    dropOrKeep(settlementsFor(row, entries), row.refId && !onWork ? todayISO() : row.date);
+  });
 }
+
+export type VendorRefund = { amount: number; mode: "cash" | "online"; date: string } | null;
+
+/**
+ * A pending job taken back from its vendor (done in-house, or handed to someone else). Money already
+ * given to them stays on their khata as owed to us; what they returned comes in on the day it came.
+ */
+export function releaseVendorOrder(row: Entry, entries: Entry[], refund: VendorRefund) {
+  trashGroup(() => {
+    const given = settlementsFor(row, entries);
+    store.deleteEntry(row.id);
+    let left = refund ? roundMoney(refund.amount) : 0;
+    given.forEach((p) => {
+      noteRelink(p);
+      store.updateEntry(p.id, { linkId: "", notes: `${row.description} · काम वापस लिया` });
+      const back = Math.min(left, p.amount);
+      if (refund && back > 0) {
+        store.createEntry({ customerId: row.customerId, type: "payment", date: refund.date, description: VENDOR_REFUND, amount: back, mode: refund.mode, notes: row.description, linkId: p.id });
+        left = roundMoney(left - back);
+      }
+    });
+  });
+}
+
+export const VENDOR_REFUND = "Vendor से वापसी";
 
 /** Removes a khata entry together with the rows that were booked with it. */
 export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]) {
-  if (entry.type === "given" || entry.type === "purchase") {
-    store.deleteEntry(entry.id);
-    dropOrKeep(settlementsFor(entry, entries), entry.date);
-    return;
-  }
-  const work = entry.type === "work" ? entry : workForPayment(entry, entries);
-  if (!work || work.type !== "work" || (entry.type === "payment" && entry.date !== work.date)) {
-    // A later settlement is its own event; removing it just re-opens the udhaar.
-    store.deleteEntry(entry.id);
-    return;
-  }
-  const job = jobForWork(work, jobs);
-  const linked = new Map<string, Entry>();
-  [...settlementsFor(work, entries), ...legacyAdvancesForWork(work, entries), ...(job ? advancesForJob(job, entries) : [])].forEach((p) => linked.set(p.id, p));
-  store.deleteEntry(work.id);
-  dropOrKeep([...linked.values()], work.date);
-  vendorCostsFor(work, entries).forEach((v) => removeVendorCost(v, entries));
-  if (job) store.deleteJob(job.id);
-  remindersFor(work, jobs).forEach((j) => store.deleteJob(j.id));
+  trashGroup(() => {
+    if (entry.type === "given" || entry.type === "purchase") {
+      store.deleteEntry(entry.id);
+      dropOrKeep(settlementsFor(entry, entries), entry.date);
+      return;
+    }
+    const work = entry.type === "work" ? entry : workForPayment(entry, entries);
+    if (!work || work.type !== "work" || (entry.type === "payment" && entry.date !== work.date)) {
+      // A later settlement is its own event; removing it just re-opens the udhaar.
+      store.deleteEntry(entry.id);
+      return;
+    }
+    const job = jobForWork(work, jobs);
+    const linked = new Map<string, Entry>();
+    [...settlementsFor(work, entries), ...legacyAdvancesForWork(work, entries), ...(job ? advancesForJob(job, entries) : [])].forEach((p) => linked.set(p.id, p));
+    store.deleteEntry(work.id);
+    dropOrKeep([...linked.values()], work.date);
+    vendorCostsFor(work, entries).forEach((v) => removeVendorCost(v, entries));
+    if (job) store.deleteJob(job.id);
+    remindersFor(work, jobs).forEach((j) => store.deleteJob(j.id));
+  });
 }
 
 /**
@@ -146,17 +180,25 @@ export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]
  * already sits in that day's galla / bank, so it stays on the khata as the customer's advance.
  */
 export function removeJobWithAdvances(job: Job, entries: Entry[]) {
-  dropOrKeep(advancesForJob(job, entries), todayISO());
-  vendorOrdersForJob(job, entries).forEach((v) => removeVendorCost(v, entries));
-  store.deleteJob(job.id);
+  trashGroup(() => {
+    dropOrKeep(advancesForJob(job, entries), todayISO());
+    vendorOrdersForJob(job, entries).forEach((v) => removeVendorCost(v, entries));
+    store.deleteJob(job.id);
+  });
+}
+
+/** Day the job came in: when it was written, or its first advance if that is older (written in later). */
+export function jobStart(job: Job, entries: Entry[]): string {
+  const typed = localDay(job.createdAt) ?? todayISO();
+  return advancesForJob(job, entries).reduce((d, p) => (p.date < d ? p.date : d), typed);
+}
+
+/** Pending job id → the vendor it was handed to. */
+export function vendorByJob(entries: Entry[]): Map<string, string> {
+  return new Map(entries.filter((e) => e.type === "purchase" && !!e.refId).map((e) => [e.refId as string, e.customerId]));
 }
 
 /** Open vendor order of a pending job ("वेंडर को दिया"); it moves onto the work row when the job is done. */
-/** Pending job id → the vendor it was handed to. */
-export function vendorByJob(entries: Entry[]): Map<string, string> {
-  return new Map(entries.filter((e) => e.type === "purchase" && e.status === "ordered" && !!e.refId).map((e) => [e.refId as string, e.customerId]));
-}
-
 export function vendorOrdersForJob(job: Job, entries: Entry[]): Entry[] {
   return entries.filter((e) => e.type === "purchase" && e.refId === job.id);
 }

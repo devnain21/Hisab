@@ -10,7 +10,7 @@ export function TaskRow({ task: t, today, onToggle, onOpen, compact }: { task: J
   const done = g === "done";
   const when = whenLabel(t, today);
   const high = t.priority === "high" && !done;
-  const tone = g === "late" ? colors.error : g === "today" ? colors.success : colors.muted;
+  const tone = g === "late" ? colors.warning : g === "today" ? colors.success : colors.muted;
   return (
     <Pressable style={[styles.card, high && styles.cardHigh]} onPress={onOpen} testID={`task-${t.id}`}>
       <Pressable onPress={onToggle} hitSlop={10} style={styles.check} testID={`task-check-${t.id}`}>

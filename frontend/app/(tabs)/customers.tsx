@@ -53,6 +53,15 @@ export default function CustomersScreen() {
   );
   const vendorCount = useMemo(() => (isPersonal ? 0 : allCustomers.filter((c) => c.persona !== "personal" && isVendor(c)).length), [allCustomers, isPersonal]);
 
+  // Shop and Personal are different books: a search or filter from one means nothing in the other.
+  const [listBook, setListBook] = useState(isPersonal);
+  if (listBook !== isPersonal) {
+    setListBook(isPersonal);
+    setQ("");
+    setFilter("due");
+    setBook("customer");
+  }
+
   useEffect(() => {
     if (params.book === "vendor" || params.book === "customer") setBook(params.book);
     if (params.filter && FILTERS.includes(params.filter)) {
@@ -130,7 +139,7 @@ export default function CustomersScreen() {
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
           <Text style={styles.h1}>{listName}</Text>
           {counts.due > 1 && !vendors ? (
-            <Pressable style={styles.bulkBtn} onPress={() => router.push("/remind" as never)} accessibilityRole="button" accessibilityLabel="सबको तगादा भेजें" testID="open-bulk-remind">
+            <Pressable hitSlop={{ top: 2, bottom: 2 }} style={styles.bulkBtn} onPress={() => router.push("/remind" as never)} accessibilityRole="button" accessibilityLabel="सबको तगादा भेजें" testID="open-bulk-remind">
               <MaterialIcon name="whatsapp" size={18} color={semantic.whatsapp} />
               <Text style={styles.bulkText}>सबको तगादा</Text>
             </Pressable>
@@ -139,7 +148,7 @@ export default function CustomersScreen() {
         {!isPersonal ? (
           <View style={styles.bookSeg}>
             {(["customer", "vendor"] as const).map((b) => (
-              <Pressable key={b} onPress={() => switchBook(b)} style={[styles.bookBtn, book === b && styles.bookOn]} accessibilityRole="tab" accessibilityState={{ selected: book === b }} testID={`book-${b}`}>
+              <Pressable hitSlop={{ top: 4, bottom: 4 }} key={b} onPress={() => switchBook(b)} style={[styles.bookBtn, book === b && styles.bookOn]} accessibilityRole="tab" accessibilityState={{ selected: book === b }} testID={`book-${b}`}>
                 <MaterialIcon name={b === "vendor" ? "truck-outline" : "account-group-outline"} size={16} color={book === b ? colors.onBrandPrimary : colors.onSurface} />
                 <Text style={[styles.bookText, book === b && { color: colors.onBrandPrimary }]}>{b === "vendor" ? `Vendor${vendorCount ? ` (${vendorCount})` : ""}` : "ग्राहक"}</Text>
               </Pressable>
@@ -163,7 +172,7 @@ export default function CustomersScreen() {
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.md }}>
           {FILTERS.map((f) => (
-            <Pressable key={f} onPress={() => { setFilter(f); if (f === "all") setSort("name"); }} style={[styles.chip, filter === f && styles.chipActive]} testID={`filter-${f}`}>
+            <Pressable hitSlop={{ top: 4, bottom: 4 }} key={f} onPress={() => { setFilter(f); if (f === "all") setSort("name"); }} style={[styles.chip, filter === f && styles.chipActive]} testID={`filter-${f}`}>
               <Text style={[styles.chipText, filter === f && { color: colors.onBrandPrimary }]}>
                 {filterLabel[f]} ({counts[f]})
               </Text>
@@ -171,13 +180,16 @@ export default function CustomersScreen() {
           ))}
         </ScrollView>
         {!loading && filter !== "all" && (filter === "due" ? totalDue : totalOwe) > 0 ? (
-          <Text style={styles.summary} testID="customers-summary">
-            {vendors ? (filter === "due" ? "कुल एडवांस दिया" : "कुल देने हैं") : totalTerm(filter === "due", isPersonal)}{" "}
-            <Text style={{ color: vendors ? (filter === "due" ? semantic.received : semantic.due) : filter === "due" ? semantic.due : isPersonal ? semantic.pending : semantic.received, fontWeight: "800" }}>
-              {hideAmounts ? HIDDEN : formatINR(filter === "due" ? totalDue : totalOwe)}
-            </Text>{" "}
-            · {counts[filter]} {listName}
-          </Text>
+          <Pressable onPress={!vendors && filter === "due" ? () => router.push("/remind" as never) : undefined} disabled={vendors || filter !== "due"} accessibilityRole="button" accessibilityHint="सबको तगादा भेजें" style={styles.summaryRow} testID="customers-summary">
+            <Text style={[styles.summary, { flexShrink: 1 }]}>
+              {vendors ? (filter === "due" ? "कुल एडवांस दिया" : "कुल देने हैं") : totalTerm(filter === "due", isPersonal)}{" "}
+              <Text style={{ color: vendors ? (filter === "due" ? semantic.received : semantic.due) : filter === "due" ? semantic.due : isPersonal ? semantic.pending : semantic.received, fontWeight: "800" }}>
+                {hideAmounts ? HIDDEN : formatINR(filter === "due" ? totalDue : totalOwe)}
+              </Text>{" "}
+              · {counts[filter]} {listName}
+            </Text>
+            {!vendors && filter === "due" ? <MaterialIcon name="bell-ring-outline" size={18} color={colors.brandPrimary} /> : null}
+          </Pressable>
         ) : null}
         {!loading && counts[filter] > 1 ? (
           <View style={styles.sortRow}>
@@ -313,7 +325,8 @@ const styles = StyleSheet.create({
   bookOn: { backgroundColor: colors.brandPrimary },
   bookText: { ...type.caption, fontWeight: "800", color: colors.onSurface },
   chipText: { fontSize: 13, color: colors.onSurface, fontWeight: "600" },
-  summary: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: spacing.md },
+  summary: { fontSize: 13, color: colors.onSurfaceSecondary },
+  summaryRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, marginTop: spacing.md, minHeight: 32 },
   sortRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginTop: spacing.sm },
   sortText: { fontSize: 12, color: colors.muted, fontWeight: "600" },
   sortOn: { color: colors.brandPrimary, fontWeight: "800", textDecorationLine: "underline" },

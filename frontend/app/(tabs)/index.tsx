@@ -439,7 +439,7 @@ function HomeBody() {
                     <View style={styles.walletDivider} />
                     <Pressable style={styles.kpiCell} onPress={() => setWorkSheet(true)} accessibilityRole="button" testID="stat-today-work">
                       <Text style={styles.kpiLabel}>आज का काम</Text>
-                      <Text style={[styles.kpiValue, { color: colors.success }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(todayWork.booked)}</Text>
+                      <Text style={[styles.kpiValue, { color: colors.onSurface }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(todayWork.booked)}</Text>
                     </Pressable>
                   </>
                 )}
@@ -472,7 +472,7 @@ function HomeBody() {
                       </Pressable>
                     ) : null}
                   </View>
-                  <Text style={[styles.duesValue, { color: stats.totalDue > 0 ? semantic.received : colors.muted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(stats.totalDue)}</Text>
+                  <Text style={[styles.duesValue, { color: stats.totalDue > 0 ? semantic.due : colors.muted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(stats.totalDue)}</Text>
                   <Text style={styles.duesSub} numberOfLines={1}>{stats.dueCustomers} ग्राहक</Text>
                 </Pressable>
                 <View style={styles.walletDivider} />
@@ -486,32 +486,32 @@ function HomeBody() {
 
             <View style={styles.chipRow}>
               {isPersonal && stats.totalDue > 0 ? (
-                <Pressable style={styles.chip} onPress={() => go("/(tabs)/customers", { filter: "due" })} testID="stat-total-get">
+                <Pressable hitSlop={{ top: 4, bottom: 4 }} style={styles.chip} onPress={() => go("/(tabs)/customers", { filter: "due" })} testID="stat-total-get">
                   <Text style={styles.chipText} numberOfLines={1}>{TERMS.get} {money(stats.totalDue)} · {stats.dueCustomers}</Text>
                   <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
                 </Pressable>
               ) : null}
               {vendorOrders.late > 0 ? (
-                <Pressable style={[styles.chip, { borderColor: semantic.due }]} onPress={() => setVendorMenu(true)} testID="home-vendor-late">
-                  <MaterialIcon name="truck-alert-outline" size={14} color={semantic.due} />
-                  <Text style={[styles.chipText, { color: semantic.due }]} numberOfLines={1}>{vendorOrders.late} Vendor डिलीवरी देर से</Text>
+                <Pressable hitSlop={{ top: 4, bottom: 4 }} style={[styles.chip, { borderColor: semantic.pending }]} onPress={() => setVendorMenu(true)} testID="home-vendor-late">
+                  <MaterialIcon name="truck-alert-outline" size={14} color={semantic.pending} />
+                  <Text style={[styles.chipText, { color: semantic.pending }]} numberOfLines={1}>{vendorOrders.late} Vendor डिलीवरी देर से</Text>
                   <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
                 </Pressable>
               ) : null}
               {stats.totalOwe > 0 ? (
-                <Pressable style={styles.chip} onPress={() => go("/(tabs)/customers", isPersonal ? { filter: "owe" } : { filter: "owe", book: "customer" })} testID="stat-total-owe">
+                <Pressable hitSlop={{ top: 4, bottom: 4 }} style={styles.chip} onPress={() => go("/(tabs)/customers", isPersonal ? { filter: "owe" } : { filter: "owe", book: "customer" })} testID="stat-total-owe">
                   <Text style={styles.chipText} numberOfLines={1}>{isPersonal ? TERMS.give : "ग्राहकों का एडवांस"} {money(stats.totalOwe)} · {stats.oweCount}</Text>
                   <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
                 </Pressable>
               ) : null}
               {stats.vendorReceivable > 0 ? (
-                <Pressable style={styles.chip} onPress={() => go("/(tabs)/customers", { filter: "due", book: "vendor" })} testID="stat-vendor-receivable">
+                <Pressable hitSlop={{ top: 4, bottom: 4 }} style={styles.chip} onPress={() => go("/(tabs)/customers", { filter: "due", book: "vendor" })} testID="stat-vendor-receivable">
                   <Text style={styles.chipText} numberOfLines={1}>Vendor से लेने {money(stats.vendorReceivable)}</Text>
                   <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
                 </Pressable>
               ) : null}
               {counter.on && aepsDue > 0 ? (
-                <Pressable style={styles.chip} onPress={() => go("/(tabs)/aeps", { range: "today" })} testID="home-aeps-card">
+                <Pressable hitSlop={{ top: 4, bottom: 4 }} style={styles.chip} onPress={() => go("/(tabs)/aeps", { range: "today" })} testID="home-aeps-card">
                   <MaterialIcon name="fingerprint" size={14} color={semantic.pending} />
                   <Text style={styles.chipText} numberOfLines={1}>{aepsDue} काउंटर पेंडिंग</Text>
                   <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
@@ -537,7 +537,7 @@ function HomeBody() {
                 </Pressable>
 
                 <View style={styles.sectionRow}>
-                  <Text style={styles.sectionHead}>Live Activity</Text>
+                  <Text style={styles.sectionHead}>ताज़ा लेन-देन</Text>
                   {feed.length > 0 ? (
                     <Pressable onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "all", period: "month" } })} hitSlop={8} testID="home-activity-all">
                       <Text style={styles.link}>सभी देखें</Text>
@@ -597,8 +597,8 @@ function HomeBody() {
                   const late = j.dueDate < today;
                   return (
                     <Pressable key={j.id} style={styles.jobCard} onPress={() => setEditingJob(j)} testID={`home-job-${j.id}`}>
-                      <View style={[styles.dateBadge, late && { backgroundColor: colors.errorSoft }]}>
-                        <Text style={[styles.dateBadgeText, late && { color: colors.error }]}>{j.dueDate === today ? "आज" : formatDateShort(j.dueDate)}</Text>
+                      <View style={[styles.dateBadge, late && { backgroundColor: semantic.pendingSoft }]}>
+                        <Text style={[styles.dateBadgeText, late && { color: semantic.pending }]}>{j.dueDate === today ? "आज" : formatDateShort(j.dueDate)}</Text>
                       </View>
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.rowTitle} numberOfLines={1}>{j.title}</Text>
@@ -729,8 +729,8 @@ function HomeBody() {
                 const late = o.status === "ordered" && !!o.dueDate && o.dueDate < today;
                 return (
                   <Pressable key={o.id} style={styles.vendorRow} onPress={() => { setVendorMenu(false); setTimeout(() => setSettling(o), 300); }} testID={`vendor-pay-${o.id}`}>
-                    <View style={[styles.vendorIcon, late && { backgroundColor: colors.errorSoft }]}>
-                      <MaterialIcon name={o.status === "ordered" ? "truck-fast-outline" : "package-variant-closed-check"} size={18} color={late ? colors.error : colors.info} />
+                    <View style={[styles.vendorIcon, late && { backgroundColor: semantic.pendingSoft }]}>
+                      <MaterialIcon name={o.status === "ordered" ? "truck-fast-outline" : "package-variant-closed-check"} size={18} color={late ? semantic.pending : colors.info} />
                     </View>
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={styles.rowTitle} numberOfLines={1}>{nameOf(o.customerId)}</Text>
@@ -800,7 +800,7 @@ const styles = StyleSheet.create({
   spendHead: { flexDirection: "row", alignItems: "center", gap: 6 },
   spendLabel: { fontSize: 12, fontWeight: "800" },
   spendValue: { ...type.title, fontWeight: "800", fontVariant: ["tabular-nums"] },
-  spendSub: { fontSize: 11, color: colors.muted, fontWeight: "600", fontVariant: ["tabular-nums"] },
+  spendSub: { ...type.caption, color: colors.muted, fontWeight: "600", fontVariant: ["tabular-nums"] },
   taskLine: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.md, paddingHorizontal: spacing.md, minHeight: 48, borderRadius: radius.md, backgroundColor: colors.brandTertiary },
   taskLineText: { flex: 1, fontSize: 14, fontWeight: "700", color: colors.onSurface },
   todayTag: { ...type.caption, color: colors.brandPrimary, fontWeight: "700" },
@@ -812,7 +812,7 @@ const styles = StyleSheet.create({
   duesCell: { flex: 1, minWidth: 0, gap: 2 },
   duesLabel: { fontSize: 12, fontWeight: "700", color: colors.muted },
   duesValue: { fontSize: 20, fontWeight: "800", fontVariant: ["tabular-nums"] },
-  duesSub: { fontSize: 11, color: colors.muted, fontWeight: "600" },
+  duesSub: { ...type.caption, color: colors.muted, fontWeight: "600" },
   vendorNew: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
   vendorNewTitle: { fontSize: 15, fontWeight: "800", color: colors.onBrandPrimary },
   vendorHead: { ...type.caption, color: colors.muted, fontWeight: "800", textTransform: "uppercase", marginTop: spacing.lg, marginBottom: spacing.xs },
@@ -823,7 +823,7 @@ const styles = StyleSheet.create({
   chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: spacing.md, paddingRight: spacing.sm, minHeight: 36, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   chipText: { fontSize: 13, fontWeight: "600", color: colors.onSurfaceSecondary },
   heroLabel: { ...type.caption, color: colors.muted, fontWeight: "700" },
-  lateTag: { ...type.caption, color: semantic.due, fontWeight: "700" },
+  lateTag: { ...type.caption, color: semantic.pending, fontWeight: "700" },
   actionBar: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
   walletLine: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface },
   walletCell: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 6 },
@@ -952,14 +952,14 @@ const styles = StyleSheet.create({
   kpiCell: { flex: 1, minWidth: 0, paddingVertical: 4 },
   kpiLabel: { fontSize: 12, fontWeight: "700", color: colors.muted },
   kpiValue: { fontSize: 18, fontWeight: "800", fontVariant: ["tabular-nums"] },
-  walletNow: { fontSize: 11, fontWeight: "800", color: colors.muted, textTransform: "uppercase" },
+  walletNow: { ...type.caption, fontWeight: "800", color: colors.muted, textTransform: "uppercase" },
   duesHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.xs },
   miniAction: { flex: 1.3, alignItems: "center", justifyContent: "center", gap: 2, paddingVertical: 6, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
-  miniActionText: { fontSize: 11, fontWeight: "700", color: colors.brandPrimary },
+  miniActionText: { ...type.caption, fontWeight: "700", color: colors.brandPrimary },
   doneBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md, minHeight: 40, borderRadius: radius.pill, backgroundColor: colors.brandPrimary },
   doneBtnText: { fontSize: 13, fontWeight: "700", color: colors.onBrandPrimary },
   vendorTag: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", marginTop: 4, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm, backgroundColor: colors.infoSoft },
-  vendorTagText: { fontSize: 11, fontWeight: "700", color: colors.info, maxWidth: 160 },
+  vendorTagText: { ...type.caption, fontWeight: "700", color: colors.info, maxWidth: 160 },
   rowTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   rowSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   emptyRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.lg, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },

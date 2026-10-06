@@ -26,9 +26,10 @@ const TITLES: Record<MetricKind, string> = {
   collected: "पैसे मिले",
   given: "लोगों को दिए",
   paidOut: "सामान / सेवा चुकाए",
+  goods: "सामान / सेवा ली",
 };
 
-const OUTFLOW = new Set<MetricKind>(["fee", "vendor", "workVendor", "expense", "given", "paidOut"]);
+const OUTFLOW = new Set<MetricKind>(["fee", "vendor", "workVendor", "expense", "given", "paidOut", "goods"]);
 
 /** Every row behind one summary figure (Home / Report), for a day or a range; tap a row to open it. */
 export default function EntriesScreen() {

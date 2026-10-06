@@ -79,7 +79,7 @@ export default function TasksScreen() {
         <Text style={styles.h1}>मेरे काम</Text>
         <Text style={styles.sub}>
           {counts.open ? `${counts.open} बाकी` : "कोई काम बाकी नहीं"}
-          {lateCount ? <Text style={{ color: colors.error, fontWeight: "700" }}> · {lateCount} देर से</Text> : null}
+          {lateCount ? <Text style={{ color: colors.warning, fontWeight: "700" }}> · {lateCount} देर से</Text> : null}
         </Text>
 
         <View style={styles.quickRow}>
@@ -106,7 +106,7 @@ export default function TasksScreen() {
           {FILTERS.map(({ key, label }) => {
             const active = filter === key;
             return (
-              <Pressable key={key} onPress={() => setFilter(key)} style={[styles.chip, active && styles.chipActive]} testID={`task-filter-${key}`}>
+              <Pressable hitSlop={{ top: 4, bottom: 4 }} key={key} onPress={() => setFilter(key)} style={[styles.chip, active && styles.chipActive]} testID={`task-filter-${key}`}>
                 <Text style={[styles.chipText, active && { color: colors.onBrandPrimary }]}>{label} ({counts[key] ?? 0})</Text>
               </Pressable>
             );

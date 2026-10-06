@@ -14,12 +14,13 @@ import { AddEntrySheet, AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSh
 import { Pressable } from "@/src/components/tap";
 import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint";
 import { usePersona } from "@/src/lib/persona";
-type Filter = "open" | "late" | "unpaid" | "all";
-const FILTERS: Filter[] = ["open", "late", "unpaid", "all"];
-const FILTER_LABEL: Record<Filter, string> = { open: "काम बाकी", late: "देर", unpaid: "पैसे बाकी", all: "सभी" };
+type Filter = "open" | "today" | "late" | "unpaid" | "all";
+const FILTERS: Filter[] = ["open", "today", "late", "unpaid", "all"];
+const FILTER_LABEL: Record<Filter, string> = { open: "काम बाकी", today: "आज", late: "देर", unpaid: "पैसे बाकी", all: "सभी" };
 
 function matches(j: Job, f: Filter, today: string, pay?: WorkStatus) {
   if (f === "open") return j.status !== "done";
+  if (f === "today") return j.status !== "done" && j.dueDate === today;
   if (f === "late") return j.status !== "done" && j.dueDate < today;
   if (f === "unpaid") return j.status === "done" && !!pay && pay.remaining > 0;
   return true;
@@ -105,27 +106,28 @@ function ShopWork() {
           {FILTERS.filter((f) => f === "open" || f === "all" || counts[f] > 0 || filter === f).map((f) => {
             const active = filter === f;
             const warn = (f === "late" || f === "unpaid") && counts[f] > 0;
+            const tone = f === "late" ? colors.warning : colors.error;
             return (
-              <Pressable
+              <Pressable hitSlop={{ top: 4, bottom: 4 }}
                 key={f}
                 onPress={() => setFilter(f)}
-                style={[styles.chip, warn && !active && { borderColor: colors.error }, active && (warn ? { backgroundColor: colors.error, borderColor: colors.error } : styles.chipActive)]}
+                style={[styles.chip, warn && !active && { borderColor: tone }, active && (warn ? { backgroundColor: tone, borderColor: tone } : styles.chipActive)]}
                 testID={`work-filter-${f}`}
               >
-                <Text style={[styles.chipText, warn && !active && { color: colors.error }, active && { color: colors.onBrandPrimary }]}>
+                <Text style={[styles.chipText, warn && !active && { color: tone }, active && { color: colors.onBrandPrimary }]}>
                   {FILTER_LABEL[f]} ({counts[f] ?? 0})
                 </Text>
               </Pressable>
             );
           })}
         </ScrollView>
-        {!loading && (filter === "open" || filter === "late") ? (
+        {!loading && (filter === "open" || filter === "today" || filter === "late") ? (
           <Text style={styles.summary} testID="work-summary">
             <Text onPress={() => setFilter("open")} style={filter === "open" ? styles.summaryOn : undefined}>{counts.open} काम बाकी</Text>
             {" · "}
-            <Text>आज {todayCount}</Text>
-            {counts.late > 0 ? <Text onPress={() => setFilter("late")} style={{ color: colors.error, fontWeight: "700" }}> · {counts.late} देर से</Text> : null}
-            {openValue > 0 ? ` · अनुमानित ${formatINR(openValue)}` : ""}
+            <Text onPress={todayCount > 0 ? () => setFilter("today") : undefined} style={filter === "today" ? styles.summaryOn : undefined} testID="work-summary-today">आज {todayCount}</Text>
+            {counts.late > 0 ? <Text onPress={() => setFilter("late")} style={{ color: colors.warning, fontWeight: "700" }}> · {counts.late} देर से</Text> : null}
+            {openValue > 0 ? <Text onPress={() => setFilter("open")} testID="work-summary-value"> · अनुमानित {formatINR(openValue)}</Text> : null}
           </Text>
         ) : null}
       </View>
@@ -153,12 +155,12 @@ function ShopWork() {
             const notes = pay ? stripPayNote(j.notes) : j.notes;
             return (
               <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 40).duration(250)}>
-                <Pressable style={[styles.jobCard, overdue && { borderLeftWidth: 4, borderLeftColor: colors.error }]} onPress={() => setEditing(j)} testID={`job-card-${j.id}`}>
+                <Pressable style={[styles.jobCard, overdue && { borderLeftWidth: 4, borderLeftColor: colors.warning }]} onPress={() => setEditing(j)} testID={`job-card-${j.id}`}>
                   <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
                     <Text style={[styles.jobTitle, { flex: 1, minWidth: 0 }]} numberOfLines={2}>{j.title}</Text>
                     {pay ? <PayPill pay={pay} /> : <StatusPill status={j.status} free={j.status === "done" && !!j.customerId && !work} />}
                   </View>
-                  <Text style={[styles.jobSub, overdue && { color: colors.error }]}>
+                  <Text style={[styles.jobSub, overdue && { color: colors.warning }]}>
                     {nameOf(j.customerId)} · {j.dueDate === today ? "आज" : formatDate(j.dueDate)}{overdue ? " (देर)" : ""}
                     {j.estimatedAmount > 0 ? ` · ${formatINR(j.estimatedAmount)}` : ""}
                     {j.status !== "done" && jobVendor.has(j.id) ? ` · Vendor: ${nameById.get(jobVendor.get(j.id)!) ?? "—"}` : ""}
@@ -255,7 +257,7 @@ function PersonalTxns() {
             const active = filter === f;
             const warn = f === "open" && counts.open > 0;
             return (
-              <Pressable
+              <Pressable hitSlop={{ top: 4, bottom: 4 }}
                 key={f}
                 onPress={() => setFilter(f)}
                 style={[styles.chip, warn && !active && { borderColor: colors.error }, active && (warn ? { backgroundColor: colors.error, borderColor: colors.error } : styles.chipActive)]}

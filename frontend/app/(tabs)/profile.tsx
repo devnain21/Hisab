@@ -491,7 +491,7 @@ export default function Profile() {
             <MaterialIcon name="chart-box-outline" size={20} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.rowValue}>Reports</Text>
+            <Text style={styles.rowValue}>रिपोर्ट</Text>
             <Text style={styles.rowLabel} numberOfLines={1}>
               {prefs.hideAmounts ? "पैसे आए / गए · दिन, हफ़्ता, महीना" : `${labels.cash} ${formatINR(cashBal)} · बैंक ${formatINR(bankBal)}`}
             </Text>

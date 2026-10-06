@@ -76,7 +76,7 @@ export function Reconcile({ label, pocketKey, app, hint, testID }: { label: stri
             {diff > 0 ? `असल में ${formatINR(diff)} ज़्यादा` : `असल में ${formatINR(-diff)} कम`} — कोई एंट्री छूटी या गलत है
           </Text>
           {hint ? <Text style={styles.meta}>{hint}</Text> : null}
-          <Pressable style={styles.btn} onPress={match} testID={`${testID}-match`}>
+          <Pressable hitSlop={{ top: 4, bottom: 4 }} style={styles.btn} onPress={match} testID={`${testID}-match`}>
             <Text style={styles.btnText}>हिसाब को असल के बराबर करें</Text>
           </Pressable>
         </>

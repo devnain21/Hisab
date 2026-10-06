@@ -99,9 +99,12 @@ export default function ReportScreen() {
   const { hideAmounts } = usePrefs();
   const money = (n: number) => (hideAmounts ? HIDDEN : formatINR(n));
   const today = todayISO();
-  const { month } = useLocalSearchParams<{ month?: string }>();
-  const [period, setPeriod] = useState<Period>(month ? "month" : "day");
-  const [date, setDate] = useState(month === "prev" ? monthRange(today, -1).from : today);
+  const params = useLocalSearchParams<{ month?: string; period?: string; date?: string }>();
+  const { month } = params;
+  const askedPeriod = params.period === "day" || params.period === "week" || params.period === "month" ? (params.period as Period) : null;
+  const askedDate = params.date && params.date <= today ? params.date : null;
+  const [period, setPeriod] = useState<Period>(askedPeriod ?? (month ? "month" : "day"));
+  const [date, setDate] = useState(askedDate ?? (month === "prev" ? monthRange(today, -1).from : today));
   const [calendar, setCalendar] = useState(false);
   const [sharing, setSharing] = useState(false);
 
@@ -224,7 +227,7 @@ export default function ReportScreen() {
         <Pressable onPress={() => router.back()} hitSlop={12} testID="report-back">
           <MaterialIcon name="arrow-left" size={26} color={colors.onSurface} />
         </Pressable>
-        <Text style={styles.topTitle}>Reports</Text>
+        <Text style={styles.topTitle}>रिपोर्ट</Text>
         <Pressable onPress={shareCsv} hitSlop={8} disabled={sharing} style={{ marginRight: spacing.md }} accessibilityLabel="Excel फ़ाइल भेजें" testID="report-csv">
           <MaterialIcon name="microsoft-excel" size={26} color={colors.success} />
         </Pressable>
@@ -236,7 +239,7 @@ export default function ReportScreen() {
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}>
         <View style={styles.segment}>
           {PERIODS.map((p) => (
-            <Pressable key={p.id} onPress={() => setPeriod(p.id)} style={[styles.segmentBtn, period === p.id && styles.segmentOn]} testID={`report-period-${p.id}`}>
+            <Pressable hitSlop={{ top: 3, bottom: 3 }} key={p.id} onPress={() => setPeriod(p.id)} style={[styles.segmentBtn, period === p.id && styles.segmentOn]} testID={`report-period-${p.id}`}>
               <Text style={[styles.segmentText, period === p.id && { color: colors.onBrandPrimary }]}>{p.label}</Text>
             </Pressable>
           ))}
@@ -254,7 +257,7 @@ export default function ReportScreen() {
           </Pressable>
         </View>
 
-        <Text style={styles.sectionTitle}>Cash Flow</Text>
+        <Text style={styles.sectionTitle}>पैसा आया-गया</Text>
         <View style={styles.card}>
           <View style={styles.tiles}>
             <FlowTile dir="in" value={money(flow.ins)} onPress={() => openFlow("in")} testID="report-cash-in" />
@@ -263,7 +266,7 @@ export default function ReportScreen() {
           <NetRow value={flow.net} fmt={money} onPress={() => (period === "day" ? router.push({ pathname: "/day", params: { type: "drawer", date } }) : router.push({ pathname: "/pocket" as never, params: { p: "all", ...nav } }))} testID="report-net" />
         </View>
 
-        <Text style={styles.sectionTitle}>Accounts</Text>
+        <Text style={styles.sectionTitle}>खाते</Text>
         <View style={styles.tiles}>
           {accounts.map((a) => (
             <Pressable key={a.p} style={[styles.card, styles.account]} onPress={() => openPocket(a.p)} testID={`report-account-${a.p}`}>
@@ -356,7 +359,7 @@ export default function ReportScreen() {
           </Pressable>
         ) : null}
 
-        <Text style={styles.sectionTitle}>बाकी (Outstanding)</Text>
+        <Text style={styles.sectionTitle}>बाकी</Text>
         <View style={styles.tiles}>
           <Pressable style={[styles.card, styles.account]} onPress={() => openCustomers("due")} testID="report-owed">
             <Text style={styles.small}>{TERMS.getShort} · {owedToYou.length}</Text>
@@ -371,7 +374,7 @@ export default function ReportScreen() {
           <Pressable style={[styles.card, styles.rowBetween]} onPress={openVendors} testID="report-vendor-payable">
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexShrink: 1 }}>
               <MaterialIcon name="truck-outline" size={18} color={colors.info} />
-              <Text style={styles.cardTitle} numberOfLines={1}>Payable · {vendorsOwed.length}</Text>
+              <Text style={styles.cardTitle} numberOfLines={1}>Vendor को देने · {vendorsOwed.length}</Text>
             </View>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
               <Text style={[styles.rowValue, { color: semantic.due, fontSize: 16 }]}>{money(vendorPayable)}</Text>

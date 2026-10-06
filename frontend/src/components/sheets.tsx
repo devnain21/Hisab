@@ -158,7 +158,7 @@ export function MoreInfo({ open: forceOpen, hint = "विवरण, नोट",
 export function Chip({ label, active, onPress, icon, testID, tone }: { label: string; active: boolean; onPress: () => void; icon?: string; testID?: string; tone?: string }) {
   const bg = active ? tone ?? colors.brandPrimary : colors.surfaceSecondary;
   return (
-    <Pressable onPress={onPress} style={[styles.chip, active && { backgroundColor: bg, borderColor: bg }]} testID={testID}>
+    <Pressable hitSlop={{ top: 4, bottom: 4 }} onPress={onPress} style={[styles.chip, active && { backgroundColor: bg, borderColor: bg }]} testID={testID}>
       {icon ? <MaterialIcon name={icon as any} size={16} color={active ? colors.onBrandPrimary : colors.onSurface} /> : null}
       <Text style={[styles.chipText, active && { color: colors.onBrandPrimary }]} numberOfLines={1}>{label}</Text>
     </Pressable>
@@ -1037,7 +1037,7 @@ function VendorOutsource({
           {!v.on ? <Text style={styles.hint}>काम Vendor से वापस लिया गया — उनकी लागत नहीं जुड़ेगी</Text> : null}
         </>
       ) : (
-        <Pressable style={styles.vendorToggle} onPress={toggle} testID="toggle-job-vendor">
+        <Pressable hitSlop={{ top: 2, bottom: 2 }} style={styles.vendorToggle} onPress={toggle} testID="toggle-job-vendor">
           <MaterialIcon name="truck-outline" size={20} color={v.on ? colors.brandPrimary : colors.muted} />
           <Text style={[styles.vendorToggleText, v.on && { color: colors.onSurface }]}>{assign ? "वेंडर को दिया" : "वेंडर से कराया"}</Text>
           <MaterialIcon name={v.on ? "toggle-switch" : "toggle-switch-off-outline"} size={34} color={v.on ? colors.brandPrimary : colors.muted} />
@@ -1667,7 +1667,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
       <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
       {!isPersonal && parseAmount(govtFee) > 0 && !vendorJob.on ? (
-        <Pressable
+        <Pressable hitSlop={{ top: 4, bottom: 4 }}
           style={styles.feeToVendor}
           onPress={() => { vendorJob.fromFee(govtFee, feeMode); setGovtFee(""); }}
           testID="fee-to-vendor"
@@ -1678,7 +1678,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       ) : null}
       {!isPersonal ? <VendorOutsource v={vendorJob} amount={amt} fee={parseAmount(govtFee)} workDate={date} /> : null}
       {vendorRow ? (
-        <Pressable style={styles.feeToVendor} onPress={() => { onClose(); router.push(`/customer/${vendorRow.customerId}`); }} testID="work-open-vendor">
+        <Pressable hitSlop={{ top: 4, bottom: 4 }} style={styles.feeToVendor} onPress={() => { onClose(); router.push(`/customer/${vendorRow.customerId}`); }} testID="work-open-vendor">
           <MaterialIcon name="truck-outline" size={16} color={colors.brandPrimary} />
           <Text style={styles.feeToVendorText}>Vendor खाता</Text>
           <MaterialIcon name="chevron-right" size={16} color={colors.brandPrimary} />

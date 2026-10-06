@@ -401,6 +401,7 @@ export default function DayScreen() {
 
       {period !== "day" ? (
         <RangeView
+          period={period}
           from={range.from}
           to={range.to < today ? range.to : today}
           book={book}
@@ -454,7 +455,7 @@ export default function DayScreen() {
         </ScrollView>
       ) : kind === "drawer" ? (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}>
-          <View style={styles.dayHero}>
+          <Pressable style={styles.dayHero} onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "all", period: "day", date } })} accessibilityRole="button" testID="day-hero">
             <Text style={styles.dayHeroLabel}>{dateLabel} {labels.cash} + बैंक में बदलाव</Text>
             <Text style={styles.dayHeroValue}>{signedINR(dayNet)}</Text>
             <View style={styles.dayHeroRow}>
@@ -467,7 +468,7 @@ export default function DayScreen() {
                 <Text style={styles.dayHeroCellValue}>{formatINR(expectedCash + expectedBank)}</Text>
               </View>
             </View>
-          </View>
+          </Pressable>
 
           <View style={styles.quickGallaRow}>
             <Pressable style={styles.gallaActionBtn} onPress={() => setExpenseSheet(true)} testID="open-expense-btn">
@@ -659,7 +660,7 @@ export default function DayScreen() {
                     </Text>
                     {e.fee && e.fee > 0 ? (
                       <Text style={styles.feeInfoText}>
-                        फीस {formatINR(e.fee)} ({e.feeMode === "cash" ? "गल्ला" : "बैंक"}) · कमाई {formatINR(e.amount - e.fee)}
+                        फीस {formatINR(e.fee)} ({e.feeMode === "cash" ? "गल्ला" : "बैंक"}) · फीस के बाद {formatINR(e.amount - e.fee)}
                       </Text>
                     ) : null}
                   </View>
@@ -687,6 +688,7 @@ export default function DayScreen() {
 
 /** Week / month at a glance: totals, expense by category, and one line per day (tap to open that day). */
 function RangeView({
+  period,
   from,
   to,
   book,
@@ -696,6 +698,7 @@ function RangeView({
   cashLabel,
   onPickDay,
 }: {
+  period: Period;
   from: string;
   to: string;
   book: ReturnType<typeof useMoneyBook>;
@@ -748,11 +751,11 @@ function RangeView({
       <View style={styles.rangeGrid}>
         <RangeCell label={isPersonal ? "⬆ लोगों को" : "काम"} value={formatINR(data.work)} color={isPersonal ? colors.error : colors.onSurface} onPress={() => openMetric(isPersonal ? "given" : "work")} />
         <RangeCell label={isPersonal ? "⬇ लोगों से" : "⬇ ग्राहकों से"} value={formatINR(data.got)} color={colors.success} onPress={() => openMetric("collected")} />
-        {isPersonal ? <RangeCell label="सामान / सेवा" value={formatINR(data.goods)} color={colors.warning} /> : null}
+        {isPersonal ? <RangeCell label="सामान / सेवा" value={formatINR(data.goods)} color={colors.warning} onPress={() => openMetric("goods")} /> : null}
         <RangeCell label="खर्च" value={formatINR(data.exp)} color={colors.error} onPress={() => openMetric("expense")} />
         {isPersonal ? null : <RangeCell label="कमीशन" value={formatINR(data.commission)} color={colors.brandPrimary} onPress={() => openMetric("commission")} />}
-        {isPersonal ? null : <RangeCell label="कमाई" value={formatINR(data.profit)} color={data.profit < 0 ? colors.error : colors.brandPrimary} />}
-        <RangeCell label={`${cashLabel} / बैंक बदलाव`} value={`${signed(data.cashNet)} / ${signed(data.bankNet)}`} color={colors.onSurface} small />
+        {isPersonal ? null : <RangeCell label="कमाई" value={formatINR(data.profit)} color={data.profit < 0 ? colors.error : colors.brandPrimary} onPress={() => router.push({ pathname: "/report" as never, params: { period, date: from } })} />}
+        <RangeCell label={`${cashLabel} / बैंक बदलाव`} value={`${signed(data.cashNet)} / ${signed(data.bankNet)}`} color={colors.onSurface} small onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "all", period, date: from } })} />
       </View>
 
       {data.byTitle.length > 0 ? (

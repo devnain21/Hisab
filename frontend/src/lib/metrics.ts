@@ -15,11 +15,11 @@ type Book = { entries: Entry[]; customers: Customer[]; aeps: AepsTxn[]; expenses
  * work: work booked in any mode · fee: govt / portal fees on that work · vendor: every vendor order
  * (outsourced work and stock) · workVendor: only the vendor cost of finished work · commission: AEPS / service
  * commission (never the counter amount) · expense · collected: money received from customers / people ·
- * given: money lent out · paidOut: money paid for goods / services and repaid.
+ * given: money lent out · paidOut: money paid for goods / services and repaid · goods: goods / services bought.
  */
-export type MetricKind = "work" | "fee" | "vendor" | "workVendor" | "commission" | "expense" | "collected" | "given" | "paidOut";
+export type MetricKind = "work" | "fee" | "vendor" | "workVendor" | "commission" | "expense" | "collected" | "given" | "paidOut" | "goods";
 
-export const METRIC_KINDS: MetricKind[] = ["work", "fee", "vendor", "workVendor", "commission", "expense", "collected", "given", "paidOut"];
+export const METRIC_KINDS: MetricKind[] = ["work", "fee", "vendor", "workVendor", "commission", "expense", "collected", "given", "paidOut", "goods"];
 
 export type MetricRow =
   | { key: string; date: string; amount: number; source: "entry"; entry: Entry }
@@ -66,6 +66,8 @@ function entryAmount(e: Entry, kind: MetricKind, persona: Persona, byId: Map<str
       return e.type === "payment" ? e.amount : e.type === "work" ? e.paid ?? 0 : 0;
     case "given":
       return e.type === "given" && !isRepayment(e) ? e.amount : 0;
+    case "goods":
+      return e.type === "purchase" ? e.amount : 0;
     case "paidOut":
       return e.type === "purchase" ? e.paid ?? 0 : e.type === "given" && isRepayment(e) ? e.amount : 0;
     default:

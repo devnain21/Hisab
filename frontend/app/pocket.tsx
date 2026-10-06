@@ -215,12 +215,18 @@ export default function PocketScreen() {
           <FlowTile dir="in" value={`+${formatINR(data.ins)}`} onPress={() => setDir(dir === "in" ? "all" : "in")} testID="pocket-sum-in" style={dir === "in" ? styles.tileOn : undefined} />
           <FlowTile dir="out" value={`−${formatINR(data.outs)}`} onPress={() => setDir(dir === "out" ? "all" : "out")} testID="pocket-sum-out" style={dir === "out" ? styles.tileOn : undefined} />
         </View>
-        <FlowRow label={period === "all" ? "शुरू में" : `शुरू में · ${formatDateShort(range.from)}`} value={formatINR(data.opening)} color={data.opening < 0 ? colors.error : undefined} />
-        <NetRow value={roundMoney(data.ins - data.outs)} />
-        <View style={styles.totalRow}>
+        <FlowRow
+          label={period === "all" ? "शुरू में" : `शुरू में · ${formatDateShort(range.from)}`}
+          value={formatINR(data.opening)}
+          color={data.opening < 0 ? colors.error : undefined}
+          onPress={period !== "all" ? () => step(-1) : undefined}
+          testID="pocket-opening"
+        />
+        <NetRow value={roundMoney(data.ins - data.outs)} onPress={period === "day" ? () => router.push({ pathname: "/day", params: { type: "drawer", date } }) : undefined} testID="pocket-net" />
+        <Pressable style={styles.totalRow} onPress={to < today ? () => step(1) : undefined} disabled={to >= today} testID="pocket-closing">
           <Text style={styles.totalLabel}>{to === today ? "अब" : `अंत में · ${formatDateShort(to)}`}</Text>
           <Text style={[styles.totalValue, data.closing < 0 && { color: colors.error }]}>{formatINR(data.closing)}</Text>
-        </View>
+        </Pressable>
       </View>
 
       {inRows.length + outRows.length > 0 ? (
@@ -336,11 +342,16 @@ export default function PocketScreen() {
         }
         renderItem={({ item }) =>
           item.type === "day" ? (
-            <View style={styles.dayHead}>
+            <Pressable
+              style={styles.dayHead}
+              onPress={period !== "day" ? () => { setPeriod("day"); setDate(item.date); setShown(PAGE); } : undefined}
+              disabled={period === "day"}
+              testID={`pocket-day-${item.date}`}
+            >
               <Text style={styles.dayTitle}>{dayName(item.date)}</Text>
-              <Text style={[styles.dayNet, { color: item.net < 0 ? colors.error : colors.success }]}>{signed(item.net)}</Text>
+              <Text style={[styles.dayNet, { color: item.net < 0 ? colors.error : colors.info }]}>{signed(item.net)}</Text>
               <Text style={styles.dayClose}>बचा {formatINR(item.close)}</Text>
-            </View>
+            </Pressable>
           ) : (
             <TxnRow t={item.t} after={item.after} persona={persona} pocket={item.t.pocket} nameOf={nameOf} onPress={() => open(item.t)} />
           )

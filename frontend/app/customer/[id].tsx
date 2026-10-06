@@ -221,7 +221,7 @@ export default function CustomerDetail() {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 96 + insets.bottom }}>
-        <View style={styles.balanceCard}>
+        <Pressable style={styles.balanceCard} onPress={entries.length > 0 ? openStatement : undefined} disabled={entries.length === 0} accessibilityRole="button" accessibilityHint="पूरा हिसाब खोलें" testID="cust-balance-card">
           <Text style={styles.balanceLabel}>{balanceLabel}</Text>
           {due === 0 ? (
             <Text style={[styles.balanceValue, { color: colors.onSurface }]}>{TERMS.settled}</Text>
@@ -264,7 +264,8 @@ export default function CustomerDetail() {
             </Pressable>
           ) : null}
           {customer.notes ? <Text style={styles.notes}>{customer.notes}</Text> : null}
-        </View>
+          {entries.length > 0 ? <IconLabel icon="file-document-outline" color={colors.brandPrimary} label="पूरा हिसाब देखें" style={[styles.breakdown, { marginTop: spacing.sm }]} /> : null}
+        </Pressable>
 
         {openJobs.length > 0 && (
           <>
@@ -283,7 +284,7 @@ export default function CustomerDetail() {
                     <Text style={styles.sub}>{formatDate(j.dueDate)}{j.estimatedAmount > 0 ? ` · ${formatINR(j.estimatedAmount)}` : ""}{jobVendor.has(j.id) ? ` · Vendor: ${vendorName(jobVendor.get(j.id)!)}` : ""}</Text>
                     {j.notes ? <Text style={styles.sub}>{j.notes}</Text> : null}
                   </View>
-                  <Pressable style={styles.pillBtn} onPress={() => setCompleting(j)} testID={`cust-complete-${j.id}`}>
+                  <Pressable style={styles.pillBtn} hitSlop={8} onPress={() => setCompleting(j)} testID={`cust-complete-${j.id}`}>
                     <Text style={styles.pillBtnText}>पूरा</Text>
                   </Pressable>
                 </Pressable>
@@ -321,7 +322,7 @@ export default function CustomerDetail() {
               const active = filter === f;
               const tone = f === "due" ? colors.error : f === "all" ? colors.brandPrimary : colors.success;
               return (
-                <Pressable key={f} onPress={() => { setFilter(f); setShown(PAGE); }} style={[styles.filterChip, active && { backgroundColor: tone, borderColor: tone }]} testID={`ledger-filter-${f}`}>
+                <Pressable hitSlop={{ top: 6, bottom: 6 }} key={f} onPress={() => { setFilter(f); setShown(PAGE); }} style={[styles.filterChip, active && { backgroundColor: tone, borderColor: tone }]} testID={`ledger-filter-${f}`}>
                   <Text style={[styles.filterText, !active && f === "due" && { color: colors.error }, active && { color: "#fff" }]}>
                     {LEDGER_FILTER_LABEL[f]} ({counts[f]})
                   </Text>
@@ -561,7 +562,7 @@ function WorkCard({ entry, status, vendor, onPress, onSettle, onReceipt }: { ent
           {order && entry.dueDate ? (
             <IconLabel
               icon={delivered ? "check-circle-outline" : late ? "alert-circle-outline" : "truck-delivery-outline"}
-              color={delivered ? colors.success : late ? colors.error : colors.info}
+              color={delivered ? colors.success : late ? colors.warning : colors.info}
               label={delivered ? "डिलीवर हो गया" : `कब तक: ${entry.dueDate === todayISO() ? "आज" : formatDate(entry.dueDate)}${late ? " · देर" : ""}`}
               style={[styles.sub, { fontWeight: "700" }]}
             />

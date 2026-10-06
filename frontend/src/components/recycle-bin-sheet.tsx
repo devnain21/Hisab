@@ -149,7 +149,7 @@ export function RecycleBinModal({
 
           <View style={styles.segment}>
             {(["phone", "server"] as const).map((s) => (
-              <Pressable key={s} onPress={() => setSource(s)} style={[styles.segmentBtn, source === s && styles.segmentOn]} testID={`trash-source-${s}`}>
+              <Pressable hitSlop={{ top: 2, bottom: 2 }} key={s} onPress={() => setSource(s)} style={[styles.segmentBtn, source === s && styles.segmentOn]} testID={`trash-source-${s}`}>
                 <MaterialIcon name={s === "phone" ? "cellphone" : "cloud-outline"} size={16} color={source === s ? colors.onBrandPrimary : colors.onSurface} />
                 <Text style={[styles.segmentText, source === s && { color: colors.onBrandPrimary }]}>{s === "phone" ? "इस फ़ोन पर" : "सर्वर (30 दिन)"}</Text>
               </Pressable>

@@ -133,6 +133,13 @@ export default function AepsScreen() {
   }, [txns, inRangeDate]);
   const earned = roundMoney(commByDay.reduce((s, [, v]) => s + v.sum, 0));
   const [showDays, setShowDays] = useState(false);
+  const [showPending, setShowPending] = useState(true);
+  const openCommDay = (d: string) => {
+    setCustom({ from: d, to: d });
+    setRange("custom");
+    setLeg("comm");
+    setShowDays(false);
+  };
   const multiDay = range === "month" || range === "all" || (range === "custom" && custom.from !== custom.to);
   const signed = (n: number) => `${n < 0 ? "−" : "+"}${formatINR(Math.abs(n))}`;
   const { hideAmounts } = usePrefs();
@@ -166,9 +173,9 @@ export default function AepsScreen() {
         />
 
         <View style={styles.statStrip} testID="aeps-summary">
-          <Stat label="गल्ला" value={hide(signed(totals.cashNet))} sub={`⬇ ${hide(formatINR(totals.cashIn))} · ⬆ ${hide(formatINR(totals.cashOut))}`} tone={totals.cashNet < 0 ? semantic.due : semantic.received} active={leg === "cash"} onPress={() => toggleLeg("cash")} testID="aeps-stat-cash" />
+          <Stat label="गल्ला" value={hide(signed(totals.cashNet))} sub={`⬇ ${hide(formatINR(totals.cashIn))} · ⬆ ${hide(formatINR(totals.cashOut))}`} tone={totals.cashNet < 0 ? semantic.due : semantic.bank} active={leg === "cash"} onPress={() => toggleLeg("cash")} testID="aeps-stat-cash" />
           <View style={styles.statDivider} />
-          <Stat label="बैंक" value={hide(signed(totals.bankNet))} sub={`⬇ ${hide(formatINR(totals.bankIn))} · ⬆ ${hide(formatINR(totals.bankOut))}`} tone={totals.bankNet < 0 ? semantic.due : semantic.received} active={leg === "bank"} onPress={() => toggleLeg("bank")} testID="aeps-stat-bank" />
+          <Stat label="बैंक" value={hide(signed(totals.bankNet))} sub={`⬇ ${hide(formatINR(totals.bankIn))} · ⬆ ${hide(formatINR(totals.bankOut))}`} tone={totals.bankNet < 0 ? semantic.due : semantic.bank} active={leg === "bank"} onPress={() => toggleLeg("bank")} testID="aeps-stat-bank" />
           <View style={styles.statDivider} />
           <Stat label="कमीशन" value={hide(formatINR(earned))} sub={`मिला: गल्ला ${hide(formatINR(totals.commissionCash))} · बैंक ${hide(formatINR(totals.commissionBank))}`} tone={colors.brandSecondary} active={leg === "comm"} onPress={() => toggleLeg("comm")} testID="aeps-stat-comm" />
         </View>
@@ -181,23 +188,25 @@ export default function AepsScreen() {
             </Pressable>
             {showDays
               ? commByDay.map(([d, s]) => (
-                  <View key={d} style={styles.dayRow}>
+                  <Pressable key={d} style={styles.dayRow} onPress={() => openCommDay(d)} accessibilityRole="button" testID={`aeps-comm-day-${d}`}>
                     <Text style={styles.dayDate}>{d === today ? "आज" : formatDateShort(d)}</Text>
                     <Text style={styles.dayCount}>{s.count} एंट्री</Text>
                     <Text style={styles.dayComm}>{hide(formatINR(s.sum))}</Text>
-                  </View>
+                    <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
+                  </Pressable>
                 ))
               : null}
           </View>
         ) : null}
         {pending.length > 0 ? (
           <View style={styles.pendingBox} testID="aeps-pending">
-            <View style={styles.pendingHead}>
+            <Pressable style={styles.pendingHead} onPress={() => setShowPending((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: showPending }} testID="aeps-pending-head">
               <MaterialIcon name="clock-outline" size={18} color={colors.warning} />
               <Text style={styles.pendingTitle}>पेंडिंग ({pending.length})</Text>
-              <Text style={styles.pendingSum}>{formatINR(pending.reduce((s, t) => s + t.amount, 0))}</Text>
-            </View>
-            {pending.map((t) => {
+              <Text style={styles.pendingSum}>{hide(formatINR(pending.reduce((s, t) => s + t.amount, 0)))}</Text>
+              <MaterialIcon name={showPending ? "chevron-up" : "chevron-down"} size={18} color={colors.muted} />
+            </Pressable>
+            {(showPending ? pending : []).map((t) => {
               const due = t.dueDate || "";
               const late = due ? due < today : t.date < today;
               const dueText = due ? (due === today ? "आज भेजनी है" : due < today ? `${formatDateShort(due)} की थी` : `${formatDateShort(due)} को`) : "पेंडिंग";
@@ -205,7 +214,7 @@ export default function AepsScreen() {
                 <Pressable key={t.id} style={styles.pendingRow} onPress={() => router.push(`/aeps/${t.id}`)} testID={`aeps-pending-${t.id}`}>
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.name} numberOfLines={1}>{t.customerName} · {AEPS_META[t.type].hi} {formatINR(t.amount)}</Text>
-                    <Text style={[styles.meta, (late || due === today) && { color: colors.error, fontWeight: "700" }]} numberOfLines={1}>
+                    <Text style={[styles.meta, (late || due === today) && { color: colors.warning, fontWeight: "700" }]} numberOfLines={1}>
                       {dueText}{cashLegDate(t) ? " · कैश मिल गया" : cashOf(t) !== "none" ? " · कैश बाकी" : ""}
                     </Text>
                   </View>
@@ -221,7 +230,7 @@ export default function AepsScreen() {
 
         <View style={styles.searchWrap}>
           <MaterialIcon name="magnify" size={18} color={colors.muted} />
-          <TextInput style={styles.search} value={search} onChangeText={setSearch} placeholder="नाम, मोबाइल, खाता या Txn ID" placeholderTextColor={colors.muted} testID="aeps-search" />
+          <TextInput style={styles.search} value={search} onChangeText={setSearch} placeholder="नाम, मोबाइल, खाता या लेन-देन नंबर" placeholderTextColor={colors.muted} testID="aeps-search" />
           {search ? (
             <Pressable onPress={() => setSearch("")} hitSlop={8}><MaterialIcon name="close-circle" size={18} color={colors.muted} /></Pressable>
           ) : null}
@@ -315,7 +324,7 @@ function Stat({ label, value, sub, tone, active, onPress, testID }: { label: str
 function TypeChip({ label, icon, color, active, onPress }: { label: string; icon?: string; color?: string; active: boolean; onPress: () => void }) {
   const bg = color ?? colors.brandPrimary;
   return (
-    <Pressable onPress={onPress} style={[styles.chip, active && { backgroundColor: bg, borderColor: bg }]}>
+    <Pressable hitSlop={{ top: 6, bottom: 6 }} onPress={onPress} style={[styles.chip, active && { backgroundColor: bg, borderColor: bg }]}>
       {icon ? <MaterialIcon name={icon as any} size={14} color={active ? "#fff" : bg} /> : null}
       <Text style={[styles.chipText, active && { color: "#fff" }]}>{label}</Text>
     </Pressable>

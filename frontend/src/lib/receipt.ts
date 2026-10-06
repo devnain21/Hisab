@@ -5,7 +5,7 @@ import { File, Paths } from "expo-file-system";
 import { itemsOf, type Customer, type Entry, type AepsTxn, type Job } from "@/src/lib/data";
 import type { Ledger, WorkStatus } from "@/src/lib/records";
 import { formatDate, formatDateShort, formatINR, formatPhone, localDay, roundMoney, todayISO } from "@/src/lib/format";
-import { jobStart } from "@/src/lib/records";
+import { ADVANCE, jobStart } from "@/src/lib/records";
 import type { ShopProfile } from "@/src/context/AuthContext";
 import { AEPS_META, aepsBill, customerCharge, defaultVia, maskAccount, statusLabel, viaBill } from "@/src/lib/aeps";
 import { accountName } from "@/src/lib/persona";
@@ -152,11 +152,15 @@ export function receiptDoc(
   const dateText = () =>
     !dates ? "" : dates.done === dates.booked ? formatDate(dates.booked) : `${formatDate(dates.booked)} – ${dates.done ? formatDate(dates.done) : "प्रगति पर"}`;
   const dateRows = (): CardRow[] => (dates ? [{ icon: "cal", tint: DUE, label: "तारीख", value: dateText() }] : []);
+  /** Payment that came before its work: an एडवांस everywhere on the slip, not "भुगतान". */
+  let early = false;
 
   if (entry.type === "payment") {
     const job = entry.linkId ? ctx.jobs?.find((j) => j.id === entry.linkId && j.status !== "done") : undefined;
     const work = entry.linkId && !job ? ctx.entries?.find((e) => e.id === entry.linkId && e.type === "work") : undefined;
-    const early = !!job || (!!work && entry.date < work.date);
+    // Money taken with free work has no work row to link to; it is booked as a plain एडवांस.
+    const looseAdvance = !job && !work && entry.description === ADVANCE;
+    early = !!job || (!!work && entry.date < work.date) || looseAdvance;
     const label = `${early ? "एडवांस" : "भुगतान"} (${payMode(entry.mode)})`;
     if (job) {
       // Advance on a job not done yet: show it against the job's estimate.
@@ -181,8 +185,8 @@ export function receiptDoc(
       advanceBanner = { color: INFO, bg: "#E8F1FD", icon: "check", title: "एडवांस प्राप्त हुआ", sub: itemDue > 0 ? `काम पूरा होने पर बाकी ${formatINR(itemDue)}` : "धन्यवाद 🙏" };
     } else {
       lines.push({ label, value: formatINR(entry.amount), tone: "ok" });
-      const about = work?.description || (entry.description && entry.description !== "भुगतान" ? entry.description : "");
-      if (about) rows.push({ icon: "doc", tint: OK, label: work ? "किस काम का" : "विवरण", value: about, sub: entry.notes.trim() });
+      const about = work?.description || (looseAdvance ? entry.notes.trim() : entry.description && entry.description !== "भुगतान" ? entry.description : "");
+      if (about) rows.push({ icon: "doc", tint: OK, label: work ? "किस काम का" : "विवरण", value: about, sub: looseAdvance ? "" : entry.notes.trim() });
       rows.push({ icon: "paid", tint: OK, label: early ? "एडवांस राशि" : "भुगतान राशि", value: formatINR(entry.amount), tone: "ok" }, { icon: "card", tint: BLUE, label: "Payment Mode", value: payMode(entry.mode) });
       titleHi = early ? "एडवांस रसीद" : "भुगतान रसीद";
       titleEn = early ? "ADVANCE RECEIPT" : "PAYMENT RECEIPT";
@@ -224,14 +228,14 @@ export function receiptDoc(
   const many = items.length > 1;
   const upiDue = purchase || given ? 0 : itemDue > 0 ? itemDue : balance > 0 ? balance : 0;
 
-  // Work: the day it was done, and the day it was fully paid (left out while money is still due).
+  // Same dates as the PDF: when the work was given – finished, then the day it was fully paid (left out while money is still due).
   const slipDates = (): string[] => {
     if (entry.type === "work") {
       const paidOn = itemDue <= 0 && entry.amount > 0 ? status?.settledOn || entry.date : "";
-      return [`📅 Work Done : ${formatDate(entry.date)}`, ...(paidOn ? [`✅ Payment : ${formatDate(paidOn)}`] : [])];
+      return [`📅 तारीख : ${dateText()}`, ...(paidOn ? [`✅ भुगतान : ${formatDate(paidOn)}`] : [])];
     }
-    if (dates) return [`📅 Work Done : प्रगति पर`, `✅ Advance : ${formatDate(entry.date)}`];
-    if (entry.type === "payment") return [`✅ Payment : ${formatDate(entry.date)}`];
+    if (dates) return [`📅 तारीख : ${dateText()}`, `✅ एडवांस : ${formatDate(entry.date)}`];
+    if (entry.type === "payment") return [`✅ ${early ? "एडवांस" : "भुगतान"} : ${formatDate(entry.date)}`];
     return [`📅 ${formatDate(entry.date)}`];
   };
   const message = [

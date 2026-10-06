@@ -748,7 +748,7 @@ function ServiceLine({
       </View>
 
       <Pressable onPress={() => patch({ more: !line.more })} style={styles.moreBtn} testID="aeps-more">
-        <Text style={styles.moreText}>{line.more ? "कम दिखाएँ" : "Txn ID / RRN, नोट"}</Text>
+        <Text style={styles.moreText}>{line.more ? "कम दिखाएँ" : "लेन-देन नंबर (RRN), नोट"}</Text>
         <MaterialIcon name={line.more ? "chevron-up" : "chevron-down"} size={18} color={colors.brandPrimary} />
       </Pressable>
       {line.more ? (

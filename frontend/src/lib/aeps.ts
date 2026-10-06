@@ -98,6 +98,7 @@ export const VIA_FOR: Partial<Record<AepsType, ViaOption[]>> = {
 
 export const defaultVia = (type: AepsType): AepsVia => VIA_FOR[type]?.[0].id ?? "";
 export const viaBill = (via?: AepsVia) => (via ? VIA[via].bill : "");
+export const viaLabel = (via?: AepsVia) => (via ? VIA[via].label : "");
 
 /** Fields that apply to this service done this way. */
 export function fieldsFor(type: AepsType, via: AepsVia = ""): AepsField[] {

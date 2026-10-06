@@ -4,7 +4,7 @@
 import { queryClient } from "@/src/query-client";
 import { store } from "@/src/lib/store";
 import type { AepsTxn, Entry } from "@/src/lib/data";
-import { AEPS_META, aepsBill, aepsDue, cashLegDate, cashOf, viaBill } from "@/src/lib/aeps";
+import { AEPS_META, aepsBill, aepsDue, cashLegDate, cashOf, viaLabel } from "@/src/lib/aeps";
 import { todayISO } from "@/src/lib/format";
 import { settlementsFor } from "@/src/lib/records";
 import { trashGroup } from "@/src/lib/trash";
@@ -18,8 +18,8 @@ export function aepsDueEntry(aepsId: string, entries: Entry[] = entriesNow()): E
 }
 
 function dueTitle(t: AepsBody): string {
-  const via = viaBill(t.via);
-  return `${AEPS_META[t.type]?.label ?? "काउंटर सेवा"}${via ? ` · ${via}` : ""}`;
+  const via = viaLabel(t.via);
+  return `${AEPS_META[t.type]?.hiLabel ?? "काउंटर सेवा"}${via ? ` · ${via}` : ""}`;
 }
 
 /** Money the customer already paid on the khata against this row's due. */
@@ -37,7 +37,7 @@ export function syncAepsDue(id: string, t: AepsBody) {
   // Once the customer paid something on the khata the entry must keep covering it, or that payment turns into a false
   // advance; but only up to the bill: paid above a corrected (lower) bill really is the customer's advance.
   const due = stillTheirs ? Math.max(aepsDue(t), Math.min(paid, aepsBill(t).total)) : aepsDue(t);
-  const body = { type: "aeps" as const, date: t.doneDate || t.date, description: dueTitle(t), amount: due, notes: t.reference ? `Txn ${t.reference}` : "", linkId: id };
+  const body = { type: "aeps" as const, date: t.doneDate || t.date, description: dueTitle(t), amount: due, notes: t.reference ? `RRN ${t.reference}` : "", linkId: id };
   if (existing && paid > 0 && stillTheirs && due > 0) {
     store.updateEntry(existing.id, { ...body, amount: due });
     return;
@@ -96,7 +96,7 @@ function syncAepsJama(id: string, t: AepsBody, jama: Jama | null | undefined, cr
     description: `${AEPS_META[t.type]?.short ?? "काउंटर"} · ${JAMA_TEXT[jama.kind]}`,
     amount: jama.amount,
     mode: jama.mode,
-    notes: t.reference ? `Txn ${t.reference}` : "",
+    notes: t.reference ? `RRN ${t.reference}` : "",
     linkId: id,
   };
   if (existing && existing.customerId === t.customerId) store.updateEntry(existing.id, body);

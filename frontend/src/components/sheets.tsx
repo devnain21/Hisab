@@ -821,11 +821,11 @@ async function saveVendorAssign(v: ReturnType<typeof useVendorJob>, row: Entry |
   const handedOn = v.assignDay;
   let rowId = row?.id ?? "";
   if (row) {
-    store.updateEntry(row.id, { customerId: job.vendorId, date: handedOn, description: title, amount: job.cost, dueDate });
+    store.updateEntry(row.id, { customerId: job.vendorId, date: handedOn, description: title, amount: job.cost, dueDate, assignedOn: handedOn });
     // Picked the wrong vendor earlier: what was given really went to this one.
     if (job.vendorId !== row.customerId) settlementsFor(row, entries).forEach((p) => store.updateEntry(p.id, { customerId: job.vendorId }));
   } else {
-    rowId = store.createEntry({ customerId: job.vendorId, type: "purchase", date: handedOn, description: title, amount: job.cost, paid: 0, mode: job.mode, notes: "", refId: jobId, status: "ordered", dueDate }).id;
+    rowId = store.createEntry({ customerId: job.vendorId, type: "purchase", date: handedOn, description: title, amount: job.cost, paid: 0, mode: job.mode, notes: "", refId: jobId, status: "ordered", dueDate, assignedOn: handedOn }).id;
   }
   if (v.advanceNum > 0) {
     store.createEntry({ customerId: job.vendorId, type: "given", date: job.paidOn || handedOn, description: ADVANCE, amount: v.advanceNum, mode: job.mode, notes: `${title} के लिए`, linkId: rowId });
@@ -895,7 +895,7 @@ function useVendorJob(visible: boolean) {
     resetOrder();
     if (row && order) {
       setOrderVendor(row.customerId);
-      setAssignOn(row.date);
+      setAssignOn(row.assignedOn || row.date);
     }
   };
   /** An old fee that was really the vendor's charge: same money, same day, same pocket. */
@@ -2068,7 +2068,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       )}
       {!self && mode === "later" ? (
         <>
-          <DateField label="काम कब आया" value={takenOn} onChange={(d) => { setTakenOn(d); setPaidDate(d); }} testID="input-job-taken-date" />
+          <DateField label="काम कब आया" value={takenOn} onChange={(d) => { setTakenOn(d); setPaidDate(d); vendorJob.setAssignOn(d === todayISO() ? "" : d); }} testID="input-job-taken-date" />
           <Field label="एडवांस मिला (₹)">
             <TextInput style={inputStyle} value={paidNow} onChangeText={setPaidNow} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-paid" />
           </Field>

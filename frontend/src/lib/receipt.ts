@@ -279,6 +279,7 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
   const late = !delivered && !!entry.dueDate && entry.dueDate < todayISO();
   // An outsourced job (refId) is paid for work already done; an order paid up front is an advance.
   const job = !!entry.refId;
+  const assigned = entry.assignedOn && entry.assignedOn <= entry.date ? entry.assignedOn : entry.date;
   const heading = job ? "VOUCHER" : "WORK ORDER";
   const jobRef = job ? `JOB-${entry.refId!.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase()}` : "";
   const state = left <= 0 ? "पूरा भुगतान" : job || delivered ? "भुगतान बाकी" : late ? "तारीख निकल गई" : "ऑर्डर दिया";
@@ -310,7 +311,9 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
   const message = [
     ...messageHead(shop),
     `*${heading}* · ${no}${jobRef ? ` · ${jobRef}` : ""}`,
-    `📅 ${job ? "काम" : "तारीख"}: ${formatDate(entry.date)}${entry.dueDate ? ` · कब तक: *${formatDate(entry.dueDate)}*` : ""}`,
+    job && assigned !== entry.date
+      ? `📅 सौंपा: ${formatDate(assigned)} · पूरा: ${formatDate(entry.date)}`
+      : `📅 ${job ? "काम" : "तारीख"}: ${formatDate(assigned)}${entry.dueDate ? ` · कब तक: *${formatDate(entry.dueDate)}*` : ""}`,
     `Vendor: ${vendor.name}`,
     "",
     ...items.map((it, i) => `${many ? `${i + 1}. ` : ""}${it.title} — ${formatINR(it.amount)}`),
@@ -323,7 +326,7 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
   const rows: CardRow[] = [
     personRow(vendor, "Vendor Name"),
     { ...itemsRow(items, "कार्य विवरण", entry.notes), ...(jobRef ? { sub: [jobRef, entry.notes.trim()].filter(Boolean).join(" · ") } : {}) },
-    { icon: "cal", tint: DUE, label: "Work Assign Date", value: formatDate(entry.date) },
+    { icon: "cal", tint: DUE, label: "Work Assign Date", value: formatDate(assigned) },
   ];
   if (job) rows.push({ icon: "cal", tint: BLUE, label: "कार्य पूर्ण तिथि", value: formatDate(entry.date) });
   else if (!delivered && entry.dueDate) rows.push({ icon: "cal", tint: BLUE, label: "कब तक", value: formatDate(entry.dueDate), tone: late ? "due" : undefined });

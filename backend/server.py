@@ -235,6 +235,8 @@ class Entry(BaseModel):
     terms: str = ""
     # Vendor cost row of an outsourced job: id of the customer's work row it belongs to.
     refId: str = ""
+    # Day a pending job was handed to the vendor; the row's own date moves to the day the work was finished.
+    assignedOn: str = ""
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updatedAt: Optional[str] = None
 
@@ -262,6 +264,7 @@ class EntryCreate(BaseModel):
     status: VendorStatus = ""
     terms: Notes = ""
     refId: str = Field("", max_length=64)
+    assignedOn: OptISODate = ""
 
     @model_validator(mode="after")
     def validate_paid(self):
@@ -285,6 +288,7 @@ class EntryUpdate(BaseModel):
     status: Optional[VendorStatus] = None
     terms: Optional[Notes] = None
     refId: Optional[str] = Field(None, max_length=64)
+    assignedOn: Optional[OptISODate] = None
 
     @model_validator(mode="after")
     def validate_paid(self):

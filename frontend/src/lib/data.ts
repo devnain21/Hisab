@@ -53,6 +53,8 @@ export type Entry = {
   terms?: string;
   /** Vendor cost row of an outsourced job: id of the customer's work row it belongs to. */
   refId?: string;
+  /** Day a pending job was handed to the vendor (the row's date moves to the day the work was finished). */
+  assignedOn?: string;
   createdAt: string;
 };
 // customerId "" = the shopkeeper's own task (no customer, no money).

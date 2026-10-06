@@ -61,6 +61,9 @@ export function wakeBackend() {
 export async function serverIsUp() {
   if (!BASE) return false;
   try {
+    // /health also checks the database; a server deployed before it existed answers 404 there.
+    const res = await fetchWithTimeout(`${BASE}/api/health`, {}, 20_000);
+    if (res.status !== 404) return res.ok;
     return (await fetchWithTimeout(`${BASE}/api/`, {}, 20_000)).ok;
   } catch {
     return false;
@@ -86,6 +89,8 @@ export const api = {
   listArchive: (): Promise<{ coll: string; id: string; deletedAt: string; doc: Record<string, unknown> }[]> => req("/archive"),
   restoreArchive: (coll: string, id: string): Promise<{ ok: boolean; restored: number }> =>
     req("/archive/restore", { method: "POST", body: JSON.stringify({ coll, id }) }),
+  purgeArchive: (items: { coll: string; id: string }[]): Promise<{ ok: boolean; removed: number }> =>
+    req("/archive/purge", { method: "POST", body: JSON.stringify({ items }) }),
   getSettings: (): Promise<{ data: Record<string, unknown> | null; updatedAt: string }> => req("/settings"),
   putSettings: (b: { data: Record<string, unknown>; updatedAt: string }) => req("/settings", { method: "PUT", body: JSON.stringify(b) }),
   closeShop: () => req("/shop/close", { method: "POST" }),

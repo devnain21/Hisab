@@ -10,6 +10,7 @@ import { queryClient } from "@/src/query-client";
 import { formatDateShort, localDay } from "@/src/lib/format";
 import { confirmAction, showNotice } from "@/src/lib/confirm";
 import { usePersona } from "@/src/lib/persona";
+import { forgetSent } from "@/src/lib/store";
 
 const TRASH_COLLS: TrashColl[] = ["customers", "entries", "jobs", "aeps", "expenses", "moves"];
 const isLive = (coll: TrashColl, id: string) => (queryClient.getQueryData<{ id: string }[]>([coll]) ?? []).some((r) => r.id === id);
@@ -33,7 +34,7 @@ export function RecycleBinModal({
     getTrashList().then((list) => setItems(list.filter((t) => (trashPersona(t, list) ?? persona) === persona)));
   };
 
-  // The server keeps every delete for 180 days, also from other phones and from before this phone's bin.
+  // The server keeps every delete for 30 days, also from other phones and from before this phone's bin.
   const loadServer = async () => {
     setServerError(false);
     try {
@@ -80,6 +81,7 @@ export function RecycleBinModal({
     setBusy(item.id);
     try {
       await api.restoreArchive(item.coll, item.data.id);
+      forgetSent(item.coll, item.data.id);
       await Promise.all(TRASH_COLLS.map((c) => queryClient.invalidateQueries({ queryKey: [c] })));
       setServer((list) => (list ?? []).filter((t) => t.id !== item.id));
     } catch (e) {
@@ -91,10 +93,42 @@ export function RecycleBinModal({
     }
   };
 
+  const purgeServer = (list: TrashItem[], title: string, body: string) =>
+    confirmAction(title, body, "हमेशा के लिए हटाएँ", async () => {
+      setBusy(list.length === 1 ? list[0].id : "all");
+      try {
+        const keys = list.map((t) => ({ coll: t.coll, id: t.data.id }));
+        for (let i = 0; i < keys.length; i += 1000) await api.purgeArchive(keys.slice(i, i + 1000));
+        const gone = new Set(list.map((t) => t.id));
+        setServer((rows) => (rows ?? []).filter((t) => !gone.has(t.id)));
+      } catch {
+        showNotice("हटा नहीं पाए", "इंटरनेट / सर्वर से जुड़ नहीं पाए। थोड़ी देर बाद फिर कोशिश करें।");
+      } finally {
+        setBusy("");
+      }
+    });
+
+  const handleServerPurge = (item: TrashItem) =>
+    purgeServer(
+      [item],
+      "सर्वर से हमेशा के लिए हटाएँ?",
+      item.coll === "customers" ? "यह खाता और इसके साथ हटाई गई सारी एंट्री वापस नहीं आ सकेंगी।" : "यह रिकॉर्ड फिर कभी वापस नहीं आ सकेगा।",
+    );
+
+  const handleServerPurgeAll = () =>
+    purgeServer(server ?? [], "सर्वर से सब हटाएँ?", `${(server ?? []).length} रिकॉर्ड हमेशा के लिए मिट जाएँगे; फिर कभी वापस नहीं आ सकेंगे।`);
+
   const handleClear = () =>
-    confirmAction("कचरा पेटी खाली करें?", `${items.length} रिकॉर्ड हमेशा के लिए मिट जाएँगे।`, "खाली करें", async () => {
+    confirmAction("कचरा पेटी खाली करें?", `${items.length} रिकॉर्ड हमेशा के लिए मिट जाएँगे (सर्वर से भी)।`, "खाली करें", async () => {
+      const keys = items.flatMap((t) => [
+        { coll: t.coll, id: String(t.data.id) },
+        ...(t.group?.entries ?? []).map((e) => ({ coll: "entries", id: e.id })),
+        ...(t.group?.jobs ?? []).map((j) => ({ coll: "jobs", id: j.id })),
+      ]);
       await clearTrashItems(items.map((t) => t.id));
       load();
+      setServer(null);
+      for (let i = 0; i < keys.length; i += 1000) await api.purgeArchive(keys.slice(i, i + 1000)).catch(() => {});
     });
 
   return (
@@ -105,7 +139,7 @@ export function RecycleBinModal({
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={styles.title}>कचरा पेटी</Text>
               <Text style={styles.subtitle}>
-                {source === "phone" ? "हाल में हटाए गए आख़िरी 50 रिकॉर्ड (इसी फ़ोन पर)" : "पिछले 180 दिन में हटाया गया सब कुछ (किसी भी फ़ोन से)"}
+                {source === "phone" ? "हाल में हटाए गए आख़िरी 50 रिकॉर्ड (इसी फ़ोन पर)" : "पिछले 30 दिन में हटाया गया सब कुछ (किसी भी फ़ोन से); उसके बाद अपने-आप मिट जाता है"}
               </Text>
             </View>
             <Pressable onPress={onClose} hitSlop={12} accessibilityRole="button" accessibilityLabel="बंद करें" testID="trash-close">
@@ -117,7 +151,7 @@ export function RecycleBinModal({
             {(["phone", "server"] as const).map((s) => (
               <Pressable key={s} onPress={() => setSource(s)} style={[styles.segmentBtn, source === s && styles.segmentOn]} testID={`trash-source-${s}`}>
                 <MaterialIcon name={s === "phone" ? "cellphone" : "cloud-outline"} size={16} color={source === s ? colors.onBrandPrimary : colors.onSurface} />
-                <Text style={[styles.segmentText, source === s && { color: colors.onBrandPrimary }]}>{s === "phone" ? "इस फ़ोन पर" : "सर्वर (180 दिन)"}</Text>
+                <Text style={[styles.segmentText, source === s && { color: colors.onBrandPrimary }]}>{s === "phone" ? "इस फ़ोन पर" : "सर्वर (30 दिन)"}</Text>
               </Pressable>
             ))}
           </View>
@@ -139,12 +173,22 @@ export function RecycleBinModal({
                 <Text style={styles.emptyTitle}>सर्वर पर कुछ हटाया हुआ नहीं</Text>
               </View>
             ) : (
-              <FlatList
-                data={server}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={{ paddingBottom: spacing.xl + insets.bottom }}
-                renderItem={({ item }) => <TrashCard item={item} busy={busy === item.id} onRestore={() => void handleServerRestore(item)} />}
-              />
+              <>
+                <View style={styles.clearRow}>
+                  <Text style={styles.countText}>{(server ?? []).length} रिकॉर्ड सर्वर पर</Text>
+                  <Pressable onPress={handleServerPurgeAll} disabled={!!busy} hitSlop={10} style={styles.clearBtn} testID="trash-server-purge-all">
+                    {busy === "all" ? <ActivityIndicator size="small" color={colors.error} /> : <Text style={styles.clearBtnText}>सर्वर से सब हटाएँ</Text>}
+                  </Pressable>
+                </View>
+                <FlatList
+                  data={server}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={{ paddingBottom: spacing.xl + insets.bottom }}
+                  renderItem={({ item }) => (
+                    <TrashCard item={item} busy={busy === item.id || busy === "all"} onRestore={() => void handleServerRestore(item)} onPurge={() => handleServerPurge(item)} />
+                  )}
+                />
+              </>
             )
           ) : (
           <>
@@ -179,7 +223,7 @@ export function RecycleBinModal({
   );
 }
 
-function TrashCard({ item, busy, onRestore }: { item: TrashItem; busy?: boolean; onRestore: () => void }) {
+function TrashCard({ item, busy, onRestore, onPurge }: { item: TrashItem; busy?: boolean; onRestore: () => void; onPurge?: () => void }) {
   const label = describeTrash(item);
   const collBadge =
     item.coll === "customers"
@@ -209,6 +253,19 @@ function TrashCard({ item, busy, onRestore }: { item: TrashItem; busy?: boolean;
         {busy ? <ActivityIndicator size="small" color={colors.brandPrimary} /> : <MaterialIcon name="backup-restore" size={18} color={colors.brandPrimary} />}
         <Text style={styles.restoreText}>वापस लाएं</Text>
       </Pressable>
+      {onPurge ? (
+        <Pressable
+          style={styles.purgeBtn}
+          onPress={onPurge}
+          disabled={busy}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel="सर्वर से हमेशा के लिए हटाएँ"
+          testID={`trash-purge-${item.id}`}
+        >
+          <MaterialIcon name="delete-forever-outline" size={20} color={colors.error} />
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -308,6 +365,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.brandPrimary,
   },
+  purgeBtn: {
+    marginLeft: spacing.sm,
+    minWidth: 40,
+    minHeight: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.error,
+    backgroundColor: colors.surface,
+  },
+  clearBtn: { minHeight: 32, justifyContent: "center" },
   restoreText: {
     fontSize: 12,
     fontWeight: "600",

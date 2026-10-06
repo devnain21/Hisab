@@ -11,7 +11,8 @@ import {
 } from "firebase/auth";
 import { api, setTokenProvider } from "@/src/lib/api";
 import { getFirebaseAuth, getGoogleClientIds, isFirebaseConfigured } from "@/src/lib/firebase";
-import { clearOutbox, parkOutbox, setSyncEnabled, unparkOutbox } from "@/src/lib/store";
+import { clearOutbox, flush, parkOutbox, setSyncEnabled, unparkOutbox } from "@/src/lib/store";
+import { showNotice } from "@/src/lib/confirm";
 import { clearFileStore } from "@/src/lib/file-store";
 import { resetTrashMemory } from "@/src/lib/trash";
 import { resetRecentCustomers } from "@/src/lib/recent";
@@ -149,7 +150,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // A session can end without signOut() (expired / revoked); then another account's leftovers are still here.
       const owner = await AsyncStorage.getItem(OWNER_KEY).catch(() => null);
       if (owner && owner !== fbUser.uid) {
-        await parkOutbox(owner);
+        // Nobody can be asked here; the wipe still has to happen so they never go out under this account.
+        await parkOutbox(owner).catch(() => {});
         await parkSettings(owner);
         await wipeLocalData();
       }
@@ -220,13 +222,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     const uid = isFirebaseConfigured() ? getFirebaseAuth().currentUser?.uid : undefined;
-    stopSettingsSync();
-    void clearUdhaarReminders();
     // Changes not yet on the server would otherwise be lost; they come back when this account signs in again.
     if (uid) {
-      await parkOutbox(uid);
-      await parkSettings(uid);
+      try {
+        await parkOutbox(uid);
+      } catch {
+        showNotice("साइन आउट रोका गया", "जो बदलाव अभी सर्वर पर नहीं गए, वे फ़ोन में सुरक्षित नहीं हो पाए। फ़ोन की जगह (storage) देखें या इंटरनेट चालू करके सिंक होने दें, फिर साइन आउट करें।");
+        void flush();
+        return;
+      }
     }
+    stopSettingsSync();
+    void clearUdhaarReminders();
+    if (uid) await parkSettings(uid);
     try {
       await api.logout();
     } catch {}

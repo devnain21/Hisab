@@ -10,7 +10,7 @@ import type { AepsTxn, Customer, Entry, Job } from "@/src/lib/data";
 import type { Expense } from "@/src/lib/expenses";
 import type { Move } from "@/src/lib/wallet";
 import { bundleFor, captureTrash, putInTrash } from "@/src/lib/trash";
-import { fileStore } from "@/src/lib/file-store";
+import { fileStore, keepStore } from "@/src/lib/file-store";
 
 export type Coll = "customers" | "entries" | "jobs" | "aeps" | "expenses" | "moves";
 type Op =
@@ -24,6 +24,11 @@ const COLLS: Coll[] = ["customers", "entries", "jobs", "aeps", "expenses", "move
 const RETRY_MS = 15_000;
 
 let ops: Op[] = [];
+// Bumped when the queue is cleared or parked, so a send already in flight never removes a different change.
+let generation = 0;
+// Changes the server has just accepted: a list fetch that started before they landed must not hide them.
+const SENT_KEEP_MS = 70_000;
+let sent: { op: Op; version?: string; at: number }[] = [];
 let loadPromise: Promise<void> | null = null;
 let flushing = false;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -75,7 +80,23 @@ function applyOp<T extends { id: string; customerId?: string }>(coll: Coll, list
 // Server rows don't include queued changes yet, so re-apply them on every fetch.
 export async function withPending<T extends { id: string; customerId?: string }>(coll: Coll, rows: T[]): Promise<T[]> {
   await ensureLoaded();
-  return ops.reduce((acc, op) => applyOp(coll, acc, op), rows);
+  const cutoff = Date.now() - SENT_KEEP_MS;
+  sent = sent.filter((s) => s.at >= cutoff);
+  const recent = sent.reduce((acc, { op, version }) => {
+    if (op.kind !== "update") return applyOp(coll, acc, op);
+    if (op.coll !== coll) return acc;
+    // Only over a copy older than the one this edit saved.
+    return acc.map((x) => {
+      const at = (x as { updatedAt?: string }).updatedAt;
+      return x.id === op.itemId && version && (!at || at < version) ? { ...x, ...op.patch, updatedAt: version } : x;
+    });
+  }, rows);
+  return ops.reduce((acc, op) => applyOp(coll, acc, op), recent);
+}
+
+/** A row brought back from the server bin: an earlier delete of it no longer applies. */
+export function forgetSent(coll: Coll, id: string) {
+  sent = sent.filter(({ op }) => !(op.kind === "delete" && op.coll === coll && op.itemId === id));
 }
 
 const savedVersion = (coll: Coll, id: string): string | undefined =>
@@ -162,7 +183,9 @@ function describe(op: Op): string {
 
 function reject(op: Op, status: number | undefined) {
   const label = describe(op) + (status === 409 ? " (दूसरे फ़ोन / वेबसाइट पर बदल चुका)" : "");
-  rejected = [{ coll: op.coll, kind: op.kind, status, at: new Date().toISOString(), label, op }, ...rejected].slice(0, MAX_REJECTED);
+  // Only notes without data are trimmed; a change that can still be sent again is never dropped.
+  let plain = 0;
+  rejected = [{ coll: op.coll, kind: op.kind, status, at: new Date().toISOString(), label, op }, ...rejected].filter((r) => r.op || ++plain <= MAX_REJECTED);
   if (rejectedLoaded) AsyncStorage.setItem(REJECTED_KEY, JSON.stringify(rejected)).catch(() => {});
 }
 
@@ -250,15 +273,20 @@ export async function flush() {
     while (ops.length > 0) {
       if (!syncEnabled) return;
       const op = ops[0];
+      const gen = generation;
       try {
         const saved = (await send(op)) as { updatedAt?: string } | null;
+        if (gen !== generation) return;
         serverFails = 0;
         if (op.kind !== "delete" && saved?.updatedAt) adoptVersion(op, saved.updatedAt);
+        sent.push({ op, version: saved?.updatedAt, at: Date.now() });
       } catch (e) {
+        if (gen !== generation) return;
         const status = statusOf(e);
         // One change the server keeps crashing on must not hold back everything queued after it,
         // but while the whole server is down nothing is set aside.
-        const stuck = status !== undefined && status >= 500 && ++serverFails >= MAX_SERVER_FAILS && (await serverIsUp());
+        const stuck = status !== undefined && status >= 500 && status !== 503 && ++serverFails >= MAX_SERVER_FAILS && (await serverIsUp());
+        if (gen !== generation) return;
         if (isRetryable(e, op) && !stuck) {
           retryTimer = setTimeout(() => void flush(), RETRY_MS);
           return;
@@ -268,7 +296,9 @@ export async function flush() {
         if (!(op.kind === "delete" && status === 404)) reject(op, status);
       }
       touchedBy(op).forEach((c) => touched.add(c));
-      ops.shift();
+      // Parked changes may have been put in front meanwhile; remove exactly the one that was sent.
+      const at = ops.indexOf(op);
+      if (at >= 0) ops.splice(at, 1);
       persist();
       notify();
     }
@@ -285,7 +315,9 @@ export async function flush() {
 export async function clearOutbox() {
   // A load still in flight would otherwise bring the cleared changes back.
   await ensureLoaded();
+  generation++;
   ops = [];
+  sent = [];
   rejected = [];
   serverFails = 0;
   await AsyncStorage.removeItem(REJECTED_KEY).catch(() => {});
@@ -298,28 +330,60 @@ export async function clearOutbox() {
 // Outside the "hisab_" prefix so the sign-out wipe keeps it; only the same account gets it back.
 const PARKED_PREFIX = "parked_outbox_";
 
-/** Sign-out with unsynced changes: keep them aside for this account instead of throwing them away. */
+type Parked = { ops: Op[]; rejected: RejectedChange[] };
+
+// Older versions parked a bare list of changes in AsyncStorage.
+const readParked = (raw: string | null): Parked => {
+  const v = raw ? JSON.parse(raw) : null;
+  if (Array.isArray(v)) return { ops: v, rejected: [] };
+  return { ops: v?.ops ?? [], rejected: v?.rejected ?? [] };
+};
+
+async function loadParked(uid: string): Promise<Parked> {
+  const [file, legacy] = await Promise.all([keepStore.getItem(PARKED_PREFIX + uid), AsyncStorage.getItem(PARKED_PREFIX + uid).catch(() => null)]);
+  const a = readParked(file);
+  const b = readParked(legacy);
+  return { ops: [...b.ops, ...a.ops], rejected: [...a.rejected, ...b.rejected] };
+}
+
+/**
+ * Sign-out with unsynced or set-aside changes: keep them for this account instead of throwing them away.
+ * Throws when they could not be saved, so the caller does not wipe them.
+ */
 export async function parkOutbox(uid: string) {
   await ensureLoaded();
-  if (!uid || ops.length === 0) return;
+  const keepRejected = rejected.filter((r) => r.op);
+  if (!uid || (ops.length === 0 && keepRejected.length === 0)) return;
+  generation++;
+  const earlier = await loadParked(uid);
+  const value = JSON.stringify({ ops: [...earlier.ops, ...ops], rejected: [...keepRejected, ...earlier.rejected] });
   try {
-    const raw = await AsyncStorage.getItem(PARKED_PREFIX + uid);
-    const earlier: Op[] = raw ? JSON.parse(raw) : [];
-    await AsyncStorage.setItem(PARKED_PREFIX + uid, JSON.stringify([...earlier, ...ops]));
-  } catch {}
+    await keepStore.setItem(PARKED_PREFIX + uid, value);
+    if ((await keepStore.getItem(PARKED_PREFIX + uid)) !== value) throw new Error("parked copy mismatch");
+  } catch {
+    // Small queues still fit in AsyncStorage.
+    await AsyncStorage.setItem(PARKED_PREFIX + uid, value);
+    await keepStore.removeItem(PARKED_PREFIX + uid).catch(() => {});
+    return;
+  }
+  await AsyncStorage.removeItem(PARKED_PREFIX + uid).catch(() => {});
 }
 
 /** Same account signed in again: queue its parked changes ahead of anything new. */
 export async function unparkOutbox(uid: string) {
   if (!uid) return;
   try {
-    const raw = await AsyncStorage.getItem(PARKED_PREFIX + uid);
-    if (!raw) return;
+    const parked = await loadParked(uid);
+    if (parked.ops.length === 0 && parked.rejected.length === 0) return;
     await ensureLoaded();
-    const parked: Op[] = JSON.parse(raw);
-    ops = [...parked, ...ops];
-    await fileStore.setItem(KEY, JSON.stringify(ops));
-    await AsyncStorage.removeItem(PARKED_PREFIX + uid);
+    const next = [...parked.ops, ...ops];
+    await fileStore.setItem(KEY, JSON.stringify(next));
+    ops = next;
+    if (parked.rejected.length) {
+      rejected = [...rejected, ...parked.rejected];
+      await AsyncStorage.setItem(REJECTED_KEY, JSON.stringify(rejected));
+    }
+    await Promise.all([keepStore.removeItem(PARKED_PREFIX + uid), AsyncStorage.removeItem(PARKED_PREFIX + uid)]);
     for (const coll of COLLS) queryClient.invalidateQueries({ queryKey: [coll] });
     notify();
   } catch {}

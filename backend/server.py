@@ -1,5 +1,6 @@
-from fastapi import FastAPI, APIRouter, Header, HTTPException, Depends
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, APIRouter, Header, HTTPException, Depends, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+import asyncio
 from dotenv import load_dotenv
 from html import escape
 from urllib.parse import quote
@@ -92,6 +93,9 @@ OptISODate = Annotated[str, Field(pattern=r"^(\d{4}-\d{2}-\d{2})?$")]
 Name = Annotated[str, Field(max_length=120)]
 Short = Annotated[str, Field(max_length=300)]
 Notes = Annotated[str, Field(max_length=2000)]
+Id = Annotated[str, Field(max_length=64)]
+Tag = Annotated[str, Field(max_length=20)]
+Stamp = Annotated[str, Field(max_length=40)]
 
 
 class LoginRequest(BaseModel):
@@ -166,14 +170,14 @@ class Customer(BaseModel):
 
 
 class CustomerCreate(BaseModel):
-    id: Optional[str] = None
+    id: Optional[Id] = None
     # When the row was typed on the phone; offline rows can reach the server days later.
-    createdAt: Optional[str] = None
+    createdAt: Optional[Stamp] = None
     name: Name
     phone: str = Field("", max_length=20)
     address: Short = ""
     notes: Notes = ""
-    persona: Optional[str] = "business"
+    persona: Optional[Tag] = "business"
     # Udhaar ceiling; 0 = none. Left out by older app builds, which must not wipe it.
     creditLimit: Optional[Money] = None
     # Day to chase the udhaar (YYYY-MM-DD, "" = none); same rule for older builds.
@@ -245,20 +249,20 @@ VendorStatus = Literal["", "ordered", "delivered"]
 
 
 class EntryCreate(BaseModel):
-    id: Optional[str] = None
+    id: Optional[Id] = None
     # When the row was typed on the phone; offline rows can reach the server days later.
-    createdAt: Optional[str] = None
-    customerId: str
+    createdAt: Optional[Stamp] = None
+    customerId: Id
     type: EntryType
     date: ISODate
     description: Short
     amount: Money
     paid: Money = 0
-    mode: Optional[str] = "cash"
+    mode: Optional[Tag] = "cash"
     fee: Optional[Money] = 0
-    feeMode: Optional[str] = "online"
+    feeMode: Optional[Tag] = "online"
     notes: Notes = ""
-    linkId: str = ""
+    linkId: Id = ""
     items: Optional[List[EntryItem]] = Field(None, max_length=200)
     dueDate: OptISODate = ""
     status: VendorStatus = ""
@@ -277,11 +281,11 @@ class EntryUpdate(BaseModel):
     description: Short
     amount: Money
     paid: Optional[Money] = None
-    mode: Optional[str] = None
+    mode: Optional[Tag] = None
     fee: Optional[Money] = None
-    feeMode: Optional[str] = None
+    feeMode: Optional[Tag] = None
     notes: Notes = ""
-    linkId: Optional[str] = None
+    linkId: Optional[Id] = None
     items: Optional[List[EntryItem]] = Field(None, max_length=200)
     # Left out by older app builds, which must not wipe them.
     dueDate: Optional[OptISODate] = None
@@ -313,16 +317,16 @@ class Job(BaseModel):
 
 
 class JobCreate(BaseModel):
-    id: Optional[str] = None
+    id: Optional[Id] = None
     # When the row was typed on the phone; offline rows can reach the server days later.
-    createdAt: Optional[str] = None
-    customerId: str
+    createdAt: Optional[Stamp] = None
+    customerId: Id
     title: Short
     dueDate: OptISODate
     status: Literal["pending", "doing", "done"] = "pending"
     estimatedAmount: Money = 0
     notes: Notes = ""
-    entryId: str = ""
+    entryId: Id = ""
     persona: Optional[Literal["business", "personal"]] = "business"
     priority: Literal["", "high"] = ""
     time: str = Field("", max_length=5)
@@ -334,7 +338,7 @@ class JobUpdate(BaseModel):
     status: Optional[Literal["pending", "doing", "done"]] = None
     estimatedAmount: Optional[Money] = None
     notes: Optional[Notes] = None
-    entryId: Optional[str] = None
+    entryId: Optional[Id] = None
     priority: Optional[Literal["", "high"]] = None
     time: Optional[str] = Field(None, max_length=5)
 
@@ -345,24 +349,24 @@ AepsType = Literal["withdrawal", "cash", "deposit", "transfer", "upi", "balance"
 class AepsFields(BaseModel):
     type: AepsType
     date: ISODate
-    time: str = ""
+    time: Tag = ""
     customerName: str = Field(min_length=1, max_length=80)
     mobile: str = Field("", max_length=15)
     # UIDAI rules forbid keeping full Aadhaar numbers; only the last four digits are accepted.
     aadhaarLast4: str = Field("", pattern=r"^\d{0,4}$")
-    bankName: str = ""
+    bankName: Name = ""
     amount: Money = 0
     commission: Money = 0
     status: Literal["success", "pending", "failed"] = "success"
-    reference: str = ""
-    operator: str = ""
-    rechargeNumber: str = ""
-    billerName: str = ""
-    billAccount: str = ""
-    beneficiaryName: str = ""
-    accountNumber: str = ""
-    ifsc: str = ""
-    upiId: str = ""
+    reference: Name = ""
+    operator: Name = ""
+    rechargeNumber: Name = ""
+    billerName: Name = ""
+    billAccount: Name = ""
+    beneficiaryName: Name = ""
+    accountNumber: Name = ""
+    ifsc: Name = ""
+    upiId: Name = ""
     # Empty means the service decides. "other" stores which way the drawer moved.
     cash: Literal["", "in", "out", "none"] = ""
     # Where the commission landed: customer paid it in cash / online, or the AEPS app credited it.
@@ -375,7 +379,7 @@ class AepsFields(BaseModel):
     dueDate: OptISODate = ""
     notes: Notes = ""
     # Shop customer this service was done for.
-    customerId: str = ""
+    customerId: Id = ""
     # How it was done: AEPS (Aadhaar) / UPI / bank account / EMI.
     via: Literal["", "aeps", "upi", "bank", "emi"] = ""
     # Money the customer has handed over toward the amount, and how. None on older rows (= the full amount).
@@ -392,9 +396,9 @@ class AepsTxn(AepsFields):
 
 
 class AepsCreate(AepsFields):
-    id: Optional[str] = None
+    id: Optional[Id] = None
     # When the row was typed on the phone; offline rows can reach the server days later.
-    createdAt: Optional[str] = None
+    createdAt: Optional[Stamp] = None
 
 
 class ExpenseFields(BaseModel):
@@ -413,8 +417,8 @@ class Expense(ExpenseFields):
 
 
 class ExpenseCreate(ExpenseFields):
-    id: Optional[str] = None
-    createdAt: Optional[str] = None
+    id: Optional[Id] = None
+    createdAt: Optional[Stamp] = None
 
 
 AccountKey = Literal["", "business:cash", "business:bank", "personal:cash", "personal:bank"]
@@ -436,8 +440,8 @@ class MoneyMove(MoneyMoveFields):
 
 
 class MoneyMoveCreate(MoneyMoveFields):
-    id: Optional[str] = None
-    createdAt: Optional[str] = None
+    id: Optional[Id] = None
+    createdAt: Optional[Stamp] = None
 
 
 # --- Auth Helpers ---
@@ -534,10 +538,26 @@ def _rows(model, rows: list) -> list:
     return out
 
 
-def _check_base(existing: dict, base: Optional[str]):
-    """The phone says which copy it edited; a newer copy saved elsewhere since then is not overwritten."""
+def _same(a, b) -> bool:
+    return a == b or (a in (None, "") and b in (None, ""))
+
+
+async def _save_update(coll: str, model, existing: dict, patch: dict, base: Optional[str], user: dict):
+    """
+    The phone says which copy it edited (`base`); a newer copy saved elsewhere since then is not overwritten.
+    A resend of an edit that already went through (its answer was lost) finds the row as it wanted and is accepted.
+    The write itself only lands on the copy that was checked, so two edits at once can't both win.
+    """
     if base and existing.get("updatedAt") and existing["updatedAt"] != base:
+        if all(_same(existing.get(k), v) for k, v in patch.items()):
+            return _rows(model, [existing])[0]
         raise HTTPException(status_code=409, detail="Changed on another device")
+    patch = {**patch, "updatedAt": _now()}
+    res = await db[coll].update_one({"id": existing["id"], "user_id": user["user_id"], "updatedAt": existing.get("updatedAt")}, {"$set": patch})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Changed on another device")
+    await _log_change(coll, existing, patch, user)
+    return _rows(model, [{**existing, **patch}])[0]
 
 
 BaseHeader = Header(None, alias="X-Base-Updated-At")
@@ -563,12 +583,16 @@ async def _log_change(coll: str, existing: dict, patch: dict, user: dict):
 
 
 # Offline clients generate the id and may resend the same create after a dropped response.
-async def _create_idempotent(collection, model, payload: BaseModel, user: dict):
+async def _create_idempotent(collection, model, payload: BaseModel, user: dict, needs_customer: bool = False):
     data = payload.dict(exclude_none=True)
     if data.get("id"):
         existing = await collection.find_one({"id": data["id"], "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
         if existing:
             return _rows(model, [existing])[0]
+    # A row for a khata deleted meanwhile (e.g. on another phone) would hang on no one and never show.
+    if needs_customer and data.get("customerId"):
+        if not await db.customers.find_one({"id": data["customerId"], "user_id": user["user_id"]}, {"_id": 1}):
+            raise HTTPException(422, "Customer not found")
     obj = model(**data)
     doc = obj.dict()
     doc["updatedAt"] = _now()
@@ -587,13 +611,14 @@ async def _create_idempotent(collection, model, payload: BaseModel, user: dict):
 
 
 # Deleted rows are kept for a while so a wrong delete (or a cascade) can be recovered.
-async def _archive_and_delete(coll_name: str, query: dict, user: dict, session=None):
+async def _archive_and_delete(coll_name: str, query: dict, user: dict, session=None, now: Optional[datetime] = None):
+    """`now`: one stamp for every part of a single delete (a customer with its entries), so restore finds them together."""
     collection = db[coll_name]
     q = {**query, "user_id": user["user_id"]}
     docs = await collection.find(q, {"_id": 0}, session=session).to_list(None)
     if not docs:
         return
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     await db.deleted_items.insert_many(
         [{"user_id": user["user_id"], "coll": coll_name, "id": d.get("id", ""), "deletedAt": now, "doc": d} for d in docs],
         session=session,
@@ -686,17 +711,18 @@ async def close_shop(user: dict = Depends(get_current_user)):
     patch = {"shop_name": "", "shop_gst": "", "persona": "personal"}
 
     async def work(s):
+        now = datetime.now(timezone.utc)
         shop_customers = await db.customers.find({"user_id": uid, "persona": {"$ne": "personal"}}, {"_id": 0, "id": 1}, session=s).to_list(None)
         ids = [c["id"] for c in shop_customers]
         if ids:
-            await _archive_and_delete("entries", {"customerId": {"$in": ids}}, user, s)
-            await _archive_and_delete("jobs", {"customerId": {"$in": ids}}, user, s)
-        await _archive_and_delete("customers", {"persona": {"$ne": "personal"}}, user, s)
-        await _archive_and_delete("jobs", {"customerId": "", "persona": {"$ne": "personal"}}, user, s)
-        await _archive_and_delete("aeps", {}, user, s)
-        await _archive_and_delete("expenses", {"persona": {"$ne": "personal"}}, user, s)
+            await _archive_and_delete("entries", {"customerId": {"$in": ids}}, user, s, now)
+            await _archive_and_delete("jobs", {"customerId": {"$in": ids}}, user, s, now)
+        await _archive_and_delete("customers", {"persona": {"$ne": "personal"}}, user, s, now)
+        await _archive_and_delete("jobs", {"customerId": "", "persona": {"$ne": "personal"}}, user, s, now)
+        await _archive_and_delete("aeps", {}, user, s, now)
+        await _archive_and_delete("expenses", {"persona": {"$ne": "personal"}}, user, s, now)
         personal = re.compile(r"^personal:")
-        await _archive_and_delete("moves", {"src": {"$not": personal}, "dst": {"$not": personal}}, user, s)
+        await _archive_and_delete("moves", {"src": {"$not": personal}, "dst": {"$not": personal}}, user, s, now)
         await db.users.update_one({"user_id": uid}, {"$set": patch}, session=s)
 
     await _atomic(work)
@@ -705,11 +731,12 @@ async def close_shop(user: dict = Depends(get_current_user)):
 
 
 ARCHIVE_COLLS = ("customers", "entries", "jobs", "aeps", "expenses", "moves")
+ARCHIVE_DAYS = 30
 
 
 @api_router.get("/archive")
 async def list_archive(user: dict = Depends(get_current_user), limit: int = 300):
-    """Rows deleted in the last 180 days, newest first (duplicate clean-ups left out)."""
+    """Rows deleted in the last ARCHIVE_DAYS days, newest first (duplicate clean-ups left out)."""
     limit = max(1, min(limit, 1000))
     cur = db.deleted_items.find(
         {"user_id": user["user_id"], "coll": {"$in": list(ARCHIVE_COLLS)}, "reason": {"$exists": False}},
@@ -753,8 +780,15 @@ async def restore_archive(payload: RestoreIn, user: dict = Depends(get_current_u
     group = [item]
     overrides: dict = {}
     if payload.coll == "customers":
+        # Same stamp since the delete shares one; older deletes stamped each part moments after the customer.
         rows = await db.deleted_items.find(
-            {"user_id": uid, "coll": {"$in": ["entries", "jobs"]}, "deletedAt": item["deletedAt"], "doc.customerId": payload.id}
+            {
+                "user_id": uid,
+                "coll": {"$in": ["entries", "jobs"]},
+                "doc.customerId": payload.id,
+                "reason": {"$exists": False},
+                "deletedAt": {"$gte": item["deletedAt"], "$lte": item["deletedAt"] + timedelta(minutes=2)},
+            }
         ).to_list(None)
         for g in rows:
             d = g.get("doc") or {}
@@ -822,6 +856,35 @@ async def restore_archive(payload: RestoreIn, user: dict = Depends(get_current_u
     return {"ok": True, "restored": restored}
 
 
+class PurgeIn(BaseModel):
+    """Archived rows to remove; a customer takes the entries and jobs deleted along with it."""
+    items: List[RestoreIn] = Field(min_length=1, max_length=1000)
+
+
+@api_router.post("/archive/purge")
+async def purge_archive(payload: PurgeIn, user: dict = Depends(get_current_user)):
+    """Removes deleted rows from the server for good; they can no longer be restored."""
+    uid = user["user_id"]
+    removed = 0
+    for want in payload.items:
+        items = await db.deleted_items.find({"user_id": uid, "coll": want.coll, "id": want.id, "reason": {"$exists": False}}).to_list(None)
+        for item in items:
+            if want.coll == "customers":
+                res = await db.deleted_items.delete_many(
+                    {
+                        "user_id": uid,
+                        "coll": {"$in": ["entries", "jobs"]},
+                        "doc.customerId": want.id,
+                        "reason": {"$exists": False},
+                        "deletedAt": {"$gte": item["deletedAt"], "$lte": item["deletedAt"] + timedelta(minutes=2)},
+                    }
+                )
+                removed += res.deleted_count
+            await db.deleted_items.delete_one({"_id": item["_id"]})
+            removed += 1
+    return {"ok": True, "removed": removed}
+
+
 class SettingsIn(BaseModel):
     data: dict
     updatedAt: str = Field(min_length=10, max_length=40)
@@ -883,23 +946,20 @@ async def update_customer(customer_id: str, payload: CustomerCreate, user: dict 
     existing = await db.customers.find_one({"id": customer_id, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not existing:
         raise HTTPException(404, "Not found")
-    _check_base(existing, base)
     patch = payload.dict(exclude={"id", "createdAt"})
     for key in ("creditLimit", "remindOn", "role"):
         if patch.get(key) is None:
             patch.pop(key, None)
-    patch["updatedAt"] = _now()
-    await db.customers.update_one({"id": customer_id, "user_id": user["user_id"]}, {"$set": patch})
-    await _log_change("customers", existing, patch, user)
-    return _rows(Customer, [{**existing, **patch}])[0]
+    return await _save_update("customers", Customer, existing, patch, base, user)
 
 
 @api_router.delete("/customers/{customer_id}")
 async def delete_customer(customer_id: str, user: dict = Depends(get_current_user)):
     async def work(s):
-        await _archive_and_delete("customers", {"id": customer_id}, user, s)
-        await _archive_and_delete("entries", {"customerId": customer_id}, user, s)
-        await _archive_and_delete("jobs", {"customerId": customer_id}, user, s)
+        now = datetime.now(timezone.utc)
+        await _archive_and_delete("customers", {"id": customer_id}, user, s, now)
+        await _archive_and_delete("entries", {"customerId": customer_id}, user, s, now)
+        await _archive_and_delete("jobs", {"customerId": customer_id}, user, s, now)
         # Counter rows carry their own galla / bank movement, so they stay; only the link goes.
         await db.aeps.update_many(
             {"customerId": customer_id, "user_id": user["user_id"]}, {"$set": {"customerId": "", "updatedAt": _now()}}, session=s
@@ -918,7 +978,7 @@ async def list_entries(user: dict = Depends(get_current_user)):
 
 @api_router.post("/entries", response_model=Entry)
 async def create_entry(payload: EntryCreate, user: dict = Depends(get_current_user)):
-    return await _create_idempotent(db.entries, Entry, payload, user)
+    return await _create_idempotent(db.entries, Entry, payload, user, needs_customer=True)
 
 
 @api_router.put("/entries/{entry_id}", response_model=Entry)
@@ -926,7 +986,9 @@ async def update_entry(entry_id: str, payload: EntryUpdate, user: dict = Depends
     existing = await db.entries.find_one({"id": entry_id, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not existing:
         raise HTTPException(404, "Not found")
-    _check_base(existing, base)
+    # A payment turned into work (or back) would silently flip the khata balance; the app never changes a row's type.
+    if existing.get("type") and payload.type != existing["type"]:
+        raise HTTPException(422, "Entry type cannot change")
     # Free work stays bookable when the shop paid a fee or a vendor for it.
     free_work = payload.amount == 0 and payload.type == "work"
     if payload.amount < 0 or (payload.amount == 0 and not free_work):
@@ -936,10 +998,7 @@ async def update_entry(entry_id: str, payload: EntryUpdate, user: dict = Depends
     if paid > payload.amount:
         raise HTTPException(422, "paid cannot exceed amount")
     patch["paid"] = paid
-    patch["updatedAt"] = _now()
-    await db.entries.update_one({"id": entry_id, "user_id": user["user_id"]}, {"$set": patch})
-    await _log_change("entries", existing, patch, user)
-    return _rows(Entry, [{**existing, **patch}])[0]
+    return await _save_update("entries", Entry, existing, patch, base, user)
 
 
 @api_router.delete("/entries/{entry_id}")
@@ -957,7 +1016,7 @@ async def list_jobs(user: dict = Depends(get_current_user)):
 
 @api_router.post("/jobs", response_model=Job)
 async def create_job(payload: JobCreate, user: dict = Depends(get_current_user)):
-    return await _create_idempotent(db.jobs, Job, payload, user)
+    return await _create_idempotent(db.jobs, Job, payload, user, needs_customer=True)
 
 
 @api_router.put("/jobs/{job_id}", response_model=Job)
@@ -966,12 +1025,9 @@ async def update_job(job_id: str, payload: JobUpdate, user: dict = Depends(get_c
     if not existing:
         raise HTTPException(404, "Not found")
     patch = {k: v for k, v in payload.dict().items() if v is not None}
-    if patch:
-        _check_base(existing, base)
-        patch["updatedAt"] = _now()
-        await db.jobs.update_one({"id": job_id, "user_id": user["user_id"]}, {"$set": patch})
-        await _log_change("jobs", existing, patch, user)
-    return _rows(Job, [{**existing, **patch}])[0]
+    if not patch:
+        return _rows(Job, [existing])[0]
+    return await _save_update("jobs", Job, existing, patch, base, user)
 
 
 @api_router.delete("/jobs/{job_id}")
@@ -997,12 +1053,7 @@ async def update_aeps(txn_id: str, payload: AepsFields, user: dict = Depends(get
     existing = await db.aeps.find_one({"id": txn_id, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not existing:
         raise HTTPException(404, "Not found")
-    _check_base(existing, base)
-    patch = payload.dict()
-    patch["updatedAt"] = _now()
-    await db.aeps.update_one({"id": txn_id, "user_id": user["user_id"]}, {"$set": patch})
-    await _log_change("aeps", existing, patch, user)
-    return _rows(AepsTxn, [{**existing, **patch}])[0]
+    return await _save_update("aeps", AepsTxn, existing, payload.dict(), base, user)
 
 
 @api_router.delete("/aeps/{txn_id}")
@@ -1028,12 +1079,7 @@ async def update_expense(expense_id: str, payload: ExpenseFields, user: dict = D
     existing = await db.expenses.find_one({"id": expense_id, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not existing:
         raise HTTPException(404, "Not found")
-    _check_base(existing, base)
-    patch = payload.dict()
-    patch["updatedAt"] = _now()
-    await db.expenses.update_one({"id": expense_id, "user_id": user["user_id"]}, {"$set": patch})
-    await _log_change("expenses", existing, patch, user)
-    return _rows(Expense, [{**existing, **patch}])[0]
+    return await _save_update("expenses", Expense, existing, payload.dict(), base, user)
 
 
 @api_router.delete("/expenses/{expense_id}")
@@ -1058,12 +1104,7 @@ async def update_move(move_id: str, payload: MoneyMoveFields, user: dict = Depen
     existing = await db.moves.find_one({"id": move_id, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not existing:
         raise HTTPException(404, "Not found")
-    _check_base(existing, base)
-    patch = payload.dict()
-    patch["updatedAt"] = _now()
-    await db.moves.update_one({"id": move_id, "user_id": user["user_id"]}, {"$set": patch})
-    await _log_change("moves", existing, patch, user)
-    return _rows(MoneyMove, [{**existing, **patch}])[0]
+    return await _save_update("moves", MoneyMove, existing, payload.dict(), base, user)
 
 
 @api_router.delete("/moves/{move_id}")
@@ -1206,7 +1247,28 @@ async def root():
     return {"message": "Nain Hisab API"}
 
 
+@api_router.get("/health")
+async def health():
+    """Up only when the database answers too; the app uses this to tell a bad change from a server outage."""
+    try:
+        await asyncio.wait_for(db.command("ping"), timeout=5)
+    except Exception:
+        return JSONResponse({"ok": False}, status_code=503)
+    return {"ok": True}
+
+
 app.include_router(api_router)
+
+# Settings (with the slip logo) are the largest body, well under this; anything bigger is refused unread.
+MAX_BODY_BYTES = 2 * 1024 * 1024
+
+
+@app.middleware("http")
+async def limit_body(request: Request, call_next):
+    size = request.headers.get("content-length")
+    if size is not None and (not size.isdigit() or int(size) > MAX_BODY_BYTES):
+        return JSONResponse({"detail": "Request too large"}, status_code=413)
+    return await call_next(request)
 
 # Auth is a bearer token, never a cookie, so credentials mode is off (and "*" stays safe).
 app.add_middleware(
@@ -1232,12 +1294,24 @@ async def startup():
     await db.jobs.create_index([("user_id", 1), ("status", 1), ("dueDate", 1)])
     await db.aeps.create_index([("user_id", 1), ("date", -1)])
     await db.deleted_items.create_index([("user_id", 1), ("coll", 1), ("id", 1)])
-    await db.deleted_items.create_index("deletedAt", expireAfterSeconds=60 * 60 * 24 * 180)
+    await _archive_ttl()
     await db.settings.create_index("user_id", unique=True)
     await db.edit_history.create_index([("user_id", 1), ("coll", 1), ("id", 1), ("at", -1)])
     await db.ledger_links.create_index("token", unique=True)
     await db.ledger_links.create_index([("user_id", 1), ("customerId", 1)])
     await _repair_null_created_at()
+
+
+async def _archive_ttl():
+    """Deleted rows are kept ARCHIVE_DAYS; an index made with an older period is changed in place."""
+    seconds = 60 * 60 * 24 * ARCHIVE_DAYS
+    try:
+        await db.deleted_items.create_index("deletedAt", expireAfterSeconds=seconds)
+    except Exception:
+        try:
+            await db.command("collMod", "deleted_items", index={"keyPattern": {"deletedAt": 1}, "expireAfterSeconds": seconds})
+        except Exception:
+            logger.exception("Archive retention update failed")
 
 
 async def _unique_row_ids(name: str):

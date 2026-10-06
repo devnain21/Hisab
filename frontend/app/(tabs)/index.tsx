@@ -7,16 +7,16 @@ import { useFocusEffect, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, semantic, type, elevation } from "@/src/theme";
-import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, isRepayment, type Entry, type Job } from "@/src/lib/data";
+import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, isVendor, type Entry, type Job } from "@/src/lib/data";
 import { buildAllLedgers, workForJob } from "@/src/lib/records";
 import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import * as Updates from "expo-updates";
 import { formatDateShort, formatINR, formatPhone, formatWeekdayDate, todayISO } from "@/src/lib/format";
-import { AddEntrySheet, AddJobSheet, EditRecordSheet } from "@/src/components/sheets";
+import { AddEntrySheet, AddJobSheet, EditRecordSheet, SettleSheet, SheetShell } from "@/src/components/sheets";
 import { useAuth } from "@/src/context/AuthContext";
-import { clearRejected, flush, rejectedChanges, retryRejected, retryableRejectedCount, store, usePendingCount, useRejectedCount } from "@/src/lib/store";
-import { cashTotals, computeFlows, pocketNet, useMoneyBook } from "@/src/lib/wallet";
+import { clearRejected, flush, rejectedChanges, retryRejected, retryableRejectedCount, usePendingCount, useRejectedCount } from "@/src/lib/store";
+import { cashTotals, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
 import { FlowTile, NetRow } from "@/src/components/money-flow";
 import { useCounterMode } from "@/src/lib/counter";
 import { accountName, usePersona } from "@/src/lib/persona";
@@ -24,11 +24,19 @@ import { TERMS, balanceTerm } from "@/src/lib/terms";
 import { HIDDEN, savePrefs, usePrefs } from "@/src/lib/prefs";
 import { useRecentCustomerIds } from "@/src/lib/recent";
 import { TaskSheet } from "@/src/components/task-sheet";
-import { TaskRow } from "@/src/components/task-row";
-import { compareTasks, taskGroup, usePersonalTasks } from "@/src/lib/tasks";
+import { taskGroup, usePersonalTasks } from "@/src/lib/tasks";
 import { AddExpenseSheet } from "@/src/components/expense-sheet";
-import { BudgetCard } from "@/src/components/budget-card";
+import { BudgetTile } from "@/src/components/budget-card";
+import { ActivityRow, activityFeed, type Activity } from "@/src/components/activity-feed";
+import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet";
+import type { Expense } from "@/src/lib/expenses";
+/** Switching shop / personal remounts Home, so no search text, open sheet or filter carries over. */
 export default function Home() {
+  const { persona } = usePersona();
+  return <HomeBody key={persona} />;
+}
+
+function HomeBody() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const customersQ = useCustomers();
@@ -42,6 +50,13 @@ export default function Home() {
   const [taskSheet, setTaskSheet] = useState<{ initial?: Job } | null>(null);
   const [expenseSheet, setExpenseSheet] = useState(false);
   const [shareDoc, setShareDoc] = useState<ShareDoc | null>(null);
+  const [moveSheet, setMoveSheet] = useState<MoveKind | null>(null);
+  const [editEntry, setEditEntry] = useState<Entry | null>(null);
+  const [editExpense, setEditExpense] = useState<Expense | null>(null);
+  const [editMove, setEditMove] = useState<Move | null>(null);
+  const [vendorMenu, setVendorMenu] = useState(false);
+  const [vendorOrder, setVendorOrder] = useState(false);
+  const [settling, setSettling] = useState<Entry | null>(null);
   const { user } = useAuth();
   const { isUpdatePending } = Updates.useUpdates();
   const pending = usePendingCount();
@@ -91,17 +106,6 @@ export default function Home() {
     () => (allJobs ?? []).filter((j) => (j.customerId ? personaCustIds.has(j.customerId) : !isPersonal && !isPersonalTask(j))),
     [allJobs, personaCustIds, isPersonal],
   );
-  const recentTxns = useMemo(
-    () =>
-      isPersonal
-        ? entries
-            .filter((e) => personaCustIds.has(e.customerId) && (e.type === "payment" || e.type === "given" || e.type === "purchase"))
-            .sort((a, b) => (a.date !== b.date ? b.date.localeCompare(a.date) : b.createdAt.localeCompare(a.createdAt)))
-            .slice(0, 5)
-        : [],
-    [entries, personaCustIds, isPersonal],
-  );
-
   const recentCustomers = useMemo(() => {
     return recentIds
       .map((id) => customers.find((c) => c.id === id))
@@ -109,6 +113,17 @@ export default function Home() {
   }, [recentIds, customers]);
 
   const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? labels.customer : "खुद का काम");
+  const feed = useMemo(
+    () => (isPersonal ? activityFeed(book, "personal", (id) => customers.find((c) => c.id === id)?.name ?? "व्यक्ति", 12) : []),
+    [book, customers, isPersonal],
+  );
+  const openActivity = (a: Activity) => {
+    const s = a.src;
+    if (s.kind === "entry") setEditEntry(s.entry);
+    else if (s.kind === "expense") setEditExpense(s.expense);
+    else if (s.kind === "move") setEditMove(s.move);
+    else router.push(`/aeps/${s.txn.id}`);
+  };
 
   const searchResults = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
@@ -128,21 +143,41 @@ export default function Home() {
   }, [searchQuery, customers, jobs, entries]);
 
   const stats = useMemo(() => {
-    const dues = customers.map((c) => computeBalance(entries, c.id)).filter((d) => d > 0);
+    const bals = customers.filter((c) => !isVendor(c)).map((c) => computeBalance(entries, c.id));
+    const dues = bals.filter((d) => d > 0);
+    const owes = bals.filter((d) => d < 0);
+    const payables = isPersonal ? [] : customers.filter(isVendor).map((c) => computeBalance(entries, c.id)).filter((d) => d < 0);
     const open = jobs.filter((j) => j.status !== "done");
     return {
       totalDue: dues.reduce((s, d) => s + d, 0),
       dueCustomers: dues.length,
+      totalOwe: -owes.reduce((s, d) => s + d, 0),
+      oweCount: owes.length,
+      vendorPayable: -payables.reduce((s, d) => s + d, 0),
+      vendorCount: payables.length,
       openJobs: open.length,
       overdue: open.filter((j) => j.dueDate < today).length,
     };
-  }, [customers, entries, jobs, today]);
+  }, [customers, entries, jobs, today, isPersonal]);
+
+  // Vendor orders: still to arrive (by promised date), and any with money still to pay.
+  const vendorOrders = useMemo(() => {
+    if (isPersonal) return { pending: [], unpaid: [], late: 0, remaining: new Map<string, number>() };
+    const ids = new Set(customers.filter(isVendor).map((c) => c.id));
+    const orders = entries.filter((e) => e.type === "purchase" && ids.has(e.customerId));
+    const ledger = buildAllLedgers(orders.length ? entries.filter((e) => ids.has(e.customerId)) : []);
+    const remaining = new Map(orders.map((o) => [o.id, ledger.get(o.id)?.remaining ?? 0]));
+    const pending = orders.filter((o) => o.status === "ordered").sort((a, b) => (a.dueDate || "9").localeCompare(b.dueDate || "9"));
+    const unpaid = orders.filter((o) => (remaining.get(o.id) ?? 0) > 0).sort((a, b) => (a.dueDate || a.date).localeCompare(b.dueDate || b.date));
+    return { pending, unpaid, late: pending.filter((o) => !!o.dueDate && o.dueDate < today).length, remaining };
+  }, [customers, entries, isPersonal, today]);
 
   const persona = isPersonal ? "personal" : "business";
   const pockets = useMemo(() => computeFlows(book, persona, (d) => d <= today), [book, persona, today]);
   const cashBal = pocketNet(pockets.cash);
   const bankBal = pocketNet(pockets.bank);
   const todayTotals = useMemo(() => cashTotals(book, persona, (d) => d === today), [book, persona, today]);
+  const todaySpend = todayTotals.byKey.get("expense") ?? 0;
   const openToday = (dir: "in" | "out") => router.push({ pathname: "/pocket" as never, params: { p: "all", dir, period: "day", date: today } });
 
   const aepsDue = useMemo(() => aeps.filter((t) => t.status === "pending" && (t.dueDate || t.date) <= today).length, [aeps, today]);
@@ -154,22 +189,19 @@ export default function Home() {
   );
 
   const { tasks: personalTasks } = usePersonalTasks();
-  const openTasks = useMemo(() => personalTasks.filter((t) => t.status !== "done").sort(compareTasks), [personalTasks]);
   const taskStats = useMemo(() => {
+    let open = 0;
     let late = 0;
     let due = 0;
-    for (const t of openTasks) {
+    for (const t of personalTasks) {
+      if (t.status === "done") continue;
+      open++;
       const g = taskGroup(t, today);
       if (g === "late") late++;
       else if (g === "today") due++;
     }
-    return { open: openTasks.length, late, today: due };
-  }, [openTasks, today]);
-  // Late and today's first, then the rest in their usual order.
-  const homeTasks = useMemo(() => {
-    const rank = (t: Job) => ({ late: 0, today: 1, tomorrow: 2, later: 3, someday: 4, done: 5 })[taskGroup(t, today)];
-    return [...openTasks].sort((a, b) => rank(a) - rank(b) || compareTasks(a, b)).slice(0, 5);
-  }, [openTasks, today]);
+    return { open, late, today: due };
+  }, [personalTasks, today]);
 
   // A finished job's dueDate is its completion day, so the newest few are found without scanning every job's entry.
   const recentDone = useMemo(() => {
@@ -255,9 +287,15 @@ export default function Home() {
                       <Text style={styles.resultTitle}>{c.name}</Text>
                       {c.phone ? <Text style={styles.resultSub}>{formatPhone(c.phone)}</Text> : null}
                     </View>
-                    <Text style={[styles.resultDue, { color: b > 0 ? colors.error : b < 0 && c.persona === "personal" ? colors.warning : colors.success }]}>
-                      {b === 0 ? TERMS.settled : `${money(Math.abs(b))} ${balanceTerm(b, c.persona === "personal", true)}`}
-                    </Text>
+                    {isVendor(c) ? (
+                      <Text style={[styles.resultDue, { color: b < 0 ? colors.error : colors.success }]}>
+                        {b === 0 ? TERMS.settled : `${money(Math.abs(b))} ${b < 0 ? "देने हैं" : "एडवांस दिया"}`}
+                      </Text>
+                    ) : (
+                      <Text style={[styles.resultDue, { color: b > 0 ? colors.error : b < 0 && c.persona === "personal" ? colors.warning : colors.success }]}>
+                        {b === 0 ? TERMS.settled : `${money(Math.abs(b))} ${balanceTerm(b, c.persona === "personal", true)}`}
+                      </Text>
+                    )}
                   </Pressable>
                 ))}
                 {searchResults.jobs.map((j) => (
@@ -295,9 +333,9 @@ export default function Home() {
                     style={styles.recentChip}
                     onPress={() => router.push(`/customer/${c.id}`)}
                   >
-                    <MaterialIcon name="account-outline" size={14} color={colors.brandPrimary} />
+                    <MaterialIcon name={isVendor(c) ? "truck-outline" : "account-outline"} size={14} color={colors.brandPrimary} />
                     <Text style={styles.recentChipName} numberOfLines={1}>{c.name}</Text>
-                    {bal > 0 && !hideAmounts ? (
+                    {bal > 0 && !hideAmounts && !isVendor(c) ? (
                       <Text style={styles.recentChipDue}>{formatINR(bal)}</Text>
                     ) : null}
                   </Pressable>
@@ -340,10 +378,29 @@ export default function Home() {
                 <Text style={styles.heroLabel}>Today&apos;s Snapshot</Text>
                 <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
               </Pressable>
-              <View style={styles.heroTiles}>
-                <FlowTile dir="in" value={money(todayTotals.ins)} onPress={() => openToday("in")} testID="home-cash-in" />
-                <FlowTile dir="out" value={money(todayTotals.outs)} onPress={() => openToday("out")} testID="home-cash-out" />
-              </View>
+              {isPersonal ? (
+                <View style={styles.heroTiles}>
+                  <Pressable
+                    style={[styles.spendTile, { backgroundColor: semantic.dueSoft }]}
+                    onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "all", dir: "out", key: "expense", period: "day", date: today } })}
+                    accessibilityRole="button"
+                    testID="home-today-spend"
+                  >
+                    <View style={styles.spendHead}>
+                      <MaterialIcon name="coffee-outline" size={16} color={semantic.due} />
+                      <Text style={[styles.spendLabel, { color: semantic.due }]} numberOfLines={1}>आज खर्च</Text>
+                    </View>
+                    <Text style={[styles.spendValue, { color: semantic.due }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(todaySpend)}</Text>
+                    <Text style={styles.spendSub} numberOfLines={1}>⬇ {money(todayTotals.ins)} · ⬆ {money(todayTotals.outs)}</Text>
+                  </Pressable>
+                  <BudgetTile money={money} />
+                </View>
+              ) : (
+                <View style={styles.heroTiles}>
+                  <FlowTile dir="in" value={money(todayTotals.ins)} onPress={() => openToday("in")} testID="home-cash-in" />
+                  <FlowTile dir="out" value={money(todayTotals.outs)} onPress={() => openToday("out")} testID="home-cash-out" />
+                </View>
+              )}
               <View style={styles.heroNet}>
                 <NetRow value={todayTotals.net} label="Net today" fmt={money} onPress={() => router.push({ pathname: "/day", params: { type: "drawer" } })} testID="stat-today-money" />
               </View>
@@ -363,10 +420,39 @@ export default function Home() {
               </View>
             </View>
 
+            {!isPersonal && (stats.totalDue > 0 || stats.vendorPayable > 0) ? (
+              <View style={styles.duesStrip}>
+                <Pressable style={styles.duesCell} onPress={() => go("/(tabs)/customers", { filter: "due", book: "customer" })} accessibilityRole="button" testID="stat-total-due">
+                  <Text style={styles.duesLabel} numberOfLines={1}>⬇ ग्राहकों से मिलेंगे</Text>
+                  <Text style={[styles.duesValue, { color: stats.totalDue > 0 ? semantic.received : colors.muted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(stats.totalDue)}</Text>
+                  <Text style={styles.duesSub} numberOfLines={1}>{stats.dueCustomers} ग्राहक</Text>
+                </Pressable>
+                <View style={styles.walletDivider} />
+                <Pressable style={styles.duesCell} onPress={() => go("/(tabs)/customers", { filter: "owe", book: "vendor" })} accessibilityRole="button" testID="stat-vendor-payable">
+                  <Text style={styles.duesLabel} numberOfLines={1}>⬆ Vendor को देने हैं</Text>
+                  <Text style={[styles.duesValue, { color: stats.vendorPayable > 0 ? semantic.due : colors.muted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(stats.vendorPayable)}</Text>
+                  <Text style={styles.duesSub} numberOfLines={1}>{stats.vendorCount} Vendor</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
             <View style={styles.chipRow}>
-              {stats.totalDue > 0 ? (
-                <Pressable style={styles.chip} onPress={() => go("/(tabs)/customers", { filter: "due" })} testID="stat-total-due">
-                  <Text style={styles.chipText} numberOfLines={1}>{isPersonal ? TERMS.get : "बाकी वसूली"} {money(stats.totalDue)} · {stats.dueCustomers}</Text>
+              {isPersonal && stats.totalDue > 0 ? (
+                <Pressable style={styles.chip} onPress={() => go("/(tabs)/customers", { filter: "due" })} testID="stat-total-get">
+                  <Text style={styles.chipText} numberOfLines={1}>{TERMS.get} {money(stats.totalDue)} · {stats.dueCustomers}</Text>
+                  <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
+                </Pressable>
+              ) : null}
+              {vendorOrders.late > 0 ? (
+                <Pressable style={[styles.chip, { borderColor: semantic.due }]} onPress={() => setVendorMenu(true)} testID="home-vendor-late">
+                  <MaterialIcon name="truck-alert-outline" size={14} color={semantic.due} />
+                  <Text style={[styles.chipText, { color: semantic.due }]} numberOfLines={1}>{vendorOrders.late} Vendor डिलीवरी देर से</Text>
+                  <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
+                </Pressable>
+              ) : null}
+              {isPersonal && stats.totalOwe > 0 ? (
+                <Pressable style={styles.chip} onPress={() => go("/(tabs)/customers", { filter: "owe" })} testID="stat-total-owe">
+                  <Text style={styles.chipText} numberOfLines={1}>{TERMS.give} {money(stats.totalOwe)} · {stats.oweCount}</Text>
                   <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
                 </Pressable>
               ) : null}
@@ -381,74 +467,44 @@ export default function Home() {
 
             {isPersonal ? (
               <>
-                <BudgetCard />
-                <View style={styles.sectionRow}>
-                  <Text style={styles.sectionHead} testID="stat-pending-tasks">
-                    मेरे काम{taskStats.open > 0 ? ` (${taskStats.open})` : ""}
-                    {taskStats.late > 0 ? <Text style={styles.lateTag}>  {taskStats.late} देर से</Text> : null}
+                <Pressable
+                  style={styles.taskLine}
+                  onPress={() => (taskStats.open > 0 ? router.navigate("/(tabs)/tasks" as never) : setTaskSheet({}))}
+                  accessibilityRole="button"
+                  testID="stat-pending-tasks"
+                >
+                  <MaterialIcon name="clipboard-check-outline" size={18} color={colors.brandPrimary} />
+                  <Text style={styles.taskLineText} numberOfLines={1}>
+                    {taskStats.open > 0 ? `मेरे काम (${taskStats.open})` : "कोई काम बाकी नहीं · नया लिखें"}
+                    {taskStats.late > 0 ? <Text style={styles.lateTag}>  · {taskStats.late} देर से</Text> : null}
+                    {taskStats.today > 0 ? <Text style={styles.todayTag}>  · {taskStats.today} आज</Text> : null}
                   </Text>
-                  {taskStats.open > 0 ? (
-                    <Pressable onPress={() => router.navigate("/(tabs)/tasks" as never)} hitSlop={8} testID="home-tasks-more">
-                      <Text style={styles.link}>सभी देखें</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-                {homeTasks.length === 0 ? (
-                  <Pressable style={styles.emptyRow} onPress={() => setTaskSheet({})} testID="home-tasks-empty">
-                    <MaterialIcon name="clipboard-check-outline" size={20} color={colors.muted} />
-                    <Text style={{ color: colors.muted, fontSize: 14, flex: 1 }}>कोई काम बाकी नहीं · नया लिखें</Text>
-                    <MaterialIcon name="plus" size={18} color={colors.brandPrimary} />
-                  </Pressable>
-                ) : (
-                  <View style={{ gap: spacing.sm }}>
-                    {homeTasks.map((t) => (
-                      <TaskRow
-                        key={t.id}
-                        task={t}
-                        today={today}
-                        compact
-                        onToggle={() => store.updateJob(t.id, { status: t.status === "done" ? "pending" : "done" })}
-                        onOpen={() => setTaskSheet({ initial: t })}
-                      />
-                    ))}
-                  </View>
-                )}
+                  <MaterialIcon name={taskStats.open > 0 ? "chevron-right" : "plus"} size={18} color={taskStats.open > 0 ? colors.muted : colors.brandPrimary} />
+                </Pressable>
 
                 <View style={styles.sectionRow}>
-                  <Text style={styles.sectionHead}>हाल के लेन-देन</Text>
-                  {recentTxns.length > 0 ? (
-                    <Pressable onPress={() => go("/(tabs)/work", {})} hitSlop={8}>
+                  <Text style={styles.sectionHead}>Live Activity</Text>
+                  {feed.length > 0 ? (
+                    <Pressable onPress={() => router.push({ pathname: "/pocket" as never, params: { p: "all", period: "month" } })} hitSlop={8} testID="home-activity-all">
                       <Text style={styles.link}>सभी देखें</Text>
                     </Pressable>
                   ) : null}
                 </View>
-                {recentTxns.length === 0 ? (
+                {feed.length === 0 ? (
                   <View style={styles.emptyRow}>
                     <MaterialIcon name="swap-vertical" size={20} color={colors.muted} />
                     <Text style={{ color: colors.muted, fontSize: 14 }}>अभी कोई लेन-देन नहीं</Text>
                   </View>
                 ) : (
-                  <View style={{ gap: spacing.sm }}>
-                    {recentTxns.map((e) => {
-                      const got = e.type === "payment";
-                      const goods = e.type === "purchase";
-                      const repay = isRepayment(e);
-                      const label = got ? "पैसे आए" : goods ? ((e.paid ?? 0) > 0 ? "सामान / सेवा" : "उधार पर लिया") : repay ? "पैसे गए · चुकाया" : "पैसे गए";
-                      const icon = got ? "arrow-down-circle" : goods ? "cart-outline" : "arrow-up-circle";
-                      const tint = got ? semantic.received : goods ? colors.muted : semantic.due;
-                      return (
-                        <Pressable key={e.id} style={styles.jobCard} onPress={() => router.push(`/customer/${e.customerId}`)} testID={`home-txn-${e.id}`}>
-                          <MaterialIcon name={icon} size={20} color={tint} />
-                          <View style={{ flex: 1, minWidth: 0 }}>
-                            <Text style={styles.rowTitle} numberOfLines={1}>{nameOf(e.customerId)}</Text>
-                            <Text style={styles.rowSub} numberOfLines={1}>
-                              {[label, e.description, e.date === today ? "आज" : formatDateShort(e.date)].filter(Boolean).join(" · ")}
-                            </Text>
-                          </View>
-                          <Text style={{ fontSize: 15, fontWeight: "800", color: tint, fontVariant: ["tabular-nums"] }}>{money(e.amount)}</Text>
-                        </Pressable>
-                      );
-                    })}
+                  <View style={styles.feedCard}>
+                    {feed.map((a, i) => (
+                      <View key={a.id}>
+                        {i === 0 || feed[i - 1].date !== a.date ? (
+                          <Text style={[styles.feedDay, i > 0 && styles.feedDayGap]}>{a.date === today ? "आज" : a.date === todayISO(-1) ? "कल" : formatWeekdayDate(a.date)}</Text>
+                        ) : null}
+                        <ActivityRow a={a} money={money} onPress={() => openActivity(a)} />
+                      </View>
+                    ))}
                   </View>
                 )}
               </>
@@ -493,6 +549,46 @@ export default function Home() {
                 })}
               </View>
             )}
+            {vendorOrders.pending.length > 0 ? (
+              <>
+                <View style={styles.sectionRow}>
+                  <Text style={styles.sectionHead}>
+                    Vendor ऑर्डर ({vendorOrders.pending.length})
+                    {vendorOrders.late > 0 ? <Text style={styles.lateTag}>  {vendorOrders.late} देर से</Text> : null}
+                  </Text>
+                  <Pressable onPress={() => go("/(tabs)/customers", { filter: "all", book: "vendor" })} hitSlop={8} testID="home-vendor-all">
+                    <Text style={styles.link}>सभी Vendor</Text>
+                  </Pressable>
+                </View>
+                <View style={{ gap: spacing.sm }}>
+                  {vendorOrders.pending.slice(0, 5).map((o) => {
+                    const late = !!o.dueDate && o.dueDate < today;
+                    const left = vendorOrders.remaining.get(o.id) ?? 0;
+                    return (
+                      <Pressable key={o.id} style={styles.jobCard} onPress={() => setEditEntry(o)} testID={`home-vorder-${o.id}`}>
+                        <View style={[styles.dateBadge, late && { backgroundColor: colors.errorSoft }]}>
+                          <Text style={[styles.dateBadgeText, late && { color: colors.error }]}>{!o.dueDate ? "—" : o.dueDate === today ? "आज" : formatDateShort(o.dueDate)}</Text>
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={styles.rowTitle} numberOfLines={1}>{o.description || "Vendor ऑर्डर"}</Text>
+                          <Text style={styles.rowSub} numberOfLines={1}>
+                            {nameOf(o.customerId)} · {left > 0 ? `${money(left)} देने हैं` : "पूरा भुगतान"}{late ? " · देर" : ""}
+                          </Text>
+                        </View>
+                        {left > 0 ? (
+                          <Pressable style={styles.receiptBtn} onPress={() => setSettling(o)} hitSlop={6} accessibilityRole="button" accessibilityLabel="Vendor को भुगतान" testID={`home-vpay-${o.id}`}>
+                            <MaterialIcon name="cash-fast" size={16} color={colors.brandPrimary} />
+                            <Text style={styles.receiptBtnText}>भुगतान</Text>
+                          </Pressable>
+                        ) : (
+                          <MaterialIcon name="pencil-outline" size={18} color={colors.muted} />
+                        )}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </>
+            ) : null}
             </>
             )}
 
@@ -528,28 +624,37 @@ export default function Home() {
       </ScrollView>
 
       {loading || loadFailed ? null : (
+        isPersonal ? (
         <View style={styles.actionBar}>
-          <Pressable style={styles.primaryAction} onPress={() => (isPersonal ? setMoneySheet(true) : setJobSheet(true))} accessibilityRole="button" accessibilityLabel={labels.newWork} testID="quick-work">
-            <MaterialIcon name={isPersonal ? "swap-vertical" : "briefcase-plus-outline"} size={18} color={colors.onBrandPrimary} />
+          <Pressable style={styles.primaryAction} onPress={() => setExpenseSheet(true)} accessibilityRole="button" accessibilityLabel="खर्च लिखें" testID="quick-expense">
+            <MaterialIcon name="arrow-up-circle" size={18} color={colors.onBrandPrimary} />
+            <Text style={styles.primaryActionText} numberOfLines={1}>खर्च</Text>
+          </Pressable>
+          <Pressable style={styles.taskAction} onPress={() => setMoneySheet(true)} accessibilityRole="button" accessibilityLabel="लेन-देन लिखें" testID="quick-work">
+            <MaterialIcon name="swap-vertical" size={18} color={colors.brandPrimary} />
+            <Text style={styles.taskActionText} numberOfLines={1}>लेन-देन</Text>
+          </Pressable>
+          <Pressable style={styles.taskAction} onPress={() => setMoveSheet("swap")} accessibilityRole="button" accessibilityLabel="ट्रांसफर" testID="quick-transfer">
+            <MaterialIcon name="swap-horizontal" size={18} color={colors.brandPrimary} />
+            <Text style={styles.taskActionText} numberOfLines={1}>ट्रांसफर</Text>
+          </Pressable>
+        </View>
+        ) : (
+        <View style={styles.actionBar}>
+          <Pressable style={styles.primaryAction} onPress={() => setJobSheet(true)} accessibilityRole="button" accessibilityLabel={labels.newWork} testID="quick-work">
+            <MaterialIcon name="briefcase-plus-outline" size={18} color={colors.onBrandPrimary} />
             <Text style={styles.primaryActionText} numberOfLines={1}>{labels.newWork}</Text>
           </Pressable>
-          {isPersonal ? null : (
-            <Pressable style={styles.gotAction} onPress={() => setMoneySheet(true)} accessibilityRole="button" accessibilityLabel="पैसे मिले" testID="quick-payment">
-              <MaterialIcon name="arrow-bottom-left" size={18} color={semantic.received} />
-              <Text style={styles.gotActionText} numberOfLines={1}>पैसे मिले</Text>
-            </Pressable>
-          )}
           <Pressable style={styles.expenseAction} onPress={() => setExpenseSheet(true)} accessibilityRole="button" accessibilityLabel="खर्च" testID="quick-expense">
             <MaterialIcon name="coffee-outline" size={18} color={semantic.pending} />
             <Text style={styles.expenseActionText} numberOfLines={1}>खर्च</Text>
           </Pressable>
-          {isPersonal ? (
-            <Pressable style={styles.taskAction} onPress={() => setTaskSheet({})} accessibilityRole="button" accessibilityLabel="काम लिखें" testID="quick-task">
-              <MaterialIcon name="clipboard-plus-outline" size={18} color={colors.brandPrimary} />
-              <Text style={styles.taskActionText} numberOfLines={1}>काम</Text>
-            </Pressable>
-          ) : null}
+          <Pressable style={styles.taskAction} onPress={() => setVendorMenu(true)} accessibilityRole="button" accessibilityLabel="Vendor" testID="quick-vendor">
+            <MaterialIcon name="truck-outline" size={18} color={colors.brandPrimary} />
+            <Text style={styles.taskActionText} numberOfLines={1}>Vendor</Text>
+          </Pressable>
         </View>
+        )
       )}
 
       <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />
@@ -558,6 +663,52 @@ export default function Home() {
       <EditRecordSheet job={editingJob} onClose={() => setEditingJob(null)} />
       <TaskSheet visible={taskSheet !== null} initial={taskSheet?.initial} onClose={() => setTaskSheet(null)} />
       <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
+      <MoneyMoveSheet kind={moveSheet} onClose={() => setMoveSheet(null)} />
+      <MoneyMoveSheet kind={null} initial={editMove} onClose={() => setEditMove(null)} />
+      <EditRecordSheet entry={editEntry} onClose={() => setEditEntry(null)} />
+      <AddExpenseSheet visible={!!editExpense} initial={editExpense} onClose={() => setEditExpense(null)} />
+      {isPersonal ? null : (
+        <>
+          <SheetShell visible={vendorMenu} onClose={() => setVendorMenu(false)} title="Vendor" testID="sheet-vendor-menu">
+            <Pressable style={styles.vendorNew} onPress={() => { setVendorMenu(false); setTimeout(() => setVendorOrder(true), 300); }} accessibilityRole="button" testID="vendor-new-order">
+              <MaterialIcon name="truck-plus-outline" size={22} color={colors.onBrandPrimary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.vendorNewTitle}>नया Vendor ऑर्डर</Text>
+                <Text style={styles.vendorNewSub}>बाहर से काम करवाया या सामान मँगाया</Text>
+              </View>
+              <MaterialIcon name="chevron-right" size={20} color={colors.onBrandPrimary} />
+            </Pressable>
+            <Text style={styles.vendorHead}>Vendor को भुगतान{vendorOrders.unpaid.length ? ` (${vendorOrders.unpaid.length})` : ""}</Text>
+            {vendorOrders.unpaid.length === 0 ? (
+              <Text style={styles.vendorEmpty}>किसी Vendor का भुगतान बाकी नहीं</Text>
+            ) : (
+              vendorOrders.unpaid.slice(0, 12).map((o) => {
+                const late = o.status === "ordered" && !!o.dueDate && o.dueDate < today;
+                return (
+                  <Pressable key={o.id} style={styles.vendorRow} onPress={() => { setVendorMenu(false); setTimeout(() => setSettling(o), 300); }} testID={`vendor-pay-${o.id}`}>
+                    <View style={[styles.vendorIcon, late && { backgroundColor: colors.errorSoft }]}>
+                      <MaterialIcon name={o.status === "ordered" ? "truck-fast-outline" : "package-variant-closed-check"} size={18} color={late ? colors.error : colors.info} />
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.rowTitle} numberOfLines={1}>{nameOf(o.customerId)}</Text>
+                      <Text style={styles.rowSub} numberOfLines={1}>
+                        {o.description || "Vendor ऑर्डर"}{o.status === "ordered" && o.dueDate ? ` · कब तक ${o.dueDate === today ? "आज" : formatDateShort(o.dueDate)}` : o.status === "delivered" ? " · डिलीवर" : ""}
+                      </Text>
+                    </View>
+                    <Text style={[styles.resultDue, { color: semantic.due }]}>{money(vendorOrders.remaining.get(o.id) ?? 0)}</Text>
+                  </Pressable>
+                );
+              })
+            )}
+            <Pressable style={styles.vendorAll} onPress={() => { setVendorMenu(false); go("/(tabs)/customers", { filter: "all", book: "vendor" }); }} testID="vendor-list">
+              <Text style={styles.link}>सभी Vendor देखें</Text>
+              <MaterialIcon name="chevron-right" size={16} color={colors.brandPrimary} />
+            </Pressable>
+          </SheetShell>
+          <AddEntrySheet visible={vendorOrder} type="purchase" vendor onClose={() => setVendorOrder(false)} />
+          <SettleSheet work={settling} onClose={() => setSettling(null)} />
+        </>
+      )}
     </View>
   );
 }
@@ -574,7 +725,31 @@ const styles = StyleSheet.create({
   heroHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.sm },
   heroTiles: { flexDirection: "row", gap: spacing.sm, paddingHorizontal: spacing.md },
   heroNet: { paddingHorizontal: spacing.lg, paddingVertical: spacing.xs },
+  spendTile: { flex: 1, minWidth: 0, padding: spacing.md, borderRadius: radius.md, gap: 4 },
+  spendHead: { flexDirection: "row", alignItems: "center", gap: 6 },
+  spendLabel: { fontSize: 12, fontWeight: "800" },
+  spendValue: { ...type.title, fontWeight: "800", fontVariant: ["tabular-nums"] },
+  spendSub: { fontSize: 11, color: colors.muted, fontWeight: "600", fontVariant: ["tabular-nums"] },
+  taskLine: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.md, paddingHorizontal: spacing.md, minHeight: 48, borderRadius: radius.md, backgroundColor: colors.brandTertiary },
+  taskLineText: { flex: 1, fontSize: 14, fontWeight: "700", color: colors.onSurface },
+  todayTag: { ...type.caption, color: colors.brandPrimary, fontWeight: "700" },
+  feedCard: { borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingVertical: spacing.xs, overflow: "hidden" },
+  feedDay: { ...type.caption, color: colors.muted, fontWeight: "800", paddingHorizontal: spacing.md, paddingTop: spacing.sm, textTransform: "uppercase" },
+  feedDayGap: { marginTop: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.sm },
+  duesStrip: { flexDirection: "row", alignItems: "stretch", gap: spacing.sm, marginTop: spacing.md, paddingVertical: spacing.md, paddingHorizontal: spacing.md, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+  duesCell: { flex: 1, minWidth: 0, gap: 2 },
+  duesLabel: { fontSize: 12, fontWeight: "700", color: colors.muted },
+  duesValue: { fontSize: 20, fontWeight: "800", fontVariant: ["tabular-nums"] },
+  duesSub: { fontSize: 11, color: colors.muted, fontWeight: "600" },
+  vendorNew: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
+  vendorNewTitle: { fontSize: 15, fontWeight: "800", color: colors.onBrandPrimary },
+  vendorNewSub: { fontSize: 12, color: colors.onBrandPrimary, opacity: 0.85, marginTop: 2 },
+  vendorHead: { ...type.caption, color: colors.muted, fontWeight: "800", textTransform: "uppercase", marginTop: spacing.lg, marginBottom: spacing.xs },
+  vendorEmpty: { fontSize: 13, color: colors.muted, paddingVertical: spacing.md },
+  vendorRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 56, paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  vendorIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.infoSoft },
+  vendorAll: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 2, paddingVertical: spacing.md, marginTop: spacing.xs },
   chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: spacing.md, paddingRight: spacing.sm, minHeight: 36, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   chipText: { fontSize: 13, fontWeight: "600", color: colors.onSurfaceSecondary },
   heroLabel: { ...type.caption, color: colors.muted, fontWeight: "700" },

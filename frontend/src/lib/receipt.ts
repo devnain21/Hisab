@@ -136,6 +136,72 @@ export function receiptDoc(
     fileName: `${entry.type === "work" ? "Bill" : "Rasid"}-${no}-${fileSafe(customer.name)}.pdf`,
   };
 }
+/** Order number printed on a vendor work order: WO-YYMM- plus a short id, stable for the same row. */
+export const workOrderNo = (e: Entry) => `WO-${e.date.slice(2, 4)}${e.date.slice(5, 7)}-${e.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase()}`;
+
+/** Work order / payment voucher for one vendor order: scope, promised date, advance, balance and terms. */
+export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendor: Customer, shopIn: Partial<ShopProfile>): ShareDoc {
+  const shop = fullShop(shopIn);
+  const items = itemsOf(entry, "काम / सामान");
+  const paid = status?.received ?? entry.paid ?? 0;
+  const left = status?.remaining ?? Math.max(0, entry.amount - paid);
+  const advance = status?.paidAtBooking ?? entry.paid ?? 0;
+  const no = workOrderNo(entry);
+  const delivered = entry.status === "delivered";
+  const late = !delivered && !!entry.dueDate && entry.dueDate < todayISO();
+  const state = left <= 0 ? "पूरा भुगतान" : delivered ? "डिलीवर · भुगतान बाकी" : late ? "तारीख निकल गई" : "ऑर्डर दिया";
+  const stampTone: Tone = left <= 0 ? "ok" : "due";
+  const mode = entry.mode === "online" ? "बैंक / UPI" : "नकद";
+
+  const lines: Line[] = [
+    { label: "तय रकम", value: formatINR(entry.amount) },
+    { label: `एडवांस दिया${advance > 0 ? ` (${mode})` : ""}`, value: formatINR(advance), tone: advance > 0 ? "ok" : undefined },
+    ...(paid - advance > 0 ? [{ label: "बाद में दिए", value: formatINR(paid - advance), tone: "ok" as Tone }] : []),
+    { label: "बाकी देने हैं", value: formatINR(left), tone: left > 0 ? "due" : "ok" },
+  ];
+  const terms = (entry.terms ?? "").trim();
+  const many = items.length > 1;
+
+  const message = [
+    ...messageHead(shop),
+    `*WORK ORDER* · ${no}`,
+    `तारीख: ${formatDate(entry.date)}${entry.dueDate ? ` · कब तक: *${formatDate(entry.dueDate)}*` : ""}`,
+    `Vendor: ${vendor.name}`,
+    "",
+    ...items.map((it, i) => `${many ? `${i + 1}. ` : ""}${it.title} — ${formatINR(it.amount)}`),
+    "──────────",
+    ...lines.map(lineText),
+    `स्थिति: ${state}`,
+    ...(terms ? ["", "शर्तें:", terms] : []),
+  ].join("\n");
+
+  const meta = [`नं. ${esc(no)}`, `तारीख: ${esc(formatDate(entry.date))}`, entry.dueDate ? `<b>कब तक: ${esc(formatDate(entry.dueDate))}</b>` : ""].filter(Boolean).join("<br/>");
+  const body = `
+  <table class="items">
+    <tr><th class="no">क्र.</th><th>काम / सामान</th><th class="amt">रकम</th></tr>
+    ${items.map((it, i) => `<tr class="item"><td class="no">${i + 1}</td><td>${esc(it.title)}</td><td class="amt">${esc(formatINR(it.amount))}</td></tr>`).join("")}
+  </table>
+  <table class="sum">${lines.map(sumRow).join("")}</table>
+  <div class="stamp" style="border-color:${toneColor(stampTone)};color:${toneColor(stampTone)}">${esc(state)}</div>
+  ${terms ? `<div class="note"><b>शर्तें</b><br/>${esc(terms)}</div>` : ""}
+  ${entry.notes ? `<div class="note">${esc(entry.notes)}</div>` : ""}
+  <div style="display:flex;justify-content:space-between;gap:24px;margin-top:40px;font-size:11px;color:#555;">
+    <div style="flex:1;border-top:1px solid #999;padding-top:6px;text-align:center;">${esc(shop.shop_name)} (हस्ताक्षर)</div>
+    <div style="flex:1;border-top:1px solid #999;padding-top:6px;text-align:center;">${esc(vendor.name)} (हस्ताक्षर)</div>
+  </div>`;
+
+  return {
+    heading: "WORK ORDER",
+    title: entry.description || items[0]?.title || "Vendor ऑर्डर",
+    sub: `${vendor.name} · ${no}${entry.dueDate ? ` · कब तक ${formatDate(entry.dueDate)}` : ""}`,
+    phone: vendor.phone,
+    lines,
+    message,
+    html: page(shop, "WORK ORDER", meta, vendor, body, "A5", { toLabel: "Vendor / कारीगर", foot: "Generated with Hisab", hideNote: true }),
+    fileName: `${no}-${fileSafe(vendor.name)}.pdf`,
+  };
+}
+
 /** Full account statement: every entry with a running balance, plus the items still unpaid. */
 export function statementDoc(
   entries: Entry[],
@@ -313,10 +379,12 @@ const sumRow = (l: Line) => `<tr><td>${esc(l.label)}</td><td class="amt" style="
 const accountBox = (l: Line) =>
   `<div class="account" style="border-color:${toneColor(l.tone)}"><span>${esc(l.label)}</span><b style="color:${toneColor(l.tone)}">${esc(l.value)}</b></div>`;
 
-function page(shop: ShopProfile, heading: string, docMeta: string, customer: Customer, body: string, size: "A4" | "A5"): string {
+type PageOpts = { toLabel?: string; foot?: string; hideNote?: boolean };
+
+function page(shop: ShopProfile, heading: string, docMeta: string, customer: Customer, body: string, size: "A4" | "A5", opts: PageOpts = {}): string {
   const personal = customer.persona === "personal";
   const prefs = getPrefs();
-  const note = !personal && customer.id !== OWN_BOOK ? prefs.receiptNote.trim() : "";
+  const note = !personal && customer.id !== OWN_BOOK && !opts.hideNote ? prefs.receiptNote.trim() : "";
   const logo = !personal && /^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(prefs.logo) ? prefs.logo : "";
   const shopMeta = [shop.shop_address, shop.shop_phone ? `फ़ोन: ${formatPhone(shop.shop_phone)}` : "", shop.shop_gst && !personal && prefs.showGst ? `GSTIN: ${shop.shop_gst}` : ""]
     .filter(Boolean)
@@ -362,10 +430,10 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
     <div class="brand">${logo ? `<img class="logo" src="${logo}" alt=""/>` : ""}<div><div class="shop">${esc(shop.shop_name)}</div><div class="meta">${shopMeta}</div></div></div>
     <div class="doc"><div class="title">${esc(heading)}</div><div class="meta">${docMeta}</div></div>
   </div>
-  ${customer.id === OWN_BOOK ? `<div class="to"><div class="name">${esc(customer.name)}</div></div>` : `<div class="to"><div class="label">${customer.persona === "personal" ? "नाम" : "ग्राहक"}</div><div class="name">${esc(customer.name)}</div>${customer.phone ? `<div class="meta">${esc(formatPhone(customer.phone))}</div>` : ""}</div>`}
+  ${customer.id === OWN_BOOK ? `<div class="to"><div class="name">${esc(customer.name)}</div></div>` : `<div class="to"><div class="label">${esc(opts.toLabel ?? (customer.persona === "personal" ? "नाम" : "ग्राहक"))}</div><div class="name">${esc(customer.name)}</div>${customer.phone ? `<div class="meta">${esc(formatPhone(customer.phone))}</div>` : ""}</div>`}
   ${body}
   ${note ? `<div class="note">${esc(note)}</div>` : ""}
-  <div class="foot">${customer.id === OWN_BOOK ? `बनाया: ${esc(formatDate(todayISO()))}` : personal ? "धन्यवाद 🙏" : "धन्यवाद, फिर पधारें 🙏"}</div>
+  <div class="foot">${opts.foot ?? (customer.id === OWN_BOOK ? `बनाया: ${esc(formatDate(todayISO()))}` : personal ? "धन्यवाद 🙏" : "धन्यवाद, फिर पधारें 🙏")}</div>
 </body></html>`;
 }
 

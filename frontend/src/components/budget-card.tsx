@@ -18,14 +18,9 @@ function Bar({ used }: { used: number }) {
   );
 }
 
-/** Personal Home: this month's spending against the budget, with the categories that have a limit. */
-export function BudgetCard() {
-  const budget = useBudget();
+function useMonthSpent(month: string) {
   const { all } = useExpenses();
-  const [editing, setEditing] = useState(false);
-  const today = todayISO();
-  const month = today.slice(0, 7);
-  const spent = useMemo(() => {
+  return useMemo(() => {
     const by: Record<string, number> = {};
     let total = 0;
     for (const x of all) {
@@ -35,6 +30,49 @@ export function BudgetCard() {
     }
     return { total, by };
   }, [all, month]);
+}
+
+/** Personal Home tile: what is left of this month's budget; opens the full budget card. */
+export function BudgetTile({ money, style }: { money: (n: number) => string; style?: object }) {
+  const budget = useBudget();
+  const spent = useMonthSpent(todayISO().slice(0, 7));
+  const [open, setOpen] = useState(false);
+  const left = budget.total - spent.total;
+  const used = budget.total > 0 ? spent.total / budget.total : 0;
+  return (
+    <>
+      <Pressable style={[styles.tile, style]} onPress={() => setOpen(true)} accessibilityRole="button" testID="home-budget">
+        <View style={styles.head}>
+          <MaterialIcon name="wallet-outline" size={16} color={colors.brandPrimary} />
+          <Text style={styles.tileLabel} numberOfLines={1}>बजट बाकी</Text>
+        </View>
+        {budget.total > 0 ? (
+          <>
+            <Text style={[styles.tileValue, left < 0 && { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{left < 0 ? "−" : ""}{money(Math.abs(left))}</Text>
+            <Bar used={used} />
+          </>
+        ) : (
+          <Text style={styles.tileCta} numberOfLines={1}>बजट बनाएँ</Text>
+        )}
+      </Pressable>
+      {budget.total > 0 ? (
+        <SheetShell visible={open} onClose={() => setOpen(false)} title="इस महीने का बजट" testID="sheet-budget-view">
+          <BudgetCard />
+        </SheetShell>
+      ) : (
+        <BudgetSheet visible={open} budget={budget} onClose={() => setOpen(false)} />
+      )}
+    </>
+  );
+}
+
+/** This month's spending against the budget, with the categories that have a limit. */
+export function BudgetCard() {
+  const budget = useBudget();
+  const [editing, setEditing] = useState(false);
+  const today = todayISO();
+  const month = today.slice(0, 7);
+  const spent = useMonthSpent(month);
 
   const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
   const daysLeft = daysInMonth - Number(today.slice(8, 10)) + 1;
@@ -146,6 +184,10 @@ function BudgetSheet({ visible, budget, onClose }: { visible: boolean; budget: B
 }
 
 const styles = StyleSheet.create({
+  tile: { flex: 1, minWidth: 0, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, gap: 6 },
+  tileLabel: { flex: 1, fontSize: 12, fontWeight: "800", color: colors.brandPrimary },
+  tileValue: { fontSize: 18, fontWeight: "800", color: colors.onSurface, fontVariant: ["tabular-nums"] },
+  tileCta: { fontSize: 14, fontWeight: "800", color: colors.brandPrimary, paddingVertical: 4 },
   card: { marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, gap: 6 },
   head: { flexDirection: "row", alignItems: "center", gap: 6 },
   title: { flex: 1, fontSize: 14, fontWeight: "800", color: colors.onSurface },

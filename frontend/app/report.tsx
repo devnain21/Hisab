@@ -7,7 +7,7 @@ import { colors, radius, semantic, spacing } from "@/src/theme";
 import { formatDateShort, formatINR, formatMonth, formatWeekdayDate, monthRange, roundMoney, shiftISO, todayISO, weekRange } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { usePersona, type Persona } from "@/src/lib/persona";
-import { computeBalance, isRepayment } from "@/src/lib/data";
+import { computeBalance, isRepayment, isVendor } from "@/src/lib/data";
 import { expensePersona } from "@/src/lib/expenses";
 import { cashTotals, computeFlows, personaOfEntry, pocketIn, pocketNet, pocketOut, useMoneyBook, type FlowKey, type Pocket } from "@/src/lib/wallet";
 import { commissionDate } from "@/src/lib/aeps";
@@ -39,15 +39,17 @@ type Stats = {
   expense: number;
   given: number;
   paidOut: number;
+  /** Business: agreed value of vendor orders booked in the period (outsourced work / stock). */
+  vendorCost: number;
   byCat: [string, number][];
-  /** Business: billed + commission − expenses − fees. Personal: money in − money out. */
+  /** Business: billed + commission − expenses − fees − vendor cost. Personal: money in − money out. */
   result: number;
 };
 
 function periodStats(book: Book, persona: Persona, from: string, to: string): Stats {
   const inRange = (d: string) => d >= from && d <= to;
   const byId = new Map(book.customers.map((c) => [c.id, c]));
-  let billed = 0, billedCount = 0, collected = 0, fee = 0, given = 0, paidOut = 0;
+  let billed = 0, billedCount = 0, collected = 0, fee = 0, given = 0, paidOut = 0, vendorCost = 0;
   for (const e of book.entries) {
     if (!inRange(e.date) || personaOfEntry(e, byId) !== persona) continue;
     if (e.type === "work") {
@@ -56,7 +58,10 @@ function periodStats(book: Book, persona: Persona, from: string, to: string): St
       collected += e.paid ?? 0;
       fee += e.fee ?? 0;
     } else if (e.type === "payment") collected += e.amount;
-    else if (e.type === "purchase") paidOut += e.paid ?? 0;
+    else if (e.type === "purchase") {
+      paidOut += e.paid ?? 0;
+      if (persona === "business" && isVendor(byId.get(e.customerId))) vendorCost += e.amount;
+    }
     else if (e.type === "given") {
       if (isRepayment(e)) paidOut += e.amount;
       else given += e.amount;
@@ -77,7 +82,7 @@ function periodStats(book: Book, persona: Persona, from: string, to: string): St
       if (day && inRange(day)) commission += t.commission;
     }
   }
-  const result = persona === "business" ? billed + commission - expense - fee : collected - given - paidOut - expense;
+  const result = persona === "business" ? billed + commission - expense - fee - vendorCost : collected - given - paidOut - expense;
   return {
     billed: roundMoney(billed),
     billedCount,
@@ -87,6 +92,7 @@ function periodStats(book: Book, persona: Persona, from: string, to: string): St
     expense: roundMoney(expense),
     given: roundMoney(given),
     paidOut: roundMoney(paidOut),
+    vendorCost: roundMoney(vendorCost),
     byCat: [...cats].sort((a, b) => b[1] - a[1]),
     result: roundMoney(result),
   };
@@ -154,10 +160,12 @@ export default function ReportScreen() {
 
   const balances = useMemo(() => {
     const mine = book.customers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal"));
-    return mine.map((c) => ({ c, bal: roundMoney(computeBalance(book.entries, c.id)) }));
+    return mine.map((c) => ({ c, bal: roundMoney(computeBalance(book.entries, c.id)), vendor: !isPersonal && isVendor(c) }));
   }, [book.customers, book.entries, isPersonal]);
-  const owedToYou = balances.filter((b) => b.bal > 0).sort((a, b) => b.bal - a.bal);
-  const youOwe = balances.filter((b) => b.bal < 0).sort((a, b) => a.bal - b.bal);
+  const owedToYou = balances.filter((b) => !b.vendor && b.bal > 0).sort((a, b) => b.bal - a.bal);
+  const youOwe = balances.filter((b) => !b.vendor && b.bal < 0).sort((a, b) => a.bal - b.bal);
+  const vendorsOwed = balances.filter((b) => b.vendor && b.bal < 0).sort((a, b) => a.bal - b.bal);
+  const vendorPayable = roundMoney(vendorsOwed.reduce((s, b) => s - b.bal, 0));
   const outstanding = roundMoney(owedToYou.reduce((s, b) => s + b.bal, 0));
   const theirs = roundMoney(youOwe.reduce((s, b) => s - b.bal, 0));
   const recovery = !isPersonal && period === "month" && isCurrent && now.collected + outstanding > 0 ? Math.round((now.collected / (now.collected + outstanding)) * 100) : null;
@@ -175,6 +183,7 @@ export default function ReportScreen() {
         { label: "कमीशन", value: now.commission, sign: "+" },
         { label: "खर्च", value: now.expense, sign: "−" },
         { label: "पोर्टल फीस", value: now.fee, sign: "−" },
+        ...(now.vendorCost > 0 ? [{ label: "Vendor लागत", value: now.vendorCost, sign: "−" as const }] : []),
       ];
   const resultChange = change(now.result, prev.result);
 
@@ -184,7 +193,8 @@ export default function ReportScreen() {
   const maxSource = Math.max(1, ...ins.map((x) => x.v), ...outs.map((x) => x.v));
   const openFlow = (dir: "in" | "out", key?: FlowKey) => router.push({ pathname: "/pocket" as never, params: { p: "all", dir, ...(key ? { key } : {}), ...nav } });
   const openPocket = (p: Pocket) => router.push({ pathname: "/pocket" as never, params: { p, ...nav } });
-  const openCustomers = (filter: "due" | "owe") => router.push({ pathname: "/(tabs)/customers", params: { filter, t: String(Date.now()) } });
+  const openCustomers = (filter: "due" | "owe") => router.push({ pathname: "/(tabs)/customers", params: { filter, book: "customer", t: String(Date.now()) } });
+  const openVendors = () => router.push({ pathname: "/(tabs)/customers", params: { filter: "owe", book: "vendor", t: String(Date.now()) } });
 
   const sharePdfDoc = async () => {
     if (sharing) return;
@@ -202,6 +212,7 @@ export default function ReportScreen() {
         { title: "खर्च कहाँ हुआ", lines: now.byCat.map(([t, v]) => ({ label: t, value: formatINR(v) })) },
         { title: `${TERMS.get} (अभी)`, lines: owedToYou.slice(0, 10).map((b) => ({ label: b.c.name, value: formatINR(b.bal), tone: "due" as const })) },
         ...(isPersonal ? [{ title: `${TERMS.give} (अभी)`, lines: youOwe.slice(0, 10).map((b) => ({ label: b.c.name, value: formatINR(-b.bal) })) }] : []),
+        ...(vendorsOwed.length ? [{ title: "Vendor को देने हैं (अभी)", lines: vendorsOwed.slice(0, 10).map((b) => ({ label: b.c.name, value: formatINR(-b.bal), tone: "due" as const })) }] : []),
       ]);
       if (pdfSupported) await sharePdf(doc);
       else await shareMessage(doc.message);
@@ -362,6 +373,18 @@ export default function ReportScreen() {
             <Text style={[styles.closing, { color: theirs > 0 ? semantic.pending : colors.onSurface }]} numberOfLines={1} adjustsFontSizeToFit>{money(theirs)}</Text>
           </Pressable>
         </View>
+        {vendorsOwed.length > 0 ? (
+          <Pressable style={[styles.card, styles.rowBetween]} onPress={openVendors} testID="report-vendor-payable">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexShrink: 1 }}>
+              <MaterialIcon name="truck-outline" size={18} color={colors.info} />
+              <Text style={styles.cardTitle} numberOfLines={1}>Vendor को देने हैं · {vendorsOwed.length}</Text>
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+              <Text style={[styles.rowValue, { color: semantic.due, fontSize: 16 }]}>{money(vendorPayable)}</Text>
+              <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
+            </View>
+          </Pressable>
+        ) : null}
         {recovery !== null ? <FlowRow label="वसूली दर (इस महीने)" value={`${recovery}%`} color={recovery >= 60 ? colors.success : recovery >= 35 ? colors.warning : colors.error} /> : null}
 
         {owedToYou.length > 0 ? (

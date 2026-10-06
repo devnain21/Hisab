@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, FlatList, TextInput, Linking } from "react-nati
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, semantic, type } from "@/src/theme";
-import { entryDelta, useCustomers, useEntries, type Customer } from "@/src/lib/data";
+import { entryDelta, isVendor, useCustomers, useEntries, type Customer } from "@/src/lib/data";
 import { cleanAmountInput, formatINR, formatPhone, parseAmount, roundMoney } from "@/src/lib/format";
 import { reminderDoc } from "@/src/lib/receipt";
 import { useAuth } from "@/src/context/AuthContext";
@@ -30,7 +30,7 @@ export default function BulkRemindScreen() {
     const due = new Map<string, number>();
     for (const e of entries) due.set(e.customerId, (due.get(e.customerId) ?? 0) + entryDelta(e));
     return customers
-      .filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal"))
+      .filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal" && !isVendor(c)))
       .map((c) => ({ c, due: roundMoney(due.get(c.id) ?? 0) }))
       .filter((r) => r.due > 0)
       .sort((a, b) => b.due - a.due);

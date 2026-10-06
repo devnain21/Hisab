@@ -17,6 +17,8 @@ export type Prefs = {
   lockAfterMs: number;
   /** ISO time of the last Excel or full backup made from this phone. */
   lastBackupAt: string;
+  /** Terms printed on vendor work orders; the last ones typed become the default. */
+  vendorTerms: string;
 };
 
 /** What a masked amount looks like while `hideAmounts` is on. */
@@ -40,6 +42,7 @@ const DEFAULTS: Prefs = {
   hideAmounts: false,
   lockAfterMs: 30_000,
   lastBackupAt: "",
+  vendorTerms: "",
 };
 
 let memory: Prefs | null = null;

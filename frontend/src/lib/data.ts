@@ -14,8 +14,12 @@ export type Customer = {
   creditLimit?: number;
   /** Day to chase the udhaar (YYYY-MM-DD); "" / missing = none. */
   remindOn?: string;
+  /** "vendor": the shop buys from / outsources work to them; missing = customer. */
+  role?: "customer" | "vendor";
   createdAt: string;
 };
+
+export const isVendor = (c: Pick<Customer, "role"> | undefined | null) => c?.role === "vendor";
 // work: service done · payment: money received from them · given: money handed to them (loan, or
 // paying back a purchase when linkId points at it) · purchase: goods / service taken from them on credit.
 // paid: money settled on the spot (work: taken from them, purchase: paid to them; 0..amount).
@@ -43,6 +47,10 @@ export type Entry = {
   notes: string;
   linkId?: string;
   items?: EntryItem[];
+  /** Vendor order (purchase row): promised date, delivery state, terms on the work order. */
+  dueDate?: string;
+  status?: "" | "ordered" | "delivered";
+  terms?: string;
   createdAt: string;
 };
 // customerId "" = the shopkeeper's own task (no customer, no money).

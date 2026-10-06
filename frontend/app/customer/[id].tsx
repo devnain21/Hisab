@@ -5,7 +5,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, semantic, elevation } from "@/src/theme";
-import { computeBalance, isRepayment, itemsOf, useAeps, useCustomers, useEntries, useJobs, type AepsTxn, type Entry, type EntryType, type Job } from "@/src/lib/data";
+import { computeBalance, isRepayment, isVendor, itemsOf, useAeps, useCustomers, useEntries, useJobs, type AepsTxn, type Entry, type EntryType, type Job } from "@/src/lib/data";
 import { AEPS_META, STATUS_META, aepsBill, aepsDue, defaultVia, statusLabel, viaBill } from "@/src/lib/aeps";
 import { formatDate, formatINR, formatPhone, monthRange, todayISO } from "@/src/lib/format";
 import { store } from "@/src/lib/store";
@@ -17,7 +17,7 @@ import { useAuth } from "@/src/context/AuthContext";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import { RemindDateSheet } from "@/src/components/remind-date-sheet";
 import { LedgerLinkSheet } from "@/src/components/ledger-link-sheet";
-import { aepsReceiptDoc, receiptDoc, statementDoc, reminderDoc, type ShareDoc } from "@/src/lib/receipt";
+import { aepsReceiptDoc, receiptDoc, statementDoc, reminderDoc, workOrderDoc, workOrderNo, type ShareDoc } from "@/src/lib/receipt";
 import { DataLoadError } from "@/src/components/slow-server-hint";
 import { UpiQrModal } from "@/src/components/upi-qr-sheet";
 import { addRecentCustomer } from "@/src/lib/recent";
@@ -61,6 +61,8 @@ export default function CustomerDetail() {
   const [more, setMore] = useState(false);
   const [remindSheet, setRemindSheet] = useState(false);
   const [ledgerSheet, setLedgerSheet] = useState(false);
+  const [orderSheet, setOrderSheet] = useState(false);
+  const [payPick, setPayPick] = useState(false);
 
   useEffect(() => {
     if (id) void addRecentCustomer(id);
@@ -108,7 +110,9 @@ export default function CustomerDetail() {
   }, [entries]);
   // Money left with us by a customer is an advance; with a personal contact it's money we owe back.
   const isCustomer = customer?.persona !== "personal";
-  const balanceLabel = due === 0 ? "हिसाब" : balanceTerm(due, !isCustomer);
+  const vendor = isCustomer && isVendor(customer);
+  const balanceLabel = due === 0 ? "हिसाब" : vendor ? (due < 0 ? "देने हैं" : "एडवांस दिया") : balanceTerm(due, !isCustomer);
+  const openOrders = vendor ? rows.filter((e) => e.type === "purchase" && (ledger.work.get(e.id)?.remaining ?? 0) > 0) : [];
   const openJobs = jobs.filter((j) => j.status !== "done");
   const showMoreFilters = rows.length > 8;
 
@@ -139,6 +143,7 @@ export default function CustomerDetail() {
   }
 
   const openReceipt = (e: Entry) => {
+    if (vendor && e.type === "purchase") return setShareDoc(workOrderDoc(e, ledger.work.get(e.id), customer, user ?? {}));
     const txn = e.type === "aeps" ? aepsList.find((t) => t.id === e.linkId) : undefined;
     const jama = txn ? aepsJamaEntry(txn.id, entries) : undefined;
     const keptLabel = jama ? (jamaKindOf(jama) === "old" ? "पुरानी उधारी में कटे" : "खाते में जमा") : "";
@@ -153,13 +158,24 @@ export default function CustomerDetail() {
   const actGot: Action = { key: "got", label: "पैसे मिले", icon: "arrow-bottom-left", color: semantic.received, run: () => setEntrySheet("payment") };
   const actGiven: Action = { key: "given", label: "पैसे दिए", icon: "arrow-top-right", color: semantic.due, run: () => setEntrySheet("given") };
   const actReturn: Action = { key: "return", label: isCustomer ? "जमा लौटाएँ" : "पैसे चुकाएँ", icon: "cash-refund", run: () => setEntrySheet("given") };
-  const primary = due > 0 ? actGot : due < 0 ? actReturn : isCustomer ? actWork : actGiven;
-  const secondary = isCustomer ? (primary === actWork ? actGot : actWork) : primary === actGot ? actGiven : actGot;
+  const actOrder: Action = { key: "order", label: "Vendor ऑर्डर", icon: "truck-outline", run: () => setOrderSheet(true) };
+  const actPay: Action = {
+    key: "pay",
+    label: "भुगतान करें",
+    icon: "cash-fast",
+    color: semantic.due,
+    run: () => (openOrders.length === 1 ? setSettling(openOrders[0]) : openOrders.length > 1 ? setPayPick(true) : setEntrySheet("given")),
+  };
+  const primary = vendor ? (openOrders.length > 0 ? actPay : actOrder) : due > 0 ? actGot : due < 0 ? actReturn : isCustomer ? actWork : actGiven;
+  const secondary = vendor ? (primary === actPay ? actOrder : actPay) : isCustomer ? (primary === actWork ? actGot : actWork) : primary === actGot ? actGiven : actGot;
   const moreActions: Action[] = [];
-  if (isCustomer) moreActions.push(actWork, { key: "later", label: "आगे का काम / रिमार्क", icon: "calendar-clock", run: () => setJobSheet("later") });
-  moreActions.push(actGot, actGiven);
+  if (vendor) moreActions.push(actOrder, actPay, { key: "advance", label: "एडवांस दिया (बिना ऑर्डर)", icon: "arrow-top-right", color: semantic.due, run: () => setEntrySheet("given") }, { key: "refund", label: "पैसे वापस मिले", icon: "arrow-bottom-left", color: semantic.received, run: () => setEntrySheet("payment") });
+  else {
+    if (isCustomer) moreActions.push(actWork, { key: "later", label: "आगे का काम / रिमार्क", icon: "calendar-clock", run: () => setJobSheet("later") });
+    moreActions.push(actGot, actGiven);
+  }
   if (!isCustomer) moreActions.push({ key: "purchase", label: "सामान / सेवा ली", icon: "cart-outline", color: semantic.pending, run: () => setEntrySheet("purchase") });
-  if (due > 0) {
+  if (due > 0 && !vendor) {
     moreActions.push(
       { key: "remind", label: "तगादा भेजें", icon: "message-alert-outline", color: semantic.pending, run: openReminder },
       { key: "qr", label: "QR से पेमेंट लें", icon: "qrcode-scan", run: () => setQrModal(true) },
@@ -169,7 +185,7 @@ export default function CustomerDetail() {
   if (entries.length > 0) {
     moreActions.push(
       { key: "stmt", label: "पूरा हिसाब भेजें (PDF / WhatsApp)", icon: "file-document-outline", run: openStatement },
-      { key: "ledger", label: "हिसाब का लिंक (ग्राहक खुद देखे)", icon: "link-variant", run: () => setLedgerSheet(true) },
+      ...(vendor ? [] : [{ key: "ledger", label: "हिसाब का लिंक (ग्राहक खुद देखे)", icon: "link-variant" as IconName, run: () => setLedgerSheet(true) }]),
     );
   }
   moreActions.push({ key: "edit", label: "नाम / फ़ोन बदलें", icon: "pencil-outline", run: () => setEditSheet(true) });
@@ -208,20 +224,26 @@ export default function CustomerDetail() {
           {due === 0 ? (
             <Text style={[styles.balanceValue, { color: colors.onSurface }]}>{TERMS.settled}</Text>
           ) : (
-            <Amount value={Math.abs(due)} tone={due > 0 ? "due" : isCustomer ? "received" : "pending"} size="display" style={styles.balanceValue} />
+            <Amount value={Math.abs(due)} tone={vendor ? (due < 0 ? "due" : "received") : due > 0 ? "due" : isCustomer ? "received" : "pending"} size="display" style={styles.balanceValue} />
           )}
+          {vendor ? (
+            <View style={styles.vendorTag}>
+              <MaterialIcon name="truck-outline" size={14} color={colors.info} />
+              <Text style={styles.vendorTagText}>Vendor{openOrders.length ? ` · ${openOrders.length} ऑर्डर खुले` : ""}</Text>
+            </View>
+          ) : null}
           {totals.any ? (
             <Text style={styles.breakdown}>
               {[
                 totals.work > 0 ? `काम ${formatINR(totals.work)}` : "",
                 totals.given > 0 ? `दिए ${formatINR(totals.given)}` : "",
                 totals.got > 0 || totals.work + totals.given > 0 ? `मिले ${formatINR(totals.got)}` : "",
-                totals.bought > 0 ? `सामान ${formatINR(totals.bought)}` : "",
+                totals.bought > 0 ? `${vendor ? "ऑर्डर" : "सामान"} ${formatINR(totals.bought)}` : "",
                 totals.bought > 0 ? `चुकाए ${formatINR(totals.paidOut)}` : "",
               ].filter(Boolean).join(" · ")}
             </Text>
           ) : null}
-          {isCustomer && (customer.creditLimit ?? 0) > 0 ? (
+          {isCustomer && !vendor && (customer.creditLimit ?? 0) > 0 ? (
             <IconLabel
               icon={due > customer.creditLimit! ? "alert-octagon-outline" : "shield-check-outline"}
               color={due > customer.creditLimit! ? semantic.due : colors.onSurfaceSecondary}
@@ -229,7 +251,7 @@ export default function CustomerDetail() {
               style={[styles.breakdown, { marginTop: spacing.sm }]}
             />
           ) : null}
-          {due > 0 && customer.remindOn ? (
+          {due > 0 && !vendor && customer.remindOn ? (
             <Pressable onPress={() => setRemindSheet(true)} hitSlop={6} testID="cust-remind-on">
               <IconLabel
                 icon="bell-ring-outline"
@@ -320,7 +342,7 @@ export default function CustomerDetail() {
             {visible.slice(0, shown).map((e, i) => (
               <Animated.View key={e.id} entering={FadeInDown.delay(Math.min(i, 8) * 40).duration(250)}>
                 {e.type !== "payment" ? (
-                  <WorkCard entry={e} status={ledger.work.get(e.id)!} onPress={() => setEditing(e)} onSettle={() => setSettling(e)} onReceipt={() => openReceipt(e)} />
+                  <WorkCard entry={e} status={ledger.work.get(e.id)!} vendor={vendor} onPress={() => setEditing(e)} onSettle={() => setSettling(e)} onReceipt={() => openReceipt(e)} />
                 ) : (
                   <JamaCard entry={e} onPress={() => setEditing(e)} onReceipt={() => openReceipt(e)} />
                 )}
@@ -344,14 +366,14 @@ export default function CustomerDetail() {
           testID="cust-primary-btn"
         />
         <Button
-          label={secondary === actWork ? "काम" : secondary === actGot ? "मिले" : "दिए"}
+          label={secondary === actOrder ? "ऑर्डर" : secondary === actPay ? "भुगतान" : secondary === actWork ? "काम" : secondary === actGot ? "मिले" : "दिए"}
           icon={secondary.icon}
           variant="secondary"
           onPress={secondary.run}
           style={{ paddingHorizontal: spacing.md }}
           testID="cust-secondary-btn"
         />
-        {due > 0 ? <IconButton icon="message-alert-outline" label="तगादा भेजें" color={semantic.pending} background={semantic.pendingSoft} onPress={openReminder} testID="share-reminder-btn" /> : null}
+        {due > 0 && !vendor ? <IconButton icon="message-alert-outline" label="तगादा भेजें" color={semantic.pending} background={semantic.pendingSoft} onPress={openReminder} testID="share-reminder-btn" /> : null}
         <IconButton icon="dots-horizontal" label="और विकल्प" color={colors.brandPrimary} background={colors.brandTertiary} onPress={() => setMore(true)} testID="cust-more-btn" />
       </View>
 
@@ -369,6 +391,23 @@ export default function CustomerDetail() {
         </View>
       </SheetShell>
 
+      <SheetShell visible={payPick} onClose={() => setPayPick(false)} title="किस ऑर्डर का भुगतान?">
+        <View style={{ gap: spacing.xs }}>
+          {openOrders.map((o) => (
+            <Pressable key={o.id} style={styles.moreRow} onPress={() => { setPayPick(false); setTimeout(() => setSettling(o), 300); }} testID={`pay-order-${o.id}`}>
+              <View style={[styles.iconBadge, { backgroundColor: semantic.dueSoft }]}>
+                <MaterialIcon name="truck-outline" size={18} color={semantic.due} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.moreText} numberOfLines={1}>{o.description || "Vendor ऑर्डर"}</Text>
+                <Text style={styles.sub}>{workOrderNo(o)}{o.dueDate ? ` · कब तक ${formatDate(o.dueDate)}` : ""}</Text>
+              </View>
+              <Text style={[styles.amount, { color: semantic.due }]}>{formatINR(ledger.work.get(o.id)?.remaining ?? 0)}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </SheetShell>
+      <AddEntrySheet visible={orderSheet} type="purchase" vendor onClose={() => setOrderSheet(false)} customerId={customer.id} />
       <AddEntrySheet visible={entrySheet !== null} type={entrySheet ?? "work"} onClose={() => setEntrySheet(null)} customerId={customer.id} />
       <EditRecordSheet entry={editing} job={editingJob} onClose={() => { setEditing(null); setEditingJob(null); }} />
       <AddJobSheet visible={jobSheet !== null} initialMode={jobSheet ?? "now"} onClose={() => setJobSheet(null)} customerId={customer.id} />
@@ -491,9 +530,12 @@ function ReceiptButton({ entryId, onPress }: { entryId: string; onPress: () => v
   );
 }
 
-function WorkCard({ entry, status, onPress, onSettle, onReceipt }: { entry: Entry; status: WorkStatus; onPress: () => void; onSettle: () => void; onReceipt: () => void }) {
+function WorkCard({ entry, status, vendor, onPress, onSettle, onReceipt }: { entry: Entry; status: WorkStatus; vendor?: boolean; onPress: () => void; onSettle: () => void; onReceipt: () => void }) {
   const given = entry.type === "given";
   const purchase = entry.type === "purchase";
+  const order = vendor && purchase;
+  const delivered = entry.status !== "ordered";
+  const late = order && !delivered && !!entry.dueDate && entry.dueDate < todayISO();
   const ui = (purchase ? PURCHASE_UI : given ? GIVEN_UI : STATE_UI)[status.state];
   const open = status.state === "pending" || status.state === "partial";
   const laterPaid = status.received - status.paidAtBooking;
@@ -514,6 +556,14 @@ function WorkCard({ entry, status, onPress, onSettle, onReceipt }: { entry: Entr
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.jobTitle} numberOfLines={2}>{entry.description || (purchase ? "सामान / सेवा" : given ? "पैसे दिए" : "काम")}</Text>
           <Text style={styles.sub}>{formatDate(entry.date)}{entry.notes ? ` · ${entry.notes}` : ""}</Text>
+          {order && entry.dueDate ? (
+            <IconLabel
+              icon={delivered ? "check-circle-outline" : late ? "alert-circle-outline" : "truck-delivery-outline"}
+              color={delivered ? colors.success : late ? colors.error : colors.info}
+              label={delivered ? "डिलीवर हो गया" : `कब तक: ${entry.dueDate === todayISO() ? "आज" : formatDate(entry.dueDate)}${late ? " · देर" : ""}`}
+              style={[styles.sub, { fontWeight: "700" }]}
+            />
+          ) : null}
           {entry.fee && entry.fee > 0 ? (
             <Text style={{ fontSize: 12, color: colors.muted, marginTop: 2 }}>
               पोर्टल फीस: {formatINR(entry.fee)} ({entry.feeMode === "cash" ? "नकद" : "बैंक"}) · बचत: {formatINR(entry.amount - entry.fee)}
@@ -611,6 +661,8 @@ function JamaCard({ entry, onPress, onReceipt }: { entry: Entry; onPress: () => 
 const styles = StyleSheet.create({
   name: { fontSize: 18, fontWeight: "700", color: colors.onSurface },
   sub: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  vendorTag: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", marginTop: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill, backgroundColor: colors.infoSoft },
+  vendorTagText: { fontSize: 12, fontWeight: "800", color: colors.info },
   balanceCard: { padding: spacing.xl, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   balanceLabel: { fontSize: 12, color: colors.muted, fontWeight: "700", textTransform: "uppercase" },
   balanceValue: { fontSize: 36, fontWeight: "800", marginTop: spacing.xs },

@@ -12,7 +12,7 @@ import {
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
-import { advanceOf, computeBalance, itemsOf, useCustomers, useEntries, useJobs, type Customer, type Entry, type EntryItem, type EntryType, type Job } from "@/src/lib/data";
+import { advanceOf, computeBalance, isVendor, itemsOf, useCustomers, useEntries, useJobs, type Customer, type Entry, type EntryItem, type EntryType, type Job } from "@/src/lib/data";
 import { ADVANCE, advancesForJob, buildLedger, jobForWork, linkedPayment, olderAdvances, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
@@ -22,7 +22,7 @@ import { Pressable } from "@/src/components/tap";
 import { useAuth } from "@/src/context/AuthContext";
 import { useContactPicker } from "@/src/components/contact-picker-modal";
 import { usePersona } from "@/src/lib/persona";
-import { getPrefs } from "@/src/lib/prefs";
+import { getPrefs, savePrefs } from "@/src/lib/prefs";
 import { useKeyboardOverlap } from "@/src/lib/keyboard-overlap";
 import { useRouter } from "expo-router";
 import { EditHistory } from "@/src/components/edit-history";
@@ -233,7 +233,7 @@ function samePhone(list: Customer[], phone: string, exceptId?: string): Customer
 
 // Lets a sheet pick an existing customer (searchable, most recent first), create one from the
 // typed name, or — for jobs — mark it as the shopkeeper's own task.
-export function useCustomerChoice(visible: boolean, fixedCustomerId?: string) {
+export function useCustomerChoice(visible: boolean, fixedCustomerId?: string, role: "customer" | "vendor" = "customer") {
   const { isPersonal } = usePersona();
   const allCustomers = useCustomers().data ?? [];
   const entries = useEntries().data ?? [];
@@ -241,9 +241,10 @@ export function useCustomerChoice(visible: boolean, fixedCustomerId?: string) {
   const [query, setQuery] = useState("");
   const [newPhone, setNewPhone] = useState("");
 
+  // Shop vendors are never offered where a customer is picked, and the other way round.
   const customers = useMemo(() => {
-    return allCustomers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal"));
-  }, [allCustomers, isPersonal]);
+    return allCustomers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal" && isVendor(c) === (role === "vendor")));
+  }, [allCustomers, isPersonal, role]);
 
   useEffect(() => {
     if (visible) {
@@ -279,6 +280,7 @@ export function useCustomerChoice(visible: boolean, fixedCustomerId?: string) {
       address: "",
       notes: "",
       persona: isPersonal ? "personal" : "business",
+      ...(!isPersonal && role === "vendor" ? { role: "vendor" as const } : {}),
     });
     setCustomerId(c.id);
     return c.id;
@@ -753,8 +755,9 @@ export function PrimaryButton({ label, onPress, disabled, saving, color, testID 
   );
 }
 
-export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visible: boolean; onClose: () => void; initial?: any; onDelete?: () => void }) {
+export function AddCustomerSheet({ visible, onClose, initial, onDelete, role: roleProp }: { visible: boolean; onClose: () => void; initial?: any; onDelete?: () => void; role?: "customer" | "vendor" }) {
   const { isPersonal } = usePersona();
+  const [role, setRole] = useState<"customer" | "vendor">("customer");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
@@ -776,12 +779,14 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
       setLimit(initial?.creditLimit ? String(initial.creditLimit) : "");
       // Rows saved before personas existed belong to the shop.
       setTargetPersona(initial ? (initial.persona === "personal" ? "personal" : "business") : isPersonal ? "personal" : "business");
+      setRole(initial ? (isVendor(initial) ? "vendor" : "customer") : roleProp ?? "customer");
     }
     // Only when the sheet opens for a record, not when a sync hands over a fresh copy of it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initial?.id, isPersonal]);
 
   const allCustomers = useCustomers().data ?? [];
+  const asVendor = targetPersona !== "personal" && role === "vendor";
   const sameBook = allCustomers.filter((c) => (targetPersona === "personal" ? c.persona === "personal" : c.persona !== "personal"));
   const phoneDupe = samePhone(sameBook, phone, initial?.id);
   const nameDupe = !!name.trim() && sameBook.some((c) => c.id !== initial?.id && c.name.trim().toLowerCase() === name.trim().toLowerCase());
@@ -796,7 +801,8 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
         address: address.trim(),
         notes: notes.trim(),
         persona: targetPersona,
-        creditLimit: targetPersona === "personal" ? 0 : parseAmount(limit) || 0,
+        creditLimit: targetPersona === "personal" || asVendor ? 0 : parseAmount(limit) || 0,
+        ...(targetPersona === "personal" ? {} : { role: asVendor ? ("vendor" as const) : ("customer" as const) }),
       };
       if (initial?.id) await store.updateCustomer(initial.id, body);
       else await store.createCustomer(body);
@@ -805,7 +811,17 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title={initial ? "विवरण बदलें" : targetPersona === "personal" ? "नया व्यक्ति" : "नया ग्राहक"} testID="sheet-customer">
+    <SheetShell visible={visible} onClose={onClose} title={initial ? "विवरण बदलें" : targetPersona === "personal" ? "नया व्यक्ति" : asVendor ? "नया Vendor" : "नया ग्राहक"} testID="sheet-customer">
+      {targetPersona !== "personal" ? (
+        <View style={styles.segment}>
+          {(["customer", "vendor"] as const).map((r) => (
+            <Pressable key={r} onPress={() => setRole(r)} style={[styles.segmentBtn, role === r && { backgroundColor: colors.brandPrimary }]} testID={`cust-role-${r}`}>
+              <MaterialIcon name={r === "vendor" ? "truck-outline" : "account-outline"} size={16} color={role === r ? "#fff" : colors.onSurface} />
+              <Text style={[styles.segmentText, role === r && { color: "#fff" }]}>{r === "vendor" ? "Vendor / कारीगर" : "ग्राहक"}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
       {!initial ? (
         <View style={{ marginBottom: spacing.md, gap: spacing.sm }}>
           <Pressable
@@ -850,7 +866,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
       </Field>
       <MoreInfo
         open={!!address || !!notes || !!limit}
-        hint={targetPersona === "personal" ? "पता, नोट" : "पता, नोट, उधार सीमा"}
+        hint={targetPersona === "personal" || asVendor ? "पता, नोट" : "पता, नोट, उधार सीमा"}
         testID="cust-more-info"
       >
         <Field label="पता">
@@ -859,14 +875,14 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visi
         <Field label="नोट">
           <TextInput style={[inputStyle, { minHeight: 72 }]} value={notes} onChangeText={setNotes} multiline placeholderTextColor={colors.muted} testID="input-cust-notes" />
         </Field>
-        {targetPersona === "personal" ? null : (
+        {targetPersona === "personal" || asVendor ? null : (
           <Field label="उधार सीमा (₹)">
             <TextInput style={inputStyle} value={limit} onChangeText={(v) => setLimit(cleanAmountInput(v))} placeholder="खाली = कोई सीमा नहीं" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-cust-limit" />
             <Text style={styles.hint}>इससे ज़्यादा उधार होने पर एंट्री लिखते समय चेतावनी दिखेगी</Text>
           </Field>
         )}
       </MoreInfo>
-      <PrimaryButton label={initial ? "बदलाव सेव करें" : targetPersona === "personal" ? "व्यक्ति जोड़ें" : "ग्राहक जोड़ें"} onPress={save} disabled={!name.trim()} saving={saving} testID="save-customer-btn" />
+      <PrimaryButton label={initial ? "बदलाव सेव करें" : targetPersona === "personal" ? "व्यक्ति जोड़ें" : asVendor ? "Vendor जोड़ें" : "ग्राहक जोड़ें"} onPress={save} disabled={!name.trim()} saving={saving} testID="save-customer-btn" />
       {initial?.id && onDelete ? (
         <DangerLink
           label="यह खाता हटाएँ"
@@ -891,9 +907,31 @@ const ENTRY_UI: Record<EntryType, { title: string; short: string; icon: string; 
 const PICKER_LABEL: Record<EntryType, string> = { work: "ग्राहक", payment: "किससे मिले", given: "किसको दिए", purchase: "किससे ली", aeps: "ग्राहक" };
 
 /** Plain khata row. With `kinds`, the sheet lets you switch between them (e.g. मिले / दिए / सामान). */
-export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixedCustomerId, initial }: { visible: boolean; type: EntryType; kinds?: EntryType[]; onClose: () => void; customerId?: string; initial?: Entry }) {
-  const choice = useCustomerChoice(visible, fixedCustomerId ?? initial?.customerId);
+export function AddEntrySheet({
+  visible,
+  type,
+  kinds,
+  onClose,
+  customerId: fixedCustomerId,
+  initial,
+  vendor: vendorProp,
+}: {
+  visible: boolean;
+  type: EntryType;
+  kinds?: EntryType[];
+  onClose: () => void;
+  customerId?: string;
+  initial?: Entry;
+  /** Shop vendor order: purchase from a vendor with a promised date and terms. */
+  vendor?: boolean;
+}) {
+  const allCustomers = useCustomers().data ?? [];
+  const vendor = !!vendorProp || (initial?.type === "purchase" && isVendor(allCustomers.find((c) => c.id === initial.customerId)));
+  const choice = useCustomerChoice(visible, fixedCustomerId ?? initial?.customerId, vendor ? "vendor" : "customer");
   const [kind, setKind] = useState<EntryType>(type);
+  const [dueDate, setDueDate] = useState(todayISO(3));
+  const [delivered, setDelivered] = useState(false);
+  const [terms, setTerms] = useState("");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const money = useMoneyInput();
@@ -928,6 +966,9 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
     setDate(initial?.date ?? todayISO());
     setOpenedOn(todayISO());
     setNotes(initial?.notes ?? "");
+    setDueDate(initial?.dueDate || todayISO(3));
+    setDelivered(initial ? initial.status !== "ordered" : false);
+    setTerms(initial ? initial.terms ?? "" : getPrefs().vendorTerms);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initial, type]);
 
@@ -954,8 +995,10 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
     setSaving(true);
     try {
       const day = initial ? date : dateOnSave(date, openedOn);
+      const order = vendor ? { dueDate, status: delivered ? ("delivered" as const) : ("ordered" as const), terms: terms.trim() } : {};
+      if (vendor && terms.trim() !== getPrefs().vendorTerms) void savePrefs({ vendorTerms: terms.trim() });
       const body = isPurchase
-        ? { type: kind, date: day, description: items.description, amount: amt, paid: paidNow, mode: payMode, notes: notes.trim(), items: items.saved() }
+        ? { type: kind, date: day, description: items.description, amount: amt, paid: paidNow, mode: payMode, notes: notes.trim(), items: items.saved(), ...order }
         : { type: kind, date: day, description: description.trim(), amount: amt, mode: payMode, notes: notes.trim() };
       if (initial) await store.updateEntry(initial.id, body);
       else {
@@ -979,8 +1022,8 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title={initial ? "एंट्री बदलें" : kinds ? "लेन-देन" : ui.title} testID={`sheet-entry-${kind}`}>
-      {kinds && !initial ? (
+    <SheetShell visible={visible} onClose={onClose} title={vendor ? (initial ? "Vendor ऑर्डर बदलें" : "नया Vendor ऑर्डर") : initial ? "एंट्री बदलें" : kinds ? "लेन-देन" : ui.title} testID={`sheet-entry-${vendor ? "vendor" : kind}`}>
+      {kinds && !initial && !vendor ? (
         <View style={styles.segment}>
           {kinds.map((k) => (
             <Pressable key={k} onPress={() => setKind(k)} style={[styles.segmentBtn, kind === k && { backgroundColor: ENTRY_UI[k].color }]} testID={`entry-kind-${k}`}>
@@ -990,11 +1033,21 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
           ))}
         </View>
       ) : null}
-      {isPurchase && !initial && !fixedCustomerId ? <CustomerPicker choice={choice} label={PICKER_LABEL[kind]} testPrefix="chip-cust" /> : null}
+      {isPurchase && !initial && !fixedCustomerId ? <CustomerPicker choice={choice} label={vendor ? "Vendor / कारीगर" : PICKER_LABEL[kind]} testPrefix="chip-cust" /> : null}
       {isPurchase ? (
         <>
-          <ItemsField items={items} label="क्या लिया" placeholder={ui.placeholder} addLabel="और जोड़ें" />
-          <MoneyFields money={money} receivedLabel="अभी कितने दिए (₹)" hideTotal purchase />
+          <ItemsField items={items} label={vendor ? "काम / सामान क्या" : "क्या लिया"} placeholder={vendor ? "जैसे फ्रेम 12×18 · 20 पीस" : ui.placeholder} addLabel="और जोड़ें" />
+          <MoneyFields money={money} receivedLabel={vendor ? "एडवांस दिया (₹)" : "अभी कितने दिए (₹)"} hideTotal purchase />
+          {vendor ? (
+            <>
+              <DateField label="कब तक होगा" value={dueDate} onChange={setDueDate} future testID="input-vendor-due" />
+              {initial ? (
+                <View style={{ marginBottom: spacing.md }}>
+                  <Chip label={delivered ? "डिलीवर हो गया" : "अभी बाकी है"} icon={delivered ? "check-circle" : "progress-clock"} active={delivered} onPress={() => setDelivered(!delivered)} tone={colors.success} testID="vendor-delivered" />
+                </View>
+              ) : null}
+            </>
+          ) : null}
           {overRepaid ? (
             <Text style={[styles.hint, { color: colors.error }]}>
               कुल {formatINR(paidNow + repaidLater)} चुका चुके हैं — रकम इससे कम नहीं हो सकती। ज़्यादा दिए पैसे नीचे से हटाएँ।
@@ -1083,10 +1136,15 @@ export function AddEntrySheet({ visible, type, kinds, onClose, customerId: fixed
         <Field label="नोट">
           <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-entry-notes" />
         </Field>
+        {vendor ? (
+          <Field label="शर्तें (Work Order पर छपेंगी)">
+            <TextInput style={[inputStyle, { minHeight: 72, textAlignVertical: "top" }]} value={terms} onChangeText={setTerms} multiline placeholder="जैसे बाकी भुगतान डिलीवरी पर · सैंपल जैसी क्वालिटी" placeholderTextColor={colors.muted} testID="input-vendor-terms" />
+          </Field>
+        ) : null}
       </MoreInfo>
       {kind === "work" || kind === "given" ? <LimitWarning customerId={personId} extra={amt} /> : null}
       <PrimaryButton
-        label={initial ? "बदलाव सेव करें" : `${ui.title} — सेव करें`}
+        label={initial ? "बदलाव सेव करें" : vendor ? "ऑर्डर सेव करें" : `${ui.title} — सेव करें`}
         onPress={save}
         disabled={!valid}
         saving={saving}

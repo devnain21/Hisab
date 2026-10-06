@@ -18,8 +18,8 @@ function LedgerMaintenance() {
 export default function TabsLayout() {
   const { status } = useAuth();
   const counter = useCounterMode();
-  const { labels, isPersonal } = usePersona();
-  if (status === "loading") {
+  const { labels, isPersonal, ready } = usePersona();
+  if (status === "loading" || (status === "authenticated" && !ready)) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface }}>
         <ActivityIndicator color={colors.brandPrimary} />

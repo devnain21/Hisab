@@ -135,6 +135,8 @@ class Customer(BaseModel):
     persona: Optional[str] = "business"
     creditLimit: float = 0
     remindOn: str = ""
+    # "vendor": someone the shop buys from / outsources work to; their balance is what the shop owes.
+    role: str = "customer"
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updatedAt: Optional[str] = None
 
@@ -152,6 +154,7 @@ class CustomerCreate(BaseModel):
     creditLimit: Optional[Money] = None
     # Day to chase the udhaar (YYYY-MM-DD, "" = none); same rule for older builds.
     remindOn: Optional[OptISODate] = None
+    role: Optional[Literal["customer", "vendor"]] = None
 
 
 def _check_paid(m):
@@ -201,8 +204,15 @@ class Entry(BaseModel):
     notes: str = ""
     linkId: str = ""
     items: Optional[List[EntryItem]] = None
+    # Vendor orders (purchase rows): promised date, delivery state and the terms printed on the work order.
+    dueDate: str = ""
+    status: str = ""
+    terms: str = ""
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updatedAt: Optional[str] = None
+
+
+VendorStatus = Literal["", "ordered", "delivered"]
 
 
 class EntryCreate(BaseModel):
@@ -221,6 +231,9 @@ class EntryCreate(BaseModel):
     notes: Notes = ""
     linkId: str = ""
     items: Optional[List[EntryItem]] = Field(None, max_length=200)
+    dueDate: OptISODate = ""
+    status: VendorStatus = ""
+    terms: Notes = ""
 
     @model_validator(mode="after")
     def validate_paid(self):
@@ -239,6 +252,10 @@ class EntryUpdate(BaseModel):
     notes: Notes = ""
     linkId: Optional[str] = None
     items: Optional[List[EntryItem]] = Field(None, max_length=200)
+    # Left out by older app builds, which must not wipe them.
+    dueDate: Optional[OptISODate] = None
+    status: Optional[VendorStatus] = None
+    terms: Optional[Notes] = None
 
     @model_validator(mode="after")
     def validate_paid(self):
@@ -833,7 +850,7 @@ async def update_customer(customer_id: str, payload: CustomerCreate, user: dict 
         raise HTTPException(404, "Not found")
     _check_base(existing, base)
     patch = payload.dict(exclude={"id", "createdAt"})
-    for key in ("creditLimit", "remindOn"):
+    for key in ("creditLimit", "remindOn", "role"):
         if patch.get(key) is None:
             patch.pop(key, None)
     patch["updatedAt"] = _now()

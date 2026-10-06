@@ -11,11 +11,11 @@ import { formatDateShort, formatINR, formatMonth, formatWeekdayDate, monthRange,
 import { Pressable } from "@/src/components/tap";
 import { usePersona, type Persona } from "@/src/lib/persona";
 import { useCustomers, type Entry } from "@/src/lib/data";
-import { AEPS_META } from "@/src/lib/aeps";
 import type { Expense } from "@/src/lib/expenses";
-import { accountLabel, computeFlows, isInflow, isInternal, pocketNet, useMoneyBook, walletTxns, type FlowKey, type Move, type Pocket, type WalletTxn } from "@/src/lib/wallet";
+import { computeFlows, isInflow, isInternal, pocketNet, useMoneyBook, walletTxns, type FlowKey, type Move, type Pocket, type WalletTxn } from "@/src/lib/wallet";
 import { FLOW, FlowHead, FlowRow, FlowTile, NetRow } from "@/src/components/money-flow";
-import { IN_ROWS, OUT_ROWS, flowLabel, pocketTitle } from "@/src/components/pocket-card";
+import { IN_ROWS, OUT_ROWS, pocketTitle } from "@/src/components/pocket-card";
+import { describeTxn } from "@/src/components/activity-feed";
 import { EditRecordSheet } from "@/src/components/sheets";
 import { AddExpenseSheet } from "@/src/components/expense-sheet";
 import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet";
@@ -113,7 +113,7 @@ export default function PocketScreen() {
         if (dir === "out" && inflow) return false;
         if (keyFilter && r.t.key !== keyFilter) return false;
         if (needle) {
-          const d = describe(r.t, persona, r.t.pocket, nameOf);
+          const d = describeTxn(r.t, persona, r.t.pocket, nameOf);
           if (!`${d.title} ${d.sub} ${r.t.amount}`.toLowerCase().includes(needle)) return false;
         }
         return true;
@@ -282,7 +282,7 @@ export default function PocketScreen() {
         tone: isInflow(r.key) ? ("ok" as const) : ("due" as const),
       }));
       const rows: RegisterRow[] = shownRows.map((r) => {
-        const d = describe(r.t, persona, r.t.pocket, nameOf);
+        const d = describeTxn(r.t, persona, r.t.pocket, nameOf);
         return { date: r.t.date, title: d.title, sub: d.sub, amount: r.t.amount, inflow: isInflow(r.t.key), after: r.after };
       });
       const doc = registerDoc(user || {}, title, periodText, data, breakdownLines, rows);
@@ -357,36 +357,8 @@ export default function PocketScreen() {
   );
 }
 
-function describe(t: WalletTxn, persona: Persona, pocket: Pocket, nameOf: (id: string) => string): { title: string; sub: string; icon: string } {
-  const s = t.src;
-  if (s.kind === "entry") {
-    const e = s.entry;
-    const what =
-      t.key === "fee"
-        ? "पोर्टल फीस"
-        : t.key === "work"
-          ? "काम"
-          : t.key === "received"
-            ? "पैसे आए"
-            : t.key === "purchase"
-              ? e.type === "purchase" ? "सामान / सेवा" : "सामान / सेवा · चुकाया"
-              : "पैसे गए";
-    return { title: nameOf(e.customerId), sub: [what, e.description].filter(Boolean).join(" · "), icon: t.key === "fee" ? "receipt" : "account-outline" };
-  }
-  if (s.kind === "expense") {
-    return { title: s.expense.title, sub: ["खर्च", s.expense.notes].filter(Boolean).join(" · "), icon: "coffee-outline" };
-  }
-  if (s.kind === "move") {
-    const m = s.move;
-    const title = t.key === "moveIn" ? (m.from ? `${accountLabel(m.from)} से आए` : "बाहर से जोड़े") : m.to ? `${accountLabel(m.to)} में गए` : "बाहर निकाले";
-    return { title, sub: m.note || (t.key === "moveIn" ? "जोड़े" : "निकाले"), icon: m.from && m.to ? "swap-horizontal" : t.key === "moveIn" ? "plus-circle-outline" : "minus-circle-outline" };
-  }
-  const x = s.txn;
-  return { title: x.customerName || "AEPS ग्राहक", sub: `${AEPS_META[x.type]?.hi ?? "AEPS"} · ${flowLabel(t.key, persona, pocket)}`, icon: "fingerprint" };
-}
-
 function TxnRow({ t, after, persona, pocket, nameOf, onPress }: { t: WalletTxn; after: number; persona: Persona; pocket: Pocket; nameOf: (id: string) => string; onPress: () => void }) {
-  const d = describe(t, persona, pocket, nameOf);
+  const d = describeTxn(t, persona, pocket, nameOf);
   const inflow = isInflow(t.key);
   return (
     <Pressable style={styles.row} onPress={onPress} testID={`pocket-txn-${t.id}`}>

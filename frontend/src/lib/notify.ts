@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { Platform } from "react-native";
 import { useRouter } from "expo-router";
-import { computeBalance, useCustomers, useEntries, type Customer, type Entry } from "./data";
+import { computeBalance, isVendor, useCustomers, useEntries, type Customer, type Entry } from "./data";
 import { formatINR, todayISO } from "./format";
 
 type Notifications = typeof import("expo-notifications");
@@ -44,7 +44,7 @@ function plan(customers: Customer[], entries: Entry[]): Plan[] {
   const now = Date.now();
   const out: Plan[] = [];
   for (const c of customers) {
-    if (!c.remindOn || c.remindOn < today) continue;
+    if (!c.remindOn || c.remindOn < today || isVendor(c)) continue;
     const due = computeBalance(entries, c.id);
     if (due <= 0) continue;
     const [y, m, d] = c.remindOn.split("-").map(Number);

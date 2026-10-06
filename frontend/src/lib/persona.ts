@@ -9,7 +9,8 @@ const KEY = "hisab_persona_v1";
 
 export function usePersona() {
   const { user, setShop } = useAuth();
-  const customers = useCustomers().data;
+  const customersQ = useCustomers();
+  const customers = customersQ.data;
   const [stored, setStored] = useState<Persona | null>(null);
 
   useEffect(() => {
@@ -22,6 +23,8 @@ export function usePersona() {
   // A shop exists once it has a name, or for older accounts that already keep shop customers.
   const hasShop = !!user?.shop_name || user?.persona === "business" || (customers ?? []).some((c) => c.persona !== "personal");
   const persona: Persona = hasShop ? (user?.persona as Persona) || stored || "business" : "personal";
+  // Without a saved mode or shop name the answer depends on the customer list; until it loads, don't guess.
+  const ready = !!user?.persona || !!user?.shop_name || !customersQ.isLoading;
 
   const setPersona = useCallback(
     async (next: Persona) => {
@@ -48,6 +51,7 @@ export function usePersona() {
     persona,
     isPersonal,
     hasShop,
+    ready,
     setPersona,
     labels: {
       customer: isPersonal ? "व्यक्ति" : "ग्राहक",

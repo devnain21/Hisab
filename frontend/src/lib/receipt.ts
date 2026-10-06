@@ -216,9 +216,19 @@ export function receiptDoc(
   const many = items.length > 1;
   const upiDue = purchase || given ? 0 : itemDue > 0 ? itemDue : balance > 0 ? balance : 0;
 
+  // Work: the day it was done, and the day it was fully paid (left out while money is still due).
+  const slipDates = (): string[] => {
+    if (entry.type === "work") {
+      const paidOn = itemDue <= 0 && entry.amount > 0 ? status?.settledOn || entry.date : "";
+      return [`📅 Work Done : ${formatDate(entry.date)}`, ...(paidOn ? [`✅ Payment : ${formatDate(paidOn)}`] : [])];
+    }
+    if (dates) return [`📅 Work Done : प्रगति पर`, `✅ Advance : ${formatDate(entry.date)}`];
+    if (entry.type === "payment") return [`✅ Payment : ${formatDate(entry.date)}`];
+    return [`📅 ${formatDate(entry.date)}`];
+  };
   const message = [
     `*${shop.shop_name}*`,
-    `📅 ${dates ? dateText() : formatDate(entry.date)}`,
+    ...slipDates(),
     "",
     `*${customer.name}*`,
     ...items.map((it, i) => `${many ? `${i + 1}. ` : ""}${it.title}${it.amount > 0 ? ` — ${formatINR(it.amount)}` : ""}`),

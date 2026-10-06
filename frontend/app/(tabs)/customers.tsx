@@ -5,6 +5,7 @@ import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
+import Animated, { FadeInDown } from "react-native-reanimated";
 import { colors, spacing, radius, semantic, elevation, type } from "@/src/theme";
 import { entryDelta, isVendor, useCustomers, useEntries } from "@/src/lib/data";
 import { buildAllLedgers } from "@/src/lib/records";
@@ -23,7 +24,10 @@ const FILTERS: Filter[] = ["due", "owe", "all"];
 type Sort = "recent" | "amount" | "oldest" | "name";
 const SORTS: Sort[] = ["recent", "amount", "oldest", "name"];
 const SORT_LABEL: Record<Sort, string> = { recent: "नई एंट्री", amount: "ज़्यादा रकम", oldest: "पुराना बाकी", name: "नाम A-Z" };
+const SORT_ICON: Record<Sort, string> = { recent: "clock-outline", amount: "sort-numeric-descending", oldest: "history", name: "sort-alphabetical-ascending" };
 const phoneKey = (p: string) => p.replace(/\D/g, "").slice(-10);
+/** Udhaar open this many days or more is flagged on the row. */
+const OLD_DAYS = 30;
 
 export default function CustomersScreen() {
   const insets = useSafeAreaInsets();
@@ -34,8 +38,8 @@ export default function CustomersScreen() {
   const vendors = !isPersonal && book === "vendor";
   const customersQ = useCustomers();
   const entriesQ = useEntries();
-  const allCustomers = customersQ.data ?? [];
-  const entries = entriesQ.data ?? [];
+  const allCustomers = useMemo(() => customersQ.data ?? [], [customersQ.data]);
+  const entries = useMemo(() => entriesQ.data ?? [], [entriesQ.data]);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("due");
   const [sort, setSort] = useState<Sort>("recent");
@@ -44,6 +48,7 @@ export default function CustomersScreen() {
   const [shareDoc, setShareDoc] = useState<ShareDoc | null>(null);
   const { user } = useAuth();
   const { hideAmounts } = usePrefs();
+  const money = (n: number) => (hideAmounts ? HIDDEN : formatINR(n));
   const today = todayISO();
   const daysSince = (d: string) => Math.round((new Date(today).getTime() - new Date(d).getTime()) / 86400000);
 
@@ -52,6 +57,7 @@ export default function CustomersScreen() {
     [allCustomers, isPersonal, vendors]
   );
   const vendorCount = useMemo(() => (isPersonal ? 0 : allCustomers.filter((c) => c.persona !== "personal" && isVendor(c)).length), [allCustomers, isPersonal]);
+  const customerCount = useMemo(() => (isPersonal ? 0 : allCustomers.filter((c) => c.persona !== "personal" && !isVendor(c)).length), [allCustomers, isPersonal]);
 
   // Shop and Personal are different books: a search or filter from one means nothing in the other.
   const [listBook, setListBook] = useState(isPersonal);
@@ -74,6 +80,10 @@ export default function CustomersScreen() {
     setBook(b);
     setFilter(b === "vendor" ? "owe" : "due");
     setQ("");
+  };
+  const pickFilter = (f: Filter) => {
+    setFilter(f);
+    if (f === "all") setSort("name");
   };
 
   const all = useMemo(() => {
@@ -100,8 +110,11 @@ export default function CustomersScreen() {
     () => ({ due: all.filter((r) => r.due > 0).length, owe: all.filter((r) => r.due < 0).length, all: all.length }),
     [all],
   );
-  const totalDue = useMemo(() => all.reduce((s, r) => s + (r.due > 0 ? r.due : 0), 0), [all]);
-  const totalOwe = useMemo(() => all.reduce((s, r) => s + (r.due < 0 ? -r.due : 0), 0), [all]);
+  const totalDue = useMemo(() => roundMoney(all.reduce((s, r) => s + (r.due > 0 ? r.due : 0), 0)), [all]);
+  const totalOwe = useMemo(() => roundMoney(all.reduce((s, r) => s + (r.due < 0 ? -r.due : 0), 0)), [all]);
+  const oldDue = useMemo(() => all.filter((r) => r.due > 0 && r.since && daysSince(r.since) >= OLD_DAYS).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [all, today]);
   const filterLabel: Record<Filter, string> = vendors
     ? { due: "एडवांस दिया", owe: "देने हैं", all: "सभी" }
     : { due: balanceTerm(1, isPersonal, true), owe: balanceTerm(-1, isPersonal, true), all: "सभी" };
@@ -133,29 +146,97 @@ export default function CustomersScreen() {
   const loading = customersQ.isLoading || entriesQ.isLoading;
   const loadFailed = !loading && (customersQ.isError || entriesQ.isError) && (customersQ.data == null || entriesQ.data == null);
 
-  return (
-    <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.md, backgroundColor: colors.surface }}>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
-          <Text style={styles.h1}>{listName}</Text>
-          {counts.due > 1 && !vendors ? (
-            <Pressable hitSlop={{ top: 2, bottom: 2 }} style={styles.bulkBtn} onPress={() => router.push("/remind" as never)} accessibilityRole="button" accessibilityLabel="सबको तगादा भेजें" testID="open-bulk-remind">
-              <MaterialIcon name="whatsapp" size={18} color={semantic.whatsapp} />
-              <Text style={styles.bulkText}>सबको तगादा</Text>
-            </Pressable>
-          ) : null}
+  // Two sides of the book: what comes to us, and what is with us (advance) / what we owe.
+  const dueSide = vendors
+    ? { label: "एडवांस दिया", value: totalDue, count: counts.due, icon: "arrow-top-right" }
+    : { label: totalTerm(true, isPersonal), value: totalDue, count: counts.due, icon: "arrow-bottom-left" };
+  const oweSide = vendors
+    ? { label: "देने हैं", value: totalOwe, count: counts.owe, icon: "arrow-top-right" }
+    : { label: totalTerm(false, isPersonal), value: totalOwe, count: counts.owe, icon: isPersonal ? "arrow-top-right" : "wallet-outline" };
+
+  const header = (
+    <View>
+      <View style={styles.hero} testID="customers-summary">
+        <View style={styles.heroRow}>
+          <Pressable style={[styles.heroHalf, filter === "due" && styles.heroHalfOn]} onPress={() => pickFilter("due")} accessibilityRole="button" testID="hero-due">
+            <View style={styles.heroLabelRow}>
+              <MaterialIcon name={dueSide.icon as never} size={14} color={filter === "due" ? colors.brandSecondary : "rgba(255,255,255,0.8)"} />
+              <Text style={[styles.heroLabel, filter === "due" && { color: colors.brandSecondary }]} numberOfLines={1}>{dueSide.label}</Text>
+            </View>
+            <Text style={[styles.heroValue, filter === "due" && { color: vendors ? semantic.received : semantic.due }]} numberOfLines={1} adjustsFontSizeToFit>{money(dueSide.value)}</Text>
+            <Text style={[styles.heroSub, filter === "due" && { color: colors.muted }]}>{dueSide.count} {listName}</Text>
+          </Pressable>
+          <Pressable style={[styles.heroHalf, filter === "owe" && styles.heroHalfOn]} onPress={() => pickFilter("owe")} accessibilityRole="button" testID="hero-owe">
+            <View style={styles.heroLabelRow}>
+              <MaterialIcon name={oweSide.icon as never} size={14} color={filter === "owe" ? colors.brandSecondary : "rgba(255,255,255,0.8)"} />
+              <Text style={[styles.heroLabel, filter === "owe" && { color: colors.brandSecondary }]} numberOfLines={1}>{oweSide.label}</Text>
+            </View>
+            <Text style={[styles.heroValue, filter === "owe" && { color: vendors ? semantic.due : isPersonal ? semantic.pending : semantic.received }]} numberOfLines={1} adjustsFontSizeToFit>{money(oweSide.value)}</Text>
+            <Text style={[styles.heroSub, filter === "owe" && { color: colors.muted }]}>{oweSide.count} {listName}</Text>
+          </Pressable>
         </View>
-        {!isPersonal ? (
-          <View style={styles.bookSeg}>
-            {(["customer", "vendor"] as const).map((b) => (
-              <Pressable hitSlop={{ top: 4, bottom: 4 }} key={b} onPress={() => switchBook(b)} style={[styles.bookBtn, book === b && styles.bookOn]} accessibilityRole="tab" accessibilityState={{ selected: book === b }} testID={`book-${b}`}>
-                <MaterialIcon name={b === "vendor" ? "truck-outline" : "account-group-outline"} size={16} color={book === b ? colors.onBrandPrimary : colors.onSurface} />
-                <Text style={[styles.bookText, book === b && { color: colors.onBrandPrimary }]}>{b === "vendor" ? `Vendor${vendorCount ? ` (${vendorCount})` : ""}` : "ग्राहक"}</Text>
+        {!vendors && counts.due > 0 ? (
+          <View style={styles.heroFoot}>
+            <Text style={styles.heroFootText} numberOfLines={1}>
+              {oldDue > 0 ? `${oldDue} का ${OLD_DAYS}+ दिन से बाकी` : `${counts.due} से पैसे आने हैं`}
+            </Text>
+            {counts.due > 1 ? (
+              <Pressable style={styles.remindAll} onPress={() => router.push("/remind" as never)} accessibilityRole="button" accessibilityLabel="सबको तगादा भेजें" testID="open-bulk-remind">
+                <MaterialIcon name="whatsapp" size={16} color={semantic.whatsapp} />
+                <Text style={styles.remindAllText}>सबको तगादा</Text>
               </Pressable>
-            ))}
+            ) : null}
           </View>
         ) : null}
+      </View>
 
+      <View style={styles.segment}>
+        {FILTERS.map((f) => {
+          const active = filter === f;
+          return (
+            <Pressable key={f} onPress={() => pickFilter(f)} style={[styles.segBtn, active && styles.segBtnOn]} accessibilityRole="button" accessibilityState={{ selected: active }} testID={`filter-${f}`}>
+              <Text style={[styles.segText, active && styles.segTextOn]} numberOfLines={1}>{filterLabel[f]}</Text>
+              <Text style={[styles.segCount, active && styles.segCountOn]}>{counts[f]}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {counts[filter] > 1 || q ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sortRow} keyboardShouldPersistTaps="handled">
+          {SORTS.map((s) => {
+            const active = sort === s;
+            return (
+              <Pressable key={s} onPress={() => setSort(s)} style={[styles.sortChip, active && styles.sortChipOn]} hitSlop={4} testID={`sort-${s}`}>
+                <MaterialIcon name={SORT_ICON[s] as never} size={13} color={active ? colors.brandPrimary : colors.muted} />
+                <Text style={[styles.sortText, active && styles.sortOn]}>{SORT_LABEL[s]}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+      {q && rows.length ? <Text style={styles.searchNote}>सबमें खोजा · {rows.length} मिले</Text> : null}
+    </View>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.surface }}>
+      <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
+        <Text style={styles.h1}>{listName}</Text>
+        {!isPersonal ? (
+          <View style={styles.bookSeg}>
+            {(["customer", "vendor"] as const).map((b) => {
+              const on = book === b;
+              const n = b === "vendor" ? vendorCount : customerCount;
+              return (
+                <Pressable hitSlop={{ top: 4, bottom: 4 }} key={b} onPress={() => switchBook(b)} style={[styles.bookBtn, on && styles.bookOn]} accessibilityRole="tab" accessibilityState={{ selected: on }} testID={`book-${b}`}>
+                  <MaterialIcon name={b === "vendor" ? "truck-outline" : "account-group-outline"} size={16} color={on ? colors.onBrandPrimary : colors.onSurface} />
+                  <Text style={[styles.bookText, on && { color: colors.onBrandPrimary }]}>{b === "vendor" ? "Vendor" : "ग्राहक"}{n ? ` · ${n}` : ""}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
         <View style={styles.searchWrap}>
           <MaterialIcon name="magnify" size={18} color={colors.muted} />
           <TextInput
@@ -170,37 +251,6 @@ export default function CustomersScreen() {
             <Pressable onPress={() => setQ("")} hitSlop={8}><MaterialIcon name="close-circle" size={18} color={colors.muted} /></Pressable>
           ) : null}
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.md }}>
-          {FILTERS.map((f) => (
-            <Pressable hitSlop={{ top: 4, bottom: 4 }} key={f} onPress={() => { setFilter(f); if (f === "all") setSort("name"); }} style={[styles.chip, filter === f && styles.chipActive]} testID={`filter-${f}`}>
-              <Text style={[styles.chipText, filter === f && { color: colors.onBrandPrimary }]}>
-                {filterLabel[f]} ({counts[f]})
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-        {!loading && filter !== "all" && (filter === "due" ? totalDue : totalOwe) > 0 ? (
-          <Pressable onPress={!vendors && filter === "due" ? () => router.push("/remind" as never) : undefined} disabled={vendors || filter !== "due"} accessibilityRole="button" accessibilityHint="सबको तगादा भेजें" style={styles.summaryRow} testID="customers-summary">
-            <Text style={[styles.summary, { flexShrink: 1 }]}>
-              {vendors ? (filter === "due" ? "कुल एडवांस दिया" : "कुल देने हैं") : totalTerm(filter === "due", isPersonal)}{" "}
-              <Text style={{ color: vendors ? (filter === "due" ? semantic.received : semantic.due) : filter === "due" ? semantic.due : isPersonal ? semantic.pending : semantic.received, fontWeight: "800" }}>
-                {hideAmounts ? HIDDEN : formatINR(filter === "due" ? totalDue : totalOwe)}
-              </Text>{" "}
-              · {counts[filter]} {listName}
-            </Text>
-            {!vendors && filter === "due" ? <MaterialIcon name="bell-ring-outline" size={18} color={colors.brandPrimary} /> : null}
-          </Pressable>
-        ) : null}
-        {!loading && counts[filter] > 1 ? (
-          <View style={styles.sortRow}>
-            <MaterialIcon name="sort" size={16} color={colors.muted} />
-            {SORTS.map((s) => (
-              <Pressable key={s} onPress={() => setSort(s)} hitSlop={6} testID={`sort-${s}`}>
-                <Text style={[styles.sortText, sort === s && styles.sortOn]}>{SORT_LABEL[s]}</Text>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
       </View>
 
       {loadFailed ? (
@@ -212,7 +262,10 @@ export default function CustomersScreen() {
           data={rows}
           keyExtractor={(item) => item.c.id}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl * 2 }}
+          ListHeaderComponent={header}
+          initialNumToRender={14}
+          windowSize={7}
+          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.xxxl * 2 + insets.bottom }}
           ListEmptyComponent={
             <View testID="customers-empty">
               <EmptyState
@@ -229,72 +282,89 @@ export default function CustomersScreen() {
               />
             </View>
           }
-          renderItem={({ item, index }) => (
-            <Pressable
-              onPress={() => router.push(`/customer/${item.c.id}`)}
-              style={[styles.row, index === 0 && styles.firstRow, index === rows.length - 1 && styles.lastRow]}
-              testID={`customer-row-${item.c.id}`}
-            >
-              <View style={styles.avatar}><Text style={styles.avatarText}>{initials(item.c.name)}</Text></View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.name} numberOfLines={1}>{item.c.name}</Text>
-                <Text style={styles.sub} numberOfLines={1}>
-                  {item.c.phone ? formatPhone(item.c.phone) : "फ़ोन नहीं"}{item.c.address ? ` · ${item.c.address}` : ""}
-                </Text>
-                {dupePhones.has(phoneKey(item.c.phone || "")) ? (
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
-                    <MaterialIcon name="alert-outline" size={14} color={colors.warning} />
-                    <Text style={styles.dupe} numberOfLines={1}>यही नंबर किसी और खाते में भी है</Text>
+          renderItem={({ item, index }) => {
+            const due = item.due;
+            const old = due > 0 && !!item.since && daysSince(item.since) >= OLD_DAYS;
+            const tone: "due" | "received" | "pending" = vendors ? (due < 0 ? "due" : "received") : due > 0 ? "due" : isPersonal ? "pending" : "received";
+            const toneColor = due === 0 ? colors.muted : tone === "due" ? semantic.due : tone === "pending" ? semantic.pending : semantic.received;
+            const toneSoft = due === 0 ? colors.surfaceTertiary : tone === "due" ? semantic.dueSoft : tone === "pending" ? semantic.pendingSoft : semantic.receivedSoft;
+            const tag = due === 0 ? TERMS.settled : vendors ? (due < 0 ? "देने हैं" : "एडवांस दिया") : balanceTerm(due, isPersonal, true);
+            const dupe = dupePhones.has(phoneKey(item.c.phone || ""));
+            return (
+              <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 25).duration(200)}>
+                <Pressable onPress={() => router.push(`/customer/${item.c.id}`)} style={styles.card} testID={`customer-row-${item.c.id}`}>
+                  <View style={styles.cardMain}>
+                    <View style={[styles.avatar, { backgroundColor: toneSoft }]}>
+                      <Text style={[styles.avatarText, { color: due === 0 ? colors.onSurfaceSecondary : toneColor }]}>{initials(item.c.name)}</Text>
+                      {old ? <View style={styles.avatarDot} /> : null}
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.name} numberOfLines={1}>{item.c.name}</Text>
+                      <Text style={styles.sub} numberOfLines={1}>
+                        {item.c.phone ? formatPhone(item.c.phone) : "फ़ोन नहीं"}{item.c.address ? ` · ${item.c.address}` : ""}
+                      </Text>
+                      <View style={styles.metaRow}>
+                        {item.last ? (
+                          <Text style={styles.last} numberOfLines={1}>
+                            <MaterialIcon name="clock-outline" size={11} color={colors.muted} /> {item.last === today ? "आज" : formatDateShort(item.last)}
+                          </Text>
+                        ) : (
+                          <Text style={styles.last}>कोई एंट्री नहीं</Text>
+                        )}
+                        {old ? (
+                          <View style={styles.oldPill}>
+                            <Text style={styles.oldText}>{daysSince(item.since)} दिन से बाकी</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    </View>
+                    <View style={{ alignItems: "flex-end", gap: 2 }}>
+                      {due === 0 ? (
+                        <Text style={[styles.dueAmt, { color: colors.muted }]}>{TERMS.settled}</Text>
+                      ) : (
+                        <>
+                          <Amount value={Math.abs(due)} tone={tone} size="bodyLg" style={{ textAlign: "right" }} />
+                          <Text style={[styles.dueTag, { color: toneColor }]}>{tag}</Text>
+                        </>
+                      )}
+                    </View>
                   </View>
-                ) : null}
-                {item.last ? (
-                  <Text style={styles.last} numberOfLines={1}>
-                    आख़िरी एंट्री: {item.last === today ? "आज" : formatDateShort(item.last)}
-                    {item.due > 0 && item.since && daysSince(item.since) >= 30 ? (
-                      <Text style={{ color: colors.error, fontWeight: "700" }}> · {daysSince(item.since)} दिन से बाकी</Text>
-                    ) : null}
-                  </Text>
-                ) : null}
-              </View>
-              <View style={{ alignItems: "flex-end" }}>
-                {item.due === 0 ? (
-                  <Text style={[styles.dueAmt, { color: colors.muted }]}>{TERMS.settled}</Text>
-                ) : (
-                  <Amount value={Math.abs(item.due)} tone={vendors ? (item.due < 0 ? "due" : "received") : item.due > 0 ? "due" : isPersonal ? "pending" : "received"} size="bodyLg" style={{ textAlign: "right" }} />
-                )}
-                {vendors ? (
-                  item.due !== 0 ? <Text style={styles.dueTag}>{item.due < 0 ? "देने हैं" : "एडवांस दिया"}</Text> : null
-                ) : item.due > 0 ? (
-                  <View style={styles.rowActs}>
-                    <Pressable
-                      onPress={() => setShareDoc(reminderDoc(item.c, item.due, user ?? {}))}
-                      hitSlop={6}
-                      style={[styles.rowBtn, { backgroundColor: semantic.pendingSoft }]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${item.c.name} को तगादा भेजें`}
-                      testID={`row-remind-${item.c.id}`}
-                    >
-                      <MaterialIcon name="message-alert-outline" size={18} color={semantic.pending} />
-                    </Pressable>
-                    <Pressable
-                      onPress={() => setPaying(item.c.id)}
-                      hitSlop={6}
-                      style={[styles.rowBtn, styles.gotBtn]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${item.c.name} से पैसे मिले`}
-                      testID={`row-got-${item.c.id}`}
-                    >
-                      <MaterialIcon name="arrow-bottom-left" size={16} color={semantic.received} />
-                      <Text style={styles.gotText}>मिले</Text>
-                    </Pressable>
-                  </View>
-                ) : item.due < 0 ? (
-                  <Text style={styles.dueTag}>{balanceTerm(item.due, isPersonal, true)}</Text>
-                ) : null}
-              </View>
-            </Pressable>
-          )}
-          ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border }} />}
+                  {dupe ? (
+                    <View style={styles.dupeRow}>
+                      <MaterialIcon name="alert-outline" size={14} color={colors.warning} />
+                      <Text style={styles.dupe} numberOfLines={1}>यही नंबर किसी और खाते में भी है</Text>
+                    </View>
+                  ) : null}
+                  {!vendors && due > 0 ? (
+                    <View style={styles.actRow}>
+                      <Pressable
+                        onPress={() => setShareDoc(reminderDoc(item.c, due, user ?? {}))}
+                        hitSlop={4}
+                        style={[styles.actBtn, { backgroundColor: semantic.pendingSoft }]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${item.c.name} को तगादा भेजें`}
+                        testID={`row-remind-${item.c.id}`}
+                      >
+                        <MaterialIcon name="message-alert-outline" size={16} color={semantic.pending} />
+                        <Text style={[styles.actText, { color: semantic.pending }]}>तगादा</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => setPaying(item.c.id)}
+                        hitSlop={4}
+                        style={[styles.actBtn, { backgroundColor: semantic.receivedSoft }]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${item.c.name} से पैसे मिले`}
+                        testID={`row-got-${item.c.id}`}
+                      >
+                        <MaterialIcon name="arrow-bottom-left" size={16} color={semantic.received} />
+                        <Text style={[styles.actText, { color: semantic.received }]}>पैसे मिले</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </Pressable>
+              </Animated.View>
+            );
+          }}
         />
       )}
 
@@ -315,37 +385,58 @@ export default function CustomersScreen() {
 }
 
 const styles = StyleSheet.create({
-  h1: { fontSize: 26, fontWeight: "700", color: colors.onSurface },
-  searchWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 46, borderWidth: 1, borderColor: colors.border },
-  search: { flex: 1, color: colors.onSurface, fontSize: 15 },
-  chip: { height: 36, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center", flexShrink: 0 },
-  chipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  h1: { fontSize: 30, fontWeight: "700", color: colors.onSurface, marginBottom: spacing.sm },
   bookSeg: { flexDirection: "row", gap: 4, padding: 4, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md },
   bookBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 36, borderRadius: radius.pill },
   bookOn: { backgroundColor: colors.brandPrimary },
   bookText: { ...type.caption, fontWeight: "800", color: colors.onSurface },
-  chipText: { fontSize: 13, color: colors.onSurface, fontWeight: "600" },
-  summary: { fontSize: 13, color: colors.onSurfaceSecondary },
-  summaryRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, marginTop: spacing.md, minHeight: 32 },
-  sortRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginTop: spacing.sm },
+  searchWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 46, borderWidth: 1, borderColor: colors.border },
+  search: { flex: 1, color: colors.onSurface, fontSize: 15 },
+
+  hero: { backgroundColor: colors.brandSecondary, borderRadius: radius.lg, padding: spacing.sm, marginBottom: spacing.md, ...elevation.mid },
+  heroRow: { flexDirection: "row", gap: spacing.sm },
+  heroHalf: { flex: 1, padding: spacing.md, borderRadius: radius.md, backgroundColor: "rgba(255,255,255,0.1)" },
+  heroHalfOn: { backgroundColor: "#fff" },
+  heroLabelRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  heroLabel: { fontSize: 12, fontWeight: "700", color: "rgba(255,255,255,0.85)", flexShrink: 1 },
+  heroValue: { fontSize: 24, fontWeight: "800", color: "#fff", marginTop: 4, fontVariant: ["tabular-nums"] },
+  heroSub: { fontSize: 11, fontWeight: "600", color: "rgba(255,255,255,0.7)", marginTop: 1 },
+  heroFoot: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, paddingHorizontal: spacing.sm, paddingTop: spacing.sm, paddingBottom: 2 },
+  heroFootText: { flex: 1, fontSize: 12, fontWeight: "600", color: "rgba(255,255,255,0.85)" },
+  remindAll: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: "#fff" },
+  remindAllText: { fontSize: 12, fontWeight: "800", color: semantic.whatsapp },
+
+  segment: { flexDirection: "row", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: 4, borderWidth: 1, borderColor: colors.border },
+  segBtn: { flex: 1, flexDirection: "row", gap: 6, height: 38, borderRadius: radius.sm + 2, alignItems: "center", justifyContent: "center" },
+  segBtnOn: { backgroundColor: colors.surface, ...elevation.low },
+  segText: { fontSize: 13, fontWeight: "600", color: colors.muted, flexShrink: 1 },
+  segTextOn: { color: colors.brandSecondary, fontWeight: "800" },
+  segCount: { fontSize: 11, fontWeight: "700", color: colors.muted, backgroundColor: colors.surfaceTertiary, paddingHorizontal: 6, borderRadius: radius.pill, overflow: "hidden" },
+  segCountOn: { color: colors.onBrandPrimary, backgroundColor: colors.brandPrimary },
+  sortRow: { gap: spacing.sm, paddingTop: spacing.md, paddingBottom: spacing.xs },
+  sortChip: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  sortChipOn: { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary },
   sortText: { fontSize: 12, color: colors.muted, fontWeight: "600" },
-  sortOn: { color: colors.brandPrimary, fontWeight: "800", textDecorationLine: "underline" },
-  row: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderLeftWidth: 1, borderRightWidth: 1, borderColor: colors.border },
-  firstRow: { borderTopLeftRadius: radius.md, borderTopRightRadius: radius.md, borderTopWidth: 1 },
-  lastRow: { borderBottomLeftRadius: radius.md, borderBottomRightRadius: radius.md, borderBottomWidth: 1 },
-  avatar: { width: 44, height: 44, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
-  avatarText: { fontWeight: "700", color: colors.onBrandTertiary, fontSize: 14 },
-  name: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
-  sub: { ...type.caption, color: colors.muted, marginTop: 2 },
-  last: { ...type.caption, color: colors.muted, marginTop: 2 },
-  dupe: { ...type.caption, color: colors.warning, fontWeight: "700", flexShrink: 1 },
+  sortOn: { color: colors.brandPrimary, fontWeight: "800" },
+  searchNote: { fontSize: 12, color: colors.muted, marginTop: spacing.sm },
+
+  card: { backgroundColor: "#fff", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginTop: spacing.sm, ...elevation.low },
+  cardMain: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  avatar: { width: 46, height: 46, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
+  avatarText: { fontWeight: "800", fontSize: 15 },
+  avatarDot: { position: "absolute", right: 0, top: 0, width: 12, height: 12, borderRadius: 6, backgroundColor: semantic.due, borderWidth: 2, borderColor: "#fff" },
+  name: { fontSize: 16, fontWeight: "700", color: colors.onSurface },
+  sub: { ...type.caption, color: colors.muted, marginTop: 1 },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: 3 },
+  last: { fontSize: 11, color: colors.muted, fontWeight: "600" },
+  oldPill: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.pill, backgroundColor: semantic.dueSoft },
+  oldText: { fontSize: 10, fontWeight: "800", color: semantic.due },
   dueAmt: { ...type.bodyLg, fontWeight: "700" },
-  dueTag: { ...type.caption, color: colors.muted },
-  bulkBtn: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 40, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: semantic.whatsappSoft },
-  bulkText: { ...type.caption, fontWeight: "800", color: semantic.whatsapp },
-  rowActs: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs },
-  rowBtn: { minHeight: 36, minWidth: 36, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
-  gotBtn: { flexDirection: "row", gap: 4, paddingHorizontal: spacing.md, backgroundColor: semantic.receivedSoft },
-  gotText: { ...type.caption, color: semantic.received, fontWeight: "800" },
+  dueTag: { fontSize: 11, fontWeight: "700" },
+  dupeRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
+  dupe: { ...type.caption, color: colors.warning, fontWeight: "700", flexShrink: 1 },
+  actRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md },
+  actBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 38, borderRadius: radius.sm + 2 },
+  actText: { fontSize: 13, fontWeight: "800" },
   fab: { position: "absolute", right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center", ...elevation.high },
 });

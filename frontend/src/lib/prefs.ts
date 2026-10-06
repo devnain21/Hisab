@@ -23,6 +23,10 @@ export type Prefs = {
   dueNote: string;
   /** Last line of a shared slip text once fully paid; "" uses PAID_NOTE_DEFAULT. */
   paidNote: string;
+  /** Short line printed beside the shop name on slips, e.g. "थारी अपनी दुकान, सारा ऑनलाइन काम". */
+  tagline: string;
+  /** Services strip under the slip header, comma separated. */
+  services: string;
 };
 
 export const DUE_NOTE_DEFAULT = "कृपया बकाया राशि का भुगतान जल्द करें। धन्यवाद 🙏";
@@ -52,6 +56,8 @@ const DEFAULTS: Prefs = {
   vendorTerms: "",
   dueNote: "",
   paidNote: "",
+  tagline: "",
+  services: "",
 };
 
 let memory: Prefs | null = null;

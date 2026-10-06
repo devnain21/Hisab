@@ -117,8 +117,13 @@ export function receiptDoc(
   let items = itemsOf(entry, fallback);
   let itemDue = 0;
   let itemBalance = 0;
-  let stamp: { text: string; tone: Tone };
   let heading = entry.type === "work" ? "बिल" : "रसीद";
+  const personal = customer.persona === "personal";
+  const rows: CardRow[] = [personRow(customer, personal ? "नाम" : isCustomer ? "Customer Name" : "नाम")];
+  let titleHi = heading;
+  let titleEn = "RECEIPT";
+  let seal: { text: string; color: string };
+  let advanceBanner: Banner | undefined;
 
   if (entry.type === "payment") {
     const job = entry.linkId ? ctx.jobs?.find((j) => j.id === entry.linkId && j.status !== "done") : undefined;
@@ -137,24 +142,48 @@ export function receiptDoc(
       itemDue = est > 0 ? Math.max(0, roundMoney(est - before - entry.amount)) : 0;
       if (itemDue > 0) lines.push({ label: TERMS.docDueShort, value: formatINR(itemDue), tone: "due" });
       itemBalance = itemDue;
+      rows.push(itemsRow(items, "कार्य विवरण", job.notes));
+      if (est > 0) rows.push({ icon: "rupee", tint: DUE, label: "तय राशि", value: formatINR(est) });
+      if (before > 0) rows.push({ icon: "paid", tint: OK, label: "पहले एडवांस", value: formatINR(before), tone: "ok" });
+      rows.push({ icon: "paid", tint: OK, label: "एडवांस राशि", value: formatINR(entry.amount), tone: "ok" }, { icon: "card", tint: BLUE, label: "Payment Mode", value: payMode(entry.mode) });
+      if (est > 0) rows.push({ icon: "scale", tint: AMBER, label: "बकाया", value: formatINR(itemDue), tone: itemDue > 0 ? "due" : "ok" });
+      titleHi = "एडवांस रसीद";
+      titleEn = "ADVANCE RECEIPT";
+      advanceBanner = { color: INFO, bg: "#E8F1FD", icon: "check", title: "एडवांस प्राप्त हुआ", sub: itemDue > 0 ? `काम पूरा होने पर बाकी ${formatINR(itemDue)}` : "धन्यवाद 🙏" };
     } else {
       lines.push({ label, value: formatINR(entry.amount), tone: "ok" });
+      const about = work?.description || (entry.description && entry.description !== "भुगतान" ? entry.description : "");
+      if (about) rows.push({ icon: "doc", tint: OK, label: work ? "किस काम का" : "विवरण", value: about, sub: entry.notes.trim() });
+      rows.push({ icon: "paid", tint: OK, label: early ? "एडवांस राशि" : "भुगतान राशि", value: formatINR(entry.amount), tone: "ok" }, { icon: "card", tint: BLUE, label: "Payment Mode", value: payMode(entry.mode) });
+      titleHi = early ? "एडवांस रसीद" : "भुगतान रसीद";
+      titleEn = early ? "ADVANCE RECEIPT" : "PAYMENT RECEIPT";
     }
-    stamp = { text: early ? "एडवांस मिला" : "भुगतान मिला", tone: "ok" };
+    seal = early ? { text: "ADVANCE", color: INFO } : { text: "RECEIVED", color: OK };
   } else if (entry.type === "work") {
     itemDue = status?.remaining ?? Math.max(0, entry.amount - (entry.paid ?? 0));
-    lines.push({ label: "कुल", value: formatINR(entry.amount) }, ...workParts(entry, status));
+    const parts = workParts(entry, status);
+    lines.push({ label: "कुल", value: formatINR(entry.amount) }, ...parts);
     if (itemDue > 0) lines.push({ label: TERMS.docDueShort, value: formatINR(itemDue), tone: "due" });
-    stamp = itemDue > 0 ? { text: TERMS.docDueShort, tone: "due" } : { text: "पूरा भुगतान", tone: "ok" };
     itemBalance = itemDue;
+    rows.push(
+      itemsRow(items, "कार्य विवरण", entry.notes),
+      { icon: "rupee", tint: DUE, label: "तय राशि", value: formatINR(entry.amount) },
+      { icon: "paid", tint: OK, label: "भुगतान की गई राशि", value: formatINR(roundMoney(entry.amount - itemDue)), tone: "ok", list: parts.length > 1 ? parts.map((p) => `${p.label} — ${p.value}`) : undefined },
+      ...(parts.length === 1 ? [{ icon: "card" as IconKey, tint: BLUE, label: "Payment Mode", value: modeOf(parts[0].label) }] : []),
+      { icon: "scale", tint: AMBER, label: "बकाया", value: formatINR(itemDue), tone: itemDue > 0 ? "due" : "ok" },
+    );
+    titleHi = personal ? "बिल" : itemDue > 0 ? "ग्राहक बिल" : "ग्राहक भुगतान रसीद";
+    titleEn = personal ? "BILL" : itemDue > 0 ? "CUSTOMER BILL" : "CUSTOMER PAYMENT RECEIPT";
+    seal = itemDue > 0 ? { text: TERMS.docDueShort, color: DUE } : { text: "PAID", color: OK };
   } else {
     const received = status?.received ?? (purchase ? entry.paid ?? 0 : 0);
     itemDue = status?.remaining ?? Math.max(0, entry.amount - received);
     lines.push({ label: given ? "पैसे दिए" : "कुल", value: formatINR(entry.amount) });
     lines.push({ label: given ? "वापस मिले" : purchase ? "चुकाए" : "जमा", value: formatINR(received), tone: received > 0 ? "ok" : undefined });
     lines.push({ label: TERMS.docDueShort, value: formatINR(itemDue), tone: itemDue > 0 ? "due" : "ok" });
-    stamp = itemDue > 0 ? { text: TERMS.docDueShort, tone: "due" } : { text: given ? "वापस मिले" : purchase ? "चुकता" : "पूरा भुगतान", tone: "ok" };
+    seal = itemDue > 0 ? { text: TERMS.docDueShort, color: DUE } : { text: given ? "वापस मिले" : purchase ? "चुकता" : "PAID", color: OK };
     itemBalance = purchase ? -itemDue : itemDue;
+    rows.push(itemsRow(items, "विवरण", entry.notes), ...lines.map((l): CardRow => ({ icon: l.tone === "due" || l.label === TERMS.docDueShort ? "scale" : "rupee", tint: l.tone === "due" ? AMBER : BLUE, label: l.label, value: l.value, tone: l.tone })));
   }
   // The whole-account box only adds something when other rows change the picture.
   const account = (entry.type === "payment" && !itemBalance) || balance !== itemBalance ? accountLine(balance, isCustomer) : undefined;
@@ -178,15 +207,27 @@ export function receiptDoc(
     ...(isCustomer && !purchase && !given ? shareFooter(shop, upiDue, customer.name) : ["धन्यवाद 🙏"]),
   ].join("\n");
 
-  const body = `
-  <table class="items">
-    <tr><th class="no">क्र.</th><th>विवरण</th><th class="amt">रकम</th></tr>
-    ${items.map((it, i) => `<tr class="item"><td class="no">${i + 1}</td><td>${esc(it.title)}</td><td class="amt">${it.amount > 0 ? esc(formatINR(it.amount)) : ""}</td></tr>`).join("")}
-  </table>
-  <table class="sum">${lines.map(sumRow).join("")}</table>
-  ${account ? accountBox(account) : ""}
-  ${upiQrHtml(shop, upiDue, customer.name)}
-  <div class="stamp" style="border-color:${toneColor(stamp.tone)};color:${toneColor(stamp.tone)}">${esc(stamp.text)}</div>`;
+  if (account) rows.push({ icon: "scale", tint: AMBER, label: account.label, value: account.value, tone: account.tone });
+  const prefs = getPrefs();
+  const facing = isCustomer && !personal && !purchase && !given;
+  const banner = !facing
+    ? undefined
+    : advanceBanner ??
+      (upiDue > 0
+        ? {
+            color: DUE,
+            bg: "#FDECEC",
+            icon: "alert" as IconKey,
+            title: `बकाया ${formatINR(upiDue)}`,
+            sub: prefs.dueNote.trim() || DUE_NOTE_DEFAULT,
+            qr: shop.shop_upi ? qrSvg(upiLink(shop.shop_upi, shop.shop_name, upiDue, `Hisab ${customer.name}`), 70) : undefined,
+          }
+        : OK_BANNER(seal.text === "ADVANCE" ? "एडवांस प्राप्त हुआ" : "भुगतान सफलतापूर्वक प्राप्त हो गया है।", prefs.paidNote.trim() || PAID_NOTE_DEFAULT));
+  const html = cardPage(
+    shop,
+    { titleHi, titleEn, noLabel: "रसीद संख्या", no, date: formatDate(entry.date), rows, stamp: seal, banner, note: personal ? "" : prefs.receiptNote.trim() },
+    personal,
+  );
 
   return {
     heading,
@@ -196,7 +237,7 @@ export function receiptDoc(
     lines,
     account,
     message,
-    html: page(shop, heading, `नं. ${esc(no)}<br/>${esc(formatDate(entry.date))}`, customer, body, "A5"),
+    html,
     fileName: docFileName(customer.name, entry.type === "work" ? "Bill" : heading === "एडवांस रसीद" ? "Advance" : "Receipt", entry.date),
   };
 }
@@ -218,17 +259,17 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
   const heading = job ? "VOUCHER" : "WORK ORDER";
   const jobRef = job ? `JOB-${entry.refId!.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase()}` : "";
   const state = left <= 0 ? "पूरा भुगतान" : job || delivered ? "भुगतान बाकी" : late ? "तारीख निकल गई" : "ऑर्डर दिया";
-  const stampTone: Tone = left <= 0 ? "ok" : "due";
 
   // One line per payment with its day and mode, oldest first.
   const booked = status?.paidAtBooking ?? entry.paid ?? 0;
-  const payments: Line[] = [
+  const pays = [
     ...(booked > 0 ? [{ date: entry.date, mode: entry.mode, amount: booked, first: true }] : []),
     ...entries
       .filter((e) => e.type === "given" && e.linkId === entry.id)
       .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt))
       .map((e) => ({ date: e.date, mode: e.mode, amount: e.amount, first: false })),
-  ].map((p) => ({
+  ];
+  const payments: Line[] = pays.map((p) => ({
     label: `${p.first && !job && !delivered ? "एडवांस" : "भुगतान"} · ${formatDate(p.date)} · ${payMode(p.mode)}`,
     value: formatINR(p.amount),
     tone: "ok" as Tone,
@@ -256,16 +297,49 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
     ...(terms ? ["", "शर्तें:", terms] : []),
   ].join("\n");
 
-  const meta = [`नं. ${esc(no)}`, jobRef ? `काम: ${esc(jobRef)}` : "", `${job ? "काम की तारीख" : "तारीख"}: ${esc(formatDate(entry.date))}`, entry.dueDate ? `<b>कब तक: ${esc(formatDate(entry.dueDate))}</b>` : ""].filter(Boolean).join("<br/>");
-  const body = `
-  <table class="items">
-    <tr><th class="no">क्र.</th><th>काम / सामान</th><th class="amt">रकम</th></tr>
-    ${items.map((it, i) => `<tr class="item"><td class="no">${i + 1}</td><td>${esc(it.title)}</td><td class="amt">${esc(formatINR(it.amount))}</td></tr>`).join("")}
-  </table>
-  <table class="sum">${lines.map(sumRow).join("")}</table>
-  <div class="stamp" style="border-color:${toneColor(stampTone)};color:${toneColor(stampTone)}">${esc(state)}</div>
-  ${terms ? `<div class="note"><b>शर्तें</b><br/>${esc(terms)}</div>` : ""}
-  ${entry.notes ? `<div class="note">${esc(entry.notes)}</div>` : ""}`;
+  const rows: CardRow[] = [
+    personRow(vendor, "Vendor Name"),
+    { ...itemsRow(items, "कार्य विवरण", entry.notes), ...(jobRef ? { sub: [jobRef, entry.notes.trim()].filter(Boolean).join(" · ") } : {}) },
+    { icon: "cal", tint: DUE, label: "Work Assign Date", value: formatDate(entry.date) },
+  ];
+  if (job) rows.push({ icon: "cal", tint: BLUE, label: "कार्य पूर्ण तिथि", value: formatDate(entry.date) });
+  else if (!delivered && entry.dueDate) rows.push({ icon: "cal", tint: BLUE, label: "कब तक", value: formatDate(entry.dueDate), tone: late ? "due" : undefined });
+  if (pays.length === 1 && fromJama <= 0) {
+    rows.push(
+      { icon: "cal", tint: OK, label: pays[0].first && !job && !delivered ? "Advance Date" : "Payment Date", value: formatDate(pays[0].date) },
+      { icon: "card", tint: BLUE, label: "Payment Mode", value: payMode(pays[0].mode) },
+    );
+  } else if (pays.length || fromJama > 0) {
+    rows.push({ icon: "cal", tint: OK, label: "Payment Dates", value: `${pays.length + (fromJama > 0 ? 1 : 0)} भुगतान`, list: [...payments.map((p) => `${p.label.replace(/^(भुगतान|एडवांस) · /, "")} — ${p.value}`), ...(fromJama > 0 ? [`पहले के एडवांस से — ${formatINR(fromJama)}`] : [])] });
+  }
+  rows.push(
+    { icon: "rupee", tint: "#7B4DD6", label: "तय राशि", value: formatINR(entry.amount) },
+    { icon: "paid", tint: OK, label: "भुगतान की गई राशि", value: formatINR(roundMoney(entry.amount - left)), tone: "ok" },
+    { icon: "scale", tint: AMBER, label: "बकाया", value: formatINR(left), tone: left > 0 ? "due" : "ok" },
+  );
+  const seal = left <= 0 ? { text: "FULLY PAID", color: OK } : job || delivered ? { text: "PENDING", color: AMBER } : late ? { text: "LATE", color: DUE } : { text: "ORDERED", color: INFO };
+  const banner: Banner =
+    left <= 0
+      ? OK_BANNER("भुगतान सफलतापूर्वक पूर्ण हो गया है।", "आपकी सेवा और सहयोग के लिए धन्यवाद।")
+      : job || delivered
+        ? { color: AMBER, bg: "#FFF4E0", icon: "clock", title: `भुगतान बाकी ${formatINR(left)}`, sub: "जल्द भुगतान किया जाएगा।" }
+        : { color: INFO, bg: "#E8F1FD", icon: "clock", title: "ऑर्डर दिया", sub: entry.dueDate ? `कब तक: ${formatDate(entry.dueDate)}` : "" };
+  const html = cardPage(
+    shop,
+    {
+      titleHi: job ? "Vendor Payment Voucher" : "Vendor Work Order",
+      titleEn: job ? "PAYMENT CONFIRMATION RECEIPT" : "WORK ORDER",
+      noLabel: job ? "Voucher No." : "Order No.",
+      no,
+      date: formatDate(pays.length ? pays[pays.length - 1].date : entry.date),
+      rows,
+      stamp: seal,
+      banner,
+      vendor: true,
+      note: terms ? `शर्तें: ${terms}` : "",
+    },
+    false,
+  );
 
   return {
     heading,
@@ -274,7 +348,7 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
     phone: vendor.phone,
     lines,
     message,
-    html: page(shop, heading, meta, vendor, body, "A5", { toLabel: "Vendor / कारीगर", foot: "Generated with Hisab", hideNote: true, counterSign: vendor.name }),
+    html,
     fileName: docFileName(vendor.name, job ? "Voucher" : "WorkOrder", entry.date),
   };
 }
@@ -465,9 +539,6 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
   const personal = customer.persona === "personal";
   const prefs = getPrefs();
   const note = !personal && customer.id !== OWN_BOOK && !opts.hideNote ? prefs.receiptNote.trim() : "";
-  // The phone-only logo of older versions is used until the owner saves one to the server.
-  const logoSrc = shop.shop_logo || prefs.logo;
-  const logo = !personal && IMAGE_URI.test(logoSrc) ? logoSrc : "";
   const signImg = shop.shop_signature && IMAGE_URI.test(shop.shop_signature) ? shop.shop_signature : "";
   const signBlock =
     personal || customer.id === OWN_BOOK
@@ -476,24 +547,18 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
     ${opts.counterSign ? `<div class="sign"><div class="signSpace"></div><div class="signLine">${esc(opts.counterSign)}</div></div>` : "<div></div>"}
     <div class="sign">${signImg ? `<img class="signImg" src="${signImg}" alt=""/>` : `<div class="signSpace"></div>`}<div class="signLine">अधिकृत हस्ताक्षर</div></div>
   </div>`;
-  const shopMeta = [shop.shop_address, shop.shop_phone ? `फ़ोन: ${formatPhone(shop.shop_phone)}` : "", shop.shop_gst && !personal && prefs.showGst ? `GSTIN: ${shop.shop_gst}` : ""]
-    .filter(Boolean)
-    .map((s) => `<div>${esc(s)}</div>`)
-    .join("");
   return `<!DOCTYPE html><html lang="hi"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <style>
   @page { size: ${size}; margin: 14mm; }
   * { box-sizing: border-box; }
   body { font-family: "Noto Sans Devanagari", Roboto, Arial, "Mangal", sans-serif; font-style: normal; color: #1A1A1A; margin: 0; font-size: 13px; }
-  .head { border-bottom: 3px solid ${BRAND}; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-  .brand { display: flex; align-items: center; gap: 10px; }
-  .logo { width: 52px; height: 52px; object-fit: contain; border-radius: 8px; }
-  .shop { font-size: 22px; font-weight: 800; color: ${BRAND}; }
+  ${HEADER_CSS}
+  .head { margin-top: 10px; padding: 8px 12px; border-radius: 10px; background: #EAF3FF; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .head .title { font-size: 17px; font-weight: 800; color: ${NAVY}; letter-spacing: .5px; }
   .meta { color: #555; font-size: 11px; line-height: 1.5; margin-top: 2px; }
   .doc { text-align: right; }
-  .doc .title { font-size: 18px; font-weight: 800; letter-spacing: 1px; white-space: nowrap; }
-  .doc .meta { margin-top: 4px; }
+  .doc .meta { margin-top: 0; }
   .to { margin: 16px 0 12px; }
   .to .label { color: #777; font-size: 11px; }
   .to .name { font-size: 15px; font-weight: 700; }
@@ -521,9 +586,10 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
   .signSpace { height: 40px; }
   .signLine { border-top: 1px solid #999; padding-top: 4px; font-size: 11px; color: #555; }
 </style></head><body>
+  ${slipHeader(shop, personal)}
   <div class="head">
-    <div class="brand">${logo ? `<img class="logo" src="${logo}" alt=""/>` : ""}<div><div class="shop">${esc(shop.shop_name)}</div><div class="meta">${shopMeta}</div></div></div>
-    <div class="doc"><div class="title">${esc(heading)}</div><div class="meta">${docMeta}</div></div>
+    <div class="title">${esc(heading)}</div>
+    <div class="doc"><div class="meta">${docMeta}</div></div>
   </div>
   ${customer.id === OWN_BOOK ? `<div class="to"><div class="name">${esc(customer.name)}</div></div>` : `<div class="to"><div class="label">${esc(opts.toLabel ?? (customer.persona === "personal" ? "नाम" : "ग्राहक"))}</div><div class="name">${esc(customer.name)}</div>${customer.phone ? `<div class="meta">${esc(formatPhone(customer.phone))}</div>` : ""}</div>`}
   ${body}
@@ -532,6 +598,215 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
   <div class="foot">${opts.foot ?? (customer.id === OWN_BOOK ? `बनाया: ${esc(formatDate(todayISO()))}` : personal ? "धन्यवाद 🙏" : "धन्यवाद, फिर पधारें 🙏")}</div>
 </body></html>`;
 }
+
+// ---------- Card slip (customer receipt and vendor voucher) ----------
+
+const NAVY = "#0D2B5E";
+const BLUE = "#1E6FD9";
+const AMBER = "#D98200";
+const INFO = "#1565C0";
+
+const ICONS = {
+  user: `<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>`,
+  doc: `<path d="M6 2h8l5 5v15H6z"/><path d="M14 2v5h5M9 12h7M9 16h7"/>`,
+  rupee: `<text x="12" y="18" text-anchor="middle" font-size="17" font-weight="700" stroke="none" fill="currentColor">₹</text>`,
+  paid: `<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>`,
+  card: `<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/>`,
+  scale: `<path d="M12 4v16M7 20h10M5 7h14M5 7l-3 6h6zM19 7l-3 6h6z"/>`,
+  cal: `<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>`,
+  check: `<path d="M6 12.5l4 4 8-9"/>`,
+  alert: `<path d="M12 6v8M12 18v.5"/>`,
+  clock: `<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>`,
+} as const;
+type IconKey = keyof typeof ICONS;
+const svgIcon = (k: IconKey, color: string, size = 16) =>
+  `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" color="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[k]}</svg>`;
+
+type CardRow = { icon: IconKey; tint: string; label: string; value: string; sub?: string; tone?: Tone; list?: string[] };
+type Banner = { color: string; bg: string; icon: IconKey; title: string; sub?: string; qr?: string };
+type Card = {
+  titleHi: string;
+  titleEn: string;
+  noLabel: string;
+  no: string;
+  date: string;
+  rows: CardRow[];
+  stamp: { text: string; color: string };
+  banner?: Banner;
+  /** Vendor voucher: banner and owner's signature side by side, no thank-you line. */
+  vendor?: boolean;
+  note?: string;
+};
+
+const cardRow = (r: CardRow) => `
+  <div class="row">
+    <div class="ic" style="background:${r.tint}1A">${svgIcon(r.icon, r.tint)}</div>
+    <div class="lb">${esc(r.label)}</div>
+    <div class="colon">:</div>
+    <div class="val">
+      <div class="v" style="color:${r.tone ? toneColor(r.tone) : "#111"}">${esc(r.value)}</div>
+      ${r.sub ? `<div class="vs">${esc(r.sub)}</div>` : ""}
+      ${r.list?.length ? r.list.map((l) => `<div class="li">${esc(l)}</div>`).join("") : ""}
+    </div>
+  </div>`;
+
+const bannerHtml = (b: Banner) => `
+  <div class="banner" style="background:${b.bg};border-color:${b.color}33">
+    <div class="bIc" style="background:${b.color}">${svgIcon(b.icon, "#fff", 22)}</div>
+    <div class="bTx"><div class="bT" style="color:${b.color}">${esc(b.title)}</div>${b.sub ? `<div class="bS">${esc(b.sub)}</div>` : ""}</div>
+    ${b.qr ? `<div class="bQr">${b.qr}<div>UPI से भुगतान</div></div>` : ""}
+  </div>`;
+
+/** Shop header shared by every slip: logo, two-tone name, address line, tagline and services strip. */
+function slipHeader(shop: ShopProfile, personal: boolean): string {
+  const prefs = getPrefs();
+  const logoSrc = shop.shop_logo || prefs.logo;
+  const logo = !personal && IMAGE_URI.test(logoSrc) ? logoSrc : "";
+  // "Nain Photostate & Online Center": the part after "&" / "और" is printed in the accent colour.
+  const split = shop.shop_name.match(/^(.*?(?:&|और))\s+(.+)$/);
+  const name = split ? `${esc(split[1])} <span style="color:${BLUE}">${esc(split[2])}</span>` : esc(shop.shop_name);
+  const meta = [shop.shop_address, shop.shop_phone ? `Mob: ${formatPhone(shop.shop_phone)}` : "", shop.shop_gst && !personal && prefs.showGst ? `GSTIN: ${shop.shop_gst}` : ""]
+    .filter(Boolean)
+    .map(esc)
+    .join(" &nbsp;|&nbsp; ");
+  const tagline = personal ? "" : prefs.tagline.trim();
+  const services = personal ? [] : prefs.services.split(/[,|]/).map((s) => s.trim()).filter(Boolean).slice(0, 6);
+  return `
+  <div class="sh">
+    ${logo ? `<img class="shLogo" src="${logo}" alt=""/><div class="shBar"></div>` : ""}
+    <div class="shMain"><div class="shName">${name}</div>${meta ? `<div class="shMeta">${meta}</div>` : ""}</div>
+    ${tagline ? `<div class="shTag">${esc(tagline)}<svg width="90" height="8" viewBox="0 0 90 8"><path d="M2 6 C30 1 60 1 88 4" stroke="${OK}" stroke-width="2" fill="none" stroke-linecap="round"/></svg></div>` : ""}
+  </div>
+  ${services.length ? `<div class="svc">${services.map((s) => `<span><i></i>${esc(s)}</span>`).join("")}</div>` : ""}`;
+}
+
+const HEADER_CSS = `
+  .sh { display: flex; align-items: center; gap: 10px; }
+  .shLogo { width: 58px; height: 58px; object-fit: contain; border-radius: 10px; }
+  .shBar { width: 2px; align-self: stretch; background: ${NAVY}; opacity: .6; }
+  .shMain { flex: 1; min-width: 0; }
+  .shName { font-size: 21px; font-weight: 800; color: ${NAVY}; line-height: 1.15; }
+  .shMeta { font-size: 10.5px; color: #333; margin-top: 3px; }
+  .shTag { font-size: 11px; font-weight: 700; font-style: italic; color: ${NAVY}; text-align: right; max-width: 120px; line-height: 1.3; }
+  .shTag svg { display: block; margin-left: auto; }
+  .svc { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 0; margin-top: 8px; padding: 5px 0; border-top: 1px solid #E3E9F2; border-bottom: 1px solid #E3E9F2; font-size: 10.5px; color: #222; }
+  .svc span { display: flex; align-items: center; gap: 4px; padding: 0 6px; }
+  .svc span + span { border-left: 1px solid #C9D4E5; }
+  .svc i { width: 6px; height: 6px; border-radius: 50%; background: ${BLUE}; display: inline-block; }`;
+
+const BAND_ICON = `<svg width="46" height="46" viewBox="0 0 48 48" fill="none">
+  <rect x="5" y="4" width="28" height="36" rx="4" stroke="${BLUE}" stroke-width="2.5"/>
+  <path d="M11 13h16M11 19h16M11 25h9" stroke="${BLUE}" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="33" cy="33" r="11" fill="${BLUE}"/>
+  <text x="33" y="38.5" text-anchor="middle" font-size="15" font-weight="700" fill="#fff">₹</text>
+</svg>`;
+
+function cardPage(shop: ShopProfile, card: Card, personal: boolean): string {
+  const signImg = shop.shop_signature && IMAGE_URI.test(shop.shop_signature) ? shop.shop_signature : "";
+  const signArt = signImg ? `<img class="signImg" src="${signImg}" alt=""/>` : `<div class="signSpace"></div>`;
+  const tagline = personal ? "" : getPrefs().tagline.trim();
+  const stampSize = card.stamp.text.length > 8 ? 14 : card.stamp.text.length > 6 ? 17 : 24;
+  const foot = card.vendor
+    ? `<div class="vfoot">
+        <div style="flex:1">${card.banner ? bannerHtml(card.banner) : ""}</div>
+        <div class="vsign">${signArt}<div class="signLine"><b>Owner Signature</b></div><div class="vsMeta">${esc(shop.shop_name)}${shop.shop_address ? `<br/>${esc(shop.shop_address)}` : ""}</div></div>
+      </div>
+      ${card.note ? `<div class="cnote" style="text-align:left">${esc(card.note)}</div>` : ""}`
+    : `${card.banner ? bannerHtml(card.banner) : ""}
+      ${card.note ? `<div class="cnote">${esc(card.note)}</div>` : ""}
+      <div class="cfoot">
+        <div class="thanks"><div class="ty">Thank You!</div>${tagline ? `<div class="tl">${esc(tagline)}</div>` : ""}</div>
+        ${personal ? "" : `<div class="csign">${signArt}<div class="signLine">अधिकृत हस्ताक्षर</div></div>`}
+      </div>`;
+  return `<!DOCTYPE html><html lang="hi"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+  @page { size: A5; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { font-family: "Noto Sans Devanagari", Roboto, Arial, "Mangal", sans-serif; color: #111; font-size: 12.5px; position: relative; min-height: 205mm; padding: 9mm 9mm 12mm; overflow: hidden; }
+  .wave { position: absolute; z-index: 0; }
+  .wTop { top: 0; right: 0; }
+  .wBot { bottom: 0; left: 0; }
+  .wrap { position: relative; z-index: 1; }
+  ${HEADER_CSS}
+  .band { display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: #EAF3FF; border: 1px solid #D3E4FA; }
+  .bandT { flex: 1; border-left: 2px solid ${NAVY}33; padding-left: 12px; }
+  .hi { font-size: 21px; font-weight: 800; color: ${NAVY}; line-height: 1.2; }
+  .en { font-size: 9.5px; letter-spacing: 2.5px; color: #444; margin-top: 2px; }
+  .bandNo { text-align: center; background: #DCEBFF; border-radius: 8px; padding: 5px 8px; min-width: 96px; }
+  .noL { font-size: 9.5px; color: #333; }
+  .noV { font-size: 11px; font-weight: 800; color: ${NAVY}; background: #fff; border-radius: 4px; padding: 2px 6px; margin-top: 2px; }
+  .dt { display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 10px; color: #333; margin-top: 4px; }
+  .card { position: relative; margin-top: 10px; border: 1px solid #E6EAF0; border-radius: 12px; padding: 2px 12px; background: #fff; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #EEF1F5; }
+  .row:last-child { border-bottom: none; }
+  .ic { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .lb { width: 34%; font-weight: 700; color: ${NAVY}; }
+  .colon { color: #666; }
+  .val { flex: 1; min-width: 0; max-width: 58%; }
+  .v { font-size: 14px; font-weight: 700; }
+  .vs { font-size: 10.5px; color: #666; margin-top: 1px; }
+  .li { font-size: 11.5px; color: #222; margin-top: 2px; }
+  .seal { position: absolute; right: 12px; bottom: 14px; width: 124px; height: 124px; border: 4px solid; border-radius: 50%; transform: rotate(-14deg); display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,.55); opacity: .88; }
+  .sealIn { width: 104px; height: 104px; border: 2px dashed; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .sealIn b { font-weight: 900; letter-spacing: 1px; line-height: 1.1; }
+  .sealIn span { font-size: 10px; letter-spacing: 3px; }
+  .banner { display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid; }
+  .bIc { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .bTx { flex: 1; }
+  .bT { font-size: 14px; font-weight: 800; }
+  .bS { font-size: 11px; color: #333; margin-top: 2px; }
+  .bQr { text-align: center; font-size: 9px; color: #333; line-height: 1.2; }
+  .bQr svg { display: block; background: #fff; padding: 3px; border-radius: 4px; }
+  .cnote { margin-top: 8px; font-size: 10.5px; color: #555; text-align: center; white-space: pre-line; }
+  .cfoot { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-top: 14px; }
+  .thanks { flex: 1; text-align: center; }
+  .ty { font-family: "Brush Script MT", "Segoe Script", cursive; font-style: italic; font-size: 30px; font-weight: 700; color: ${NAVY}; }
+  .tl { font-size: 11px; color: #333; margin-top: 2px; }
+  .csign { width: 38%; text-align: center; }
+  .vfoot { display: flex; align-items: stretch; gap: 12px; margin-top: 10px; }
+  .vfoot .banner { margin-top: 0; height: 100%; }
+  .vsign { width: 38%; text-align: center; border-left: 1px solid #E3E9F2; padding-left: 10px; display: flex; flex-direction: column; justify-content: flex-end; }
+  .vsMeta { font-size: 9.5px; color: #444; margin-top: 2px; }
+  .signImg { max-width: 140px; max-height: 52px; object-fit: contain; display: block; margin: 0 auto 2px; }
+  .signSpace { height: 38px; }
+  .signLine { border-top: 1px solid #999; padding-top: 4px; font-size: 11px; color: #333; }
+</style></head><body>
+  <svg class="wave wTop" width="190" height="70" viewBox="0 0 190 70"><path d="M40 0 C90 40 140 5 190 38 V0Z" fill="#D6E7FF"/><path d="M100 0 C140 26 165 8 190 16 V0Z" fill="#B8EBC8"/></svg>
+  <svg class="wave wBot" width="210" height="80" viewBox="0 0 210 80"><path d="M0 22 C50 55 120 30 210 80 H0Z" fill="#D6E7FF"/><path d="M0 48 C40 70 90 58 140 80 H0Z" fill="#B8EBC8"/></svg>
+  <div class="wrap">
+    ${slipHeader(shop, personal)}
+    <div class="band">
+      ${BAND_ICON}
+      <div class="bandT"><div class="hi">${esc(card.titleHi)}</div><div class="en">${esc(card.titleEn)}</div></div>
+      <div class="bandNo"><div class="noL">${esc(card.noLabel)}</div><div class="noV">${esc(card.no)}</div><div class="dt">${svgIcon("cal", BLUE, 12)}${esc(card.date)}</div></div>
+    </div>
+    <div class="card">
+      <div class="seal" style="color:${card.stamp.color};border-color:${card.stamp.color}"><div class="sealIn" style="border-color:${card.stamp.color}"><span>★ ★ ★</span><b style="font-size:${stampSize}px">${esc(card.stamp.text)}</b><span>★ ★</span></div></div>
+      ${card.rows.map(cardRow).join("")}
+    </div>
+    ${foot}
+  </div>
+</body></html>`;
+}
+
+/** Customer / contact line of a card: name with address or phone under it. */
+const personRow = (c: Customer, label: string): CardRow => ({ icon: "user", tint: BLUE, label, value: c.name, sub: c.address?.trim() || (c.phone ? formatPhone(c.phone) : "") });
+
+/** Work / goods line of a card: one item with its note, or every item with its amount. */
+function itemsRow(items: { title: string; amount: number }[], label: string, note = ""): CardRow {
+  if (items.length <= 1) return { icon: "doc", tint: OK, label, value: items[0]?.title ?? "", sub: note.trim() };
+  return { icon: "doc", tint: OK, label, value: `${items.length} काम`, list: items.map((it) => `${it.title}${it.amount > 0 ? ` — ${formatINR(it.amount)}` : ""}`) };
+}
+
+/** "भुगतान (Cash)" → "Cash", "एडवांस (Online)" → "Online · एडवांस". */
+const modeOf = (label: string) => {
+  const m = label.match(/^(भुगतान|एडवांस) \((.+)\)$/);
+  return m ? (m[1] === "एडवांस" ? `${m[2]} · एडवांस` : m[2]) : label;
+};
+
+const OK_BANNER = (title: string, sub: string): Banner => ({ color: OK, bg: "#EAF6EC", icon: "check", title, sub });
 
 /** Marks a document about the owner's own books (no customer block, no thank-you line). */
 const OWN_BOOK = "__own_book__";

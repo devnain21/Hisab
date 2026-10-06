@@ -28,6 +28,8 @@ export function ReceiptSettingsSheet({ visible, onClose, hasGst }: { visible: bo
   const [note, setNote] = useState("");
   const [dueNote, setDueNote] = useState("");
   const [paidNote, setPaidNote] = useState("");
+  const [tagline, setTagline] = useState("");
+  const [services, setServices] = useState("");
   const [showGst, setShowGst] = useState(true);
   const [logo, setLogo] = useState("");
   const [sign, setSign] = useState("");
@@ -38,6 +40,8 @@ export function ReceiptSettingsSheet({ visible, onClose, hasGst }: { visible: bo
     setNote(prefs.receiptNote);
     setDueNote(prefs.dueNote);
     setPaidNote(prefs.paidNote);
+    setTagline(prefs.tagline);
+    setServices(prefs.services);
     setShowGst(prefs.showGst);
     // A logo saved on this phone by an older version moves to the server on the next save.
     setLogo(user?.shop_logo || prefs.logo);
@@ -71,7 +75,7 @@ export function ReceiptSettingsSheet({ visible, onClose, hasGst }: { visible: bo
   const save = async () => {
     setSaving(true);
     try {
-      void savePrefs({ receiptNote: note.trim(), dueNote: dueNote.trim(), paidNote: paidNote.trim(), showGst });
+      void savePrefs({ receiptNote: note.trim(), dueNote: dueNote.trim(), paidNote: paidNote.trim(), tagline: tagline.trim(), services: services.trim(), showGst });
       const logoOk = !logo || dataUriBytes(logo) <= LOGO_MAX;
       if (user && (logo !== (user.shop_logo || "") || sign !== (user.shop_signature || ""))) {
         await setShop({
@@ -136,6 +140,12 @@ export function ReceiptSettingsSheet({ visible, onClose, hasGst }: { visible: bo
     <SheetShell visible={visible} onClose={onClose} title="बिल / रसीद सेटिंग" testID="sheet-receipt-settings">
       <Field label="दुकान का लोगो (वैकल्पिक)">{imageRow("logo")}</Field>
       <Field label="हस्ताक्षर (वैकल्पिक)">{imageRow("sign")}</Field>
+      <Field label="टैगलाइन">
+        <TextInput style={inputStyle} value={tagline} onChangeText={setTagline} placeholder="जैसे: थारी अपनी दुकान, सारा ऑनलाइन काम" placeholderTextColor={colors.muted} maxLength={50} testID="input-tagline" />
+      </Field>
+      <Field label="सेवाएँ (कॉमा से अलग)">
+        <TextInput style={inputStyle} value={services} onChangeText={setServices} placeholder="फोटोस्टेट, ऑनलाइन फ़ॉर्म, प्रिंटिंग" placeholderTextColor={colors.muted} maxLength={120} testID="input-services" />
+      </Field>
       <Field label="रसीद के नीचे लिखा जाए (वैकल्पिक)">
         <TextInput style={[inputStyle, styles.multi]} value={note} onChangeText={setNote} placeholder="जैसे: बिका हुआ माल वापस नहीं होगा" placeholderTextColor={colors.muted} multiline maxLength={200} testID="input-receipt-note" />
       </Field>

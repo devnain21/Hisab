@@ -104,12 +104,18 @@ function dropOrKeep(rows: Entry[], day: string) {
   });
 }
 
-/** Removes a khata entry together with the rows that were booked with it. */
 /** Vendor purchase rows booked for this piece of work ("वेंडर से कराया"). */
 export function vendorCostsFor(work: Entry, entries: Entry[]): Entry[] {
   return entries.filter((e) => e.type === "purchase" && e.refId === work.id);
 }
 
+/** Drops a vendor cost row; a payment made to them on another day stays as their advance. */
+export function removeVendorCost(row: Entry, entries: Entry[]) {
+  store.deleteEntry(row.id);
+  dropOrKeep(settlementsFor(row, entries), row.date);
+}
+
+/** Removes a khata entry together with the rows that were booked with it. */
 export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]) {
   if (entry.type === "given" || entry.type === "purchase") {
     store.deleteEntry(entry.id);
@@ -127,10 +133,7 @@ export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]
   [...settlementsFor(work, entries), ...legacyAdvancesForWork(work, entries), ...(job ? advancesForJob(job, entries) : [])].forEach((p) => linked.set(p.id, p));
   store.deleteEntry(work.id);
   dropOrKeep([...linked.values()], work.date);
-  vendorCostsFor(work, entries).forEach((v) => {
-    store.deleteEntry(v.id);
-    dropOrKeep(settlementsFor(v, entries), v.date);
-  });
+  vendorCostsFor(work, entries).forEach((v) => removeVendorCost(v, entries));
   if (job) store.deleteJob(job.id);
   remindersFor(work, jobs).forEach((j) => store.deleteJob(j.id));
 }

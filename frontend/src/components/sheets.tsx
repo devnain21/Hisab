@@ -13,7 +13,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
 import { advanceOf, computeBalance, isVendor, itemsOf, useCustomers, useEntries, useJobs, type Customer, type Entry, type EntryItem, type EntryType, type Job } from "@/src/lib/data";
-import { ADVANCE, advancesForJob, buildLedger, jobForWork, linkedPayment, olderAdvances, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, vendorCostsFor, workForJob, workForPayment } from "@/src/lib/records";
+import { ADVANCE, advancesForJob, buildLedger, jobForWork, linkedPayment, olderAdvances, removeEntryWithLinks, removeJobWithAdvances, removeVendorCost, settlementsFor, vendorCostsFor, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
 import { OLD_ENTRY_DAYS, cleanAmountInput, dateOnSave, formatDate, formatINR, isBackdated, isValidISO, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
@@ -734,25 +734,54 @@ function recordWork({
     if (onlinePaid > 0) store.createEntry({ customerId, type: "payment", date, description: settleDescription(title), amount: onlinePaid, mode: "online", notes: "", linkId: work.id });
     bookAdvance(customerId, split.online - onlinePaid, date, title, work.id, "online");
   }
-  if (vendor && vendor.cost > 0) {
-    store.createEntry({
-      customerId: vendor.vendorId,
-      type: "purchase",
-      date,
-      description: title,
-      amount: vendor.cost,
-      paid: vendor.paidNow ? vendor.cost : 0,
-      mode: vendor.mode,
-      notes: "",
-      refId: work.id,
-      status: "delivered",
-      dueDate: "",
-    });
-  }
+  if (vendor && vendor.cost > 0) bookVendorCost(vendor, work.id, title, date);
   return work.id;
 }
 
-type VendorJob = { vendorId: string; cost: number; paidNow: boolean; mode: PayMode };
+/** `paidOn` "" means the work day. */
+type VendorJob = { vendorId: string; cost: number; paidNow: boolean; mode: PayMode; paidOn: string };
+
+/** Vendor cost sits on the work day; money paid to them on another day is its own payment row on that day. */
+function bookVendorCost(v: VendorJob, workId: string, title: string, date: string) {
+  const paidOn = v.paidOn || date;
+  const onWorkDay = v.paidNow && paidOn === date;
+  const row = store.createEntry({
+    customerId: v.vendorId,
+    type: "purchase",
+    date,
+    description: title,
+    amount: v.cost,
+    paid: onWorkDay ? v.cost : 0,
+    mode: v.mode,
+    notes: "",
+    refId: workId,
+    status: "delivered",
+    dueDate: "",
+  });
+  if (v.paidNow && !onWorkDay) {
+    store.createEntry({ customerId: v.vendorId, type: "given", date: paidOn, description: settleDescription(title), amount: v.cost, mode: v.mode, notes: "", linkId: row.id });
+  }
+}
+
+/** Saves the "वेंडर से कराया" block of an already written work row: adds, changes or drops its vendor cost. */
+async function saveVendorEdit(v: ReturnType<typeof useVendorJob>, row: Entry | undefined, workId: string, title: string, date: string, entries: Entry[]) {
+  if (!v.on) {
+    if (row) removeVendorCost(row, entries);
+    return;
+  }
+  const job = await v.resolve();
+  if (!job) return;
+  if (!row) return bookVendorCost(job, workId, title, date);
+  const later = settlementsFor(row, entries);
+  const rest = roundMoney(job.cost - later.reduce((s, p) => s + p.amount, 0));
+  const paidOn = job.paidOn || date;
+  const onWorkDay = job.paidNow && paidOn === date;
+  store.updateEntry(row.id, { customerId: job.vendorId, date, description: title, amount: job.cost, paid: onWorkDay ? Math.max(0, rest) : 0, mode: job.mode });
+  if (job.vendorId !== row.customerId) later.forEach((p) => store.updateEntry(p.id, { customerId: job.vendorId }));
+  if (job.paidNow && !onWorkDay && rest > 0) {
+    store.createEntry({ customerId: job.vendorId, type: "given", date: paidOn, description: settleDescription(title), amount: rest, mode: job.mode, notes: "", linkId: row.id });
+  }
+}
 
 /** "वेंडर से कराया" state for a job: off by default; picks the vendor and what they charged. */
 function useVendorJob(visible: boolean) {
@@ -761,6 +790,10 @@ function useVendorJob(visible: boolean) {
   const [cost, setCost] = useState("");
   const [paidNow, setPaidNow] = useState(true);
   const [mode, setMode] = useState<PayMode>("cash");
+  const [paidOn, setPaidOn] = useState("");
+  /** Payments already made against an existing vendor row (from the vendor's page). */
+  const [laterPaid, setLaterPaid] = useState<Entry[]>([]);
+  const [existing, setExisting] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -768,24 +801,53 @@ function useVendorJob(visible: boolean) {
       setCost("");
       setPaidNow(true);
       setMode(getPrefs().defaultMode);
+      setPaidOn("");
+      setLaterPaid([]);
+      setExisting(false);
     }
   }, [visible]);
 
+  /** Fills the block from a vendor row already booked for the work. */
+  const load = (row: Entry | undefined, entries: Entry[]) => {
+    setExisting(!!row);
+    setOn(!!row);
+    choice.setCustomerId(row?.customerId ?? "");
+    setCost(row ? String(row.amount) : "");
+    setPaidNow(row ? (row.paid ?? 0) > 0 : true);
+    setMode(row?.mode ?? getPrefs().defaultMode);
+    setPaidOn("");
+    setLaterPaid(row ? settlementsFor(row, entries) : []);
+  };
+  /** An old fee that was really the vendor's charge: same money, same day, same pocket. */
+  const fromFee = (fee: string, feeMode: PayMode) => {
+    setOn(true);
+    setCost(fee);
+    setPaidNow(true);
+    setMode(feeMode);
+    setPaidOn("");
+  };
+
   const costNum = on ? parseAmount(cost) : 0;
-  const ready = !on || (choice.ready && costNum > 0);
+  const paidBefore = laterPaid.reduce((s, p) => s + p.amount, 0);
+  const rest = roundMoney(costNum - paidBefore);
+  const ready = !on || (choice.ready && costNum > 0 && rest >= 0);
   const resolve = async (): Promise<VendorJob | null> => {
     if (!on || costNum <= 0) return null;
     const vendorId = await choice.resolve();
-    return vendorId ? { vendorId, cost: costNum, paidNow, mode } : null;
+    return vendorId ? { vendorId, cost: costNum, paidNow, mode, paidOn } : null;
   };
-  return { choice, on, setOn, cost, setCost, costNum, paidNow, setPaidNow, mode, setMode, ready, resolve };
+  return { choice, on, setOn, cost, setCost, costNum, paidNow, setPaidNow, mode, setMode, paidOn, setPaidOn, laterPaid, paidBefore, rest, existing, ready, resolve, load, fromFee };
 }
 
-function VendorOutsource({ v, amount, fee }: { v: ReturnType<typeof useVendorJob>; amount: number; fee: number }) {
+function VendorOutsource({ v, amount, fee, workDate }: { v: ReturnType<typeof useVendorJob>; amount: number; fee: number; workDate: string }) {
   const left = roundMoney(amount - fee - v.costNum);
+  const toggle = () => {
+    if (v.on && v.existing) confirmAction("Vendor हटाएँ?", "इस काम की Vendor लागत हटेगी (सेव करने पर)।", "हटा दें", () => v.setOn(false));
+    else v.setOn(!v.on);
+  };
   return (
     <View style={styles.vendorBox}>
-      <Pressable style={styles.vendorToggle} onPress={() => v.setOn(!v.on)} testID="toggle-job-vendor">
+      <Pressable style={styles.vendorToggle} onPress={toggle} testID="toggle-job-vendor">
         <MaterialIcon name="truck-outline" size={20} color={v.on ? colors.brandPrimary : colors.muted} />
         <Text style={[styles.vendorToggleText, v.on && { color: colors.onSurface }]}>वेंडर से कराया</Text>
         <MaterialIcon name={v.on ? "toggle-switch" : "toggle-switch-off-outline"} size={34} color={v.on ? colors.brandPrimary : colors.muted} />
@@ -801,11 +863,31 @@ function VendorOutsource({ v, amount, fee }: { v: ReturnType<typeof useVendorJob
               </Text>
             ) : null}
           </Field>
-          <View style={[styles.chipRow, { marginBottom: spacing.md }]}>
-            <Chip label="तुरंत चुकाए" icon="check" active={v.paidNow} onPress={() => v.setPaidNow(true)} testID="chip-vendor-paid" />
-            <Chip label="उधारी" icon="timer-sand" active={!v.paidNow} onPress={() => v.setPaidNow(false)} testID="chip-vendor-later" />
-          </View>
-          {v.paidNow && v.costNum > 0 ? <PayModeField label="कहाँ से दिए" value={v.mode} onChange={v.setMode} cashLabel="गल्ले से" onlineLabel="बैंक से" /> : null}
+          {v.laterPaid.length > 0 ? (
+            <Field label="दे चुके">
+              {v.laterPaid.map((p) => (
+                <View key={p.id} style={styles.settleRow}>
+                  <MaterialIcon name="check-circle" size={16} color={colors.success} />
+                  <Text style={styles.settleText}>{formatINR(p.amount)} · {formatDate(p.date)} · {p.mode === "online" ? "बैंक" : "नकद"}</Text>
+                </View>
+              ))}
+              {v.rest < 0 ? <Text style={[styles.hint, { color: colors.error, fontWeight: "700" }]}>लागत {formatINR(v.paidBefore)} से कम नहीं</Text> : null}
+            </Field>
+          ) : null}
+          {v.rest > 0 ? (
+            <>
+              <View style={[styles.chipRow, { marginBottom: spacing.md }]}>
+                <Chip label="तुरंत चुकाए" icon="check" active={v.paidNow} onPress={() => v.setPaidNow(true)} testID="chip-vendor-paid" />
+                <Chip label="उधारी" icon="timer-sand" active={!v.paidNow} onPress={() => v.setPaidNow(false)} testID="chip-vendor-later" />
+              </View>
+              {v.paidNow ? (
+                <>
+                  <PayModeField label="कहाँ से दिए" value={v.mode} onChange={v.setMode} cashLabel="गल्ले से" onlineLabel="बैंक से" />
+                  <DateField label="कब दिए" value={v.paidOn || workDate} onChange={(d) => v.setPaidOn(d === workDate ? "" : d)} money testID="input-job-vendor-paid-date" />
+                </>
+              ) : null}
+            </>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -1293,12 +1375,14 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   const extraSum = extras.reduce((s, e) => s + e.amount, 0);
   // Every other payment booked against this work, shown so it can be seen / removed here.
   const later = entry ? settlementsFor(entry, entries).filter((p) => p.id !== legacyLink?.id && !extras.some((e) => e.id === p.id)) : [];
-  const vendorRows = entry ? vendorCostsFor(entry, entries) : [];
-  const allContacts = useCustomers().data ?? [];
+  const vendorRow = entry ? vendorCostsFor(entry, entries)[0] : undefined;
   const router = useRouter();
+  const { isPersonal } = usePersona();
+  const vendorJob = useVendorJob(!!entry);
 
   useEffect(() => {
     if (!entry) return;
+    vendorJob.load(vendorRow, entries);
     items.reset(itemsOf(entry));
     money.reset(String(entry.amount), String(((entry.paid ?? 0) || (legacyLink?.amount ?? 0)) + extraSum));
     setPayMode(rowMode);
@@ -1313,9 +1397,9 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   }, [entry?.id]);
 
   const amt = money.totalNum;
-  const valid = items.titled && (amt > 0 || parseAmount(govtFee) > 0 || vendorRows.length > 0);
+  const valid = items.titled && (amt > 0 || parseAmount(govtFee) > 0 || vendorJob.costNum > 0) && vendorJob.ready;
 
-  const save = () => {
+  const save = async () => {
     if (!entry || !valid) return;
     setSaving(true);
     try {
@@ -1337,7 +1421,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       extras.forEach((e) => store.deleteEntry(e.id));
       // Money taken on the work day (online part of a split, other-mode advance) moves with the work's date.
       if (date !== entry.date) later.filter((p) => p.date === entry.date && p.linkId === entry.id).forEach((p) => store.updateEntry(p.id, { date }));
-      if (date !== entry.date) vendorRows.filter((v) => v.date === entry.date).forEach((v) => store.updateEntry(v.id, { date }));
+      if (!isPersonal) await saveVendorEdit(vendorJob, vendorRow, entry.id, t, date, entries);
       bookAdvance(entry.customerId, taken - amt, date, t, entry.id, payMode);
       // Old two-row cash records: the same-day jama is now carried by `paid`.
       if (legacyLink) store.deleteEntry(legacyLink.id);
@@ -1358,26 +1442,23 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       <MoneyFields money={money} receivedLabel="उस दिन मिले (₹)" hideTotal />
       {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
       <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
-      {vendorRows.length > 0 ? (
-        <Field label="Vendor">
-          {vendorRows.map((v) => {
-            const left = roundMoney(v.amount - (v.paid ?? 0) - settlementsFor(v, entries).reduce((s, p) => s + p.amount, 0));
-            return (
-              <Pressable
-                key={v.id}
-                style={styles.settleRow}
-                onPress={() => { onClose(); router.push(`/customer/${v.customerId}`); }}
-                testID={`work-vendor-${v.id}`}
-              >
-                <MaterialIcon name="truck-outline" size={16} color={colors.brandPrimary} />
-                <Text style={styles.settleText} numberOfLines={1}>
-                  {allContacts.find((c) => c.id === v.customerId)?.name ?? "Vendor"} · {formatINR(v.amount)} · {left > 0 ? `बाकी ${formatINR(left)}` : "चुकता"}
-                </Text>
-                <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
-              </Pressable>
-            );
-          })}
-        </Field>
+      {!isPersonal && parseAmount(govtFee) > 0 && !vendorJob.on ? (
+        <Pressable
+          style={styles.feeToVendor}
+          onPress={() => { vendorJob.fromFee(govtFee, feeMode); setGovtFee(""); }}
+          testID="fee-to-vendor"
+        >
+          <MaterialIcon name="swap-horizontal" size={16} color={colors.brandPrimary} />
+          <Text style={styles.feeToVendorText}>यह फीस Vendor की थी</Text>
+        </Pressable>
+      ) : null}
+      {!isPersonal ? <VendorOutsource v={vendorJob} amount={amt} fee={parseAmount(govtFee)} workDate={date} /> : null}
+      {vendorRow ? (
+        <Pressable style={styles.feeToVendor} onPress={() => { onClose(); router.push(`/customer/${vendorRow.customerId}`); }} testID="work-open-vendor">
+          <MaterialIcon name="truck-outline" size={16} color={colors.brandPrimary} />
+          <Text style={styles.feeToVendorText}>Vendor खाता</Text>
+          <MaterialIcon name="chevron-right" size={16} color={colors.brandPrimary} />
+        </Pressable>
       ) : null}
       {later.length > 0 ? (
         <Field label="अलग से मिले पैसे">
@@ -1672,7 +1753,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   const outsource = mode === "now" && !self && !isPersonal;
   const valid =
     choice.ready && (itemized ? items.titled : !!title.trim()) && (mode !== "now" || self || amt <= 0 || money.answered) && (!outsource || vendorJob.ready);
-  const saveLabel = mode === "later" ? "आगे का काम जोड़ें" : self ? "सेव करें" : amt > 0 ? "काम सेव करें" : "मुफ़्त काम सेव करें";
+  const saveLabel = mode === "later" ? "पेंडिंग काम सेव करें" : self ? "सेव करें" : amt > 0 ? "काम सेव करें" : "मुफ़्त काम सेव करें";
 
   const save = async () => {
     if (!valid) return;
@@ -1719,16 +1800,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title="काम जोड़ें" testID="sheet-job">
-      <View style={styles.segment}>
-        {(["now", "later"] as JobMode[]).map((m) => (
-          <Pressable key={m} onPress={() => switchMode(m)} style={[styles.segmentBtn, mode === m && styles.segmentActive]} testID={`job-mode-${m}`}>
-            <MaterialIcon name={m === "now" ? "check-circle-outline" : "calendar-clock"} size={16} color={mode === m ? colors.onBrandPrimary : colors.onSurface} />
-            <Text style={[styles.segmentText, mode === m && { color: colors.onBrandPrimary }]}>{m === "now" ? "अभी किया काम" : "आगे का काम"}</Text>
-          </Pressable>
-        ))}
-      </View>
-
+    <SheetShell visible={visible} onClose={onClose} title="काम लिखें" testID="sheet-job">
       {!fixedCustomerId && <CustomerPicker choice={choice} allowSelf testPrefix="chip-job-cust" />}
       {itemized ? (
         <ItemsField items={items} label="क्या काम" placeholder="जैसे फॉर्म भरना" addLabel="और काम" />
@@ -1737,11 +1809,17 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
           <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholder={self ? "जैसे पेपर मँगवाना, बिजली बिल भरना" : "जैसे शादी एलबम"} placeholderTextColor={colors.muted} testID="input-job-title" />
         </Field>
       )}
+      <Field label="स्थिति">
+        <View style={styles.chipRow}>
+          <Chip label="हो गया" icon="check-circle-outline" active={mode === "now"} onPress={() => switchMode("now")} tone={colors.success} testID="job-mode-now" />
+          <Chip label="पेंडिंग" icon="clock-outline" active={mode === "later"} onPress={() => switchMode("later")} tone={colors.warning} testID="job-mode-later" />
+        </View>
+      </Field>
       {self ? null : mode === "now" ? (
         <>
           <MoneyFields money={money} advance={advance} freeAllowed hideTotal />
           {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={money.receivedNum} /> : null}
-          {outsource ? <VendorOutsource v={vendorJob} amount={amt} fee={parseAmount(govtFee)} /> : null}
+          {outsource ? <VendorOutsource v={vendorJob} amount={amt} fee={parseAmount(govtFee)} workDate={date} /> : null}
         </>
       ) : (
         <Field label="रकम (₹)">
@@ -1775,7 +1853,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
         </>
       ) : (
         <>
-          <DateField label={self ? "कब करना है" : "डिलीवरी तारीख"} value={date} onChange={setDate} future testID="input-job-date" />
+          <DateField label={self ? "कब करना है" : "कब तक"} value={date} onChange={setDate} future testID="input-job-date" />
           <MoreInfo open={!!remark} hint="नोट" testID="job-more-info">
             <Field label="नोट">
               <TextInput style={inputStyle} value={remark} onChangeText={setRemark} placeholderTextColor={colors.muted} testID="input-job-notes" />
@@ -1949,7 +2027,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
           <MoneyFields money={money} advance={advance} receivedLabel="आज मिले (₹)" freeAllowed />
           {got > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={got} /> : null}
           <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
-          {outsource ? <VendorOutsource v={vendorJob} amount={amt} fee={parseAmount(fee)} /> : null}
+          {outsource ? <VendorOutsource v={vendorJob} amount={amt} fee={parseAmount(fee)} workDate={workDay} /> : null}
         </>
       ) : null}
       <DateField label="काम की तारीख" value={workDay} onChange={(d) => { setWorkDate(d); setCashDate(d); }} testID="input-complete-date" />
@@ -1984,6 +2062,8 @@ const styles = StyleSheet.create({
   vendorBox: { marginBottom: spacing.md, padding: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   vendorToggle: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 40 },
   vendorToggleText: { flex: 1, fontSize: 14, fontWeight: "700", color: colors.onSurfaceSecondary },
+  feeToVendor: { flexDirection: "row", alignItems: "center", gap: spacing.xs, alignSelf: "flex-start", minHeight: 36, marginTop: -spacing.sm, marginBottom: spacing.sm },
+  feeToVendorText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
   pickedRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 48, paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.border },
   pickedName: { flex: 1, fontSize: 15, fontWeight: "700", color: colors.onSurface },
   changeText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
@@ -1993,7 +2073,6 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, color: colors.onSurface, fontWeight: "600" },
   segment: { flexDirection: "row", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: 4, marginBottom: spacing.lg, borderWidth: 1, borderColor: colors.border },
   segmentBtn: { flex: 1, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", paddingVertical: 10, borderRadius: radius.sm },
-  segmentActive: { backgroundColor: colors.brandPrimary },
   segmentText: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
   dangerLink: { flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", paddingVertical: spacing.md, marginTop: spacing.sm },
   dangerText: { color: colors.error, fontWeight: "600", fontSize: 14 },

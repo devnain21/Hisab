@@ -143,7 +143,7 @@ export default function CustomerDetail() {
   }
 
   const openReceipt = (e: Entry) => {
-    if (vendor && e.type === "purchase") return setShareDoc(workOrderDoc(e, ledger.work.get(e.id), customer, user ?? {}));
+    if (vendor && e.type === "purchase") return setShareDoc(workOrderDoc(e, ledger.work.get(e.id), customer, user ?? {}, entries));
     const txn = e.type === "aeps" ? aepsList.find((t) => t.id === e.linkId) : undefined;
     const jama = txn ? aepsJamaEntry(txn.id, entries) : undefined;
     const keptLabel = jama ? (jamaKindOf(jama) === "old" ? "पुरानी उधारी में कटे" : "खाते में जमा") : "";
@@ -171,7 +171,7 @@ export default function CustomerDetail() {
   const moreActions: Action[] = [];
   if (vendor) moreActions.push(actOrder, actPay, { key: "advance", label: "एडवांस", icon: "arrow-top-right", color: semantic.due, run: () => setEntrySheet("given") }, { key: "refund", label: "पैसे वापस मिले", icon: "arrow-bottom-left", color: semantic.received, run: () => setEntrySheet("payment") });
   else {
-    if (isCustomer) moreActions.push(actWork, { key: "later", label: "आगे का काम / रिमार्क", icon: "calendar-clock", run: () => setJobSheet("later") });
+    if (isCustomer) moreActions.push(actWork);
     moreActions.push(actGot, actGiven);
   }
   if (!isCustomer) moreActions.push({ key: "purchase", label: "सामान / सेवा ली", icon: "cart-outline", color: semantic.pending, run: () => setEntrySheet("purchase") });

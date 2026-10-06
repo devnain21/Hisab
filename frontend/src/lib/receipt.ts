@@ -205,26 +205,39 @@ export function receiptDoc(
 export const workOrderNo = (e: Entry) => `WO-${e.date.slice(2, 4)}${e.date.slice(5, 7)}-${e.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase()}`;
 
 /** Work order / payment voucher for one vendor order: scope, promised date, advance, balance and terms. */
-export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendor: Customer, shopIn: Partial<ShopProfile>): ShareDoc {
+export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendor: Customer, shopIn: Partial<ShopProfile>, entries: Entry[] = []): ShareDoc {
   const shop = fullShop(shopIn);
   const items = itemsOf(entry, "काम / सामान");
   const paid = status?.received ?? entry.paid ?? 0;
   const left = status?.remaining ?? Math.max(0, entry.amount - paid);
-  const advance = status?.paidAtBooking ?? entry.paid ?? 0;
   const no = workOrderNo(entry);
   const delivered = entry.status === "delivered";
   const late = !delivered && !!entry.dueDate && entry.dueDate < todayISO();
-  const state = left <= 0 ? "पूरा भुगतान" : delivered ? "डिलीवर · भुगतान बाकी" : late ? "तारीख निकल गई" : "ऑर्डर दिया";
-  const stampTone: Tone = left <= 0 ? "ok" : "due";
   // An outsourced job (refId) is paid for work already done; an order paid up front is an advance.
   const job = !!entry.refId;
   const heading = job ? "VOUCHER" : "WORK ORDER";
   const jobRef = job ? `JOB-${entry.refId!.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase()}` : "";
+  const state = left <= 0 ? "पूरा भुगतान" : job || delivered ? "भुगतान बाकी" : late ? "तारीख निकल गई" : "ऑर्डर दिया";
+  const stampTone: Tone = left <= 0 ? "ok" : "due";
 
+  // One line per payment with its day and mode, oldest first.
+  const booked = status?.paidAtBooking ?? entry.paid ?? 0;
+  const payments: Line[] = [
+    ...(booked > 0 ? [{ date: entry.date, mode: entry.mode, amount: booked, first: true }] : []),
+    ...entries
+      .filter((e) => e.type === "given" && e.linkId === entry.id)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt))
+      .map((e) => ({ date: e.date, mode: e.mode, amount: e.amount, first: false })),
+  ].map((p) => ({
+    label: `${p.first && !job && !delivered ? "एडवांस" : "भुगतान"} · ${formatDate(p.date)} · ${payMode(p.mode)}`,
+    value: formatINR(p.amount),
+    tone: "ok" as Tone,
+  }));
+  const fromJama = status?.fromJama ?? 0;
   const lines: Line[] = [
     { label: job ? "तय भुगतान" : "तय रकम", value: formatINR(entry.amount) },
-    ...(advance > 0 ? [{ label: `${job ? "भुगतान" : "एडवांस"} (${payMode(entry.mode)})`, value: formatINR(advance), tone: "ok" as Tone }] : []),
-    ...(paid - advance > 0 ? [{ label: "बाद में भुगतान", value: formatINR(paid - advance), tone: "ok" as Tone }] : []),
+    ...payments,
+    ...(fromJama > 0 ? [{ label: "पहले के एडवांस से", value: formatINR(fromJama), tone: "ok" as Tone }] : []),
     { label: TERMS.docDueShort, value: formatINR(left), tone: left > 0 ? "due" : "ok" },
   ];
   const terms = (entry.terms ?? "").trim();
@@ -233,17 +246,17 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
   const message = [
     ...messageHead(shop),
     `*${heading}* · ${no}${jobRef ? ` · ${jobRef}` : ""}`,
-    `📅 ${formatDate(entry.date)}${entry.dueDate ? ` · कब तक: *${formatDate(entry.dueDate)}*` : ""}`,
+    `📅 ${job ? "काम" : "तारीख"}: ${formatDate(entry.date)}${entry.dueDate ? ` · कब तक: *${formatDate(entry.dueDate)}*` : ""}`,
     `Vendor: ${vendor.name}`,
     "",
     ...items.map((it, i) => `${many ? `${i + 1}. ` : ""}${it.title} — ${formatINR(it.amount)}`),
     "──────────",
     ...lines.map(lineText),
-    `स्थिति: ${state}`,
+    ...(left <= 0 ? ["पूरा भुगतान ✓"] : !job && !delivered ? [`स्थिति: ${state}`] : []),
     ...(terms ? ["", "शर्तें:", terms] : []),
   ].join("\n");
 
-  const meta = [`नं. ${esc(no)}`, jobRef ? `काम: ${esc(jobRef)}` : "", `तारीख: ${esc(formatDate(entry.date))}`, entry.dueDate ? `<b>कब तक: ${esc(formatDate(entry.dueDate))}</b>` : ""].filter(Boolean).join("<br/>");
+  const meta = [`नं. ${esc(no)}`, jobRef ? `काम: ${esc(jobRef)}` : "", `${job ? "काम की तारीख" : "तारीख"}: ${esc(formatDate(entry.date))}`, entry.dueDate ? `<b>कब तक: ${esc(formatDate(entry.dueDate))}</b>` : ""].filter(Boolean).join("<br/>");
   const body = `
   <table class="items">
     <tr><th class="no">क्र.</th><th>काम / सामान</th><th class="amt">रकम</th></tr>

@@ -132,7 +132,20 @@ export default function DayScreen() {
   const workOnline =
     workEntries.filter((e) => e.mode === "online").reduce((s, e) => s + (e.paid ?? 0), 0) +
     withWork.filter((e) => e.mode === "online").reduce((s, e) => s + e.amount, 0);
-  const workUdhaar = Math.max(0, roundMoney(workTotal - (workCash + workOnline)));
+  // A job's advance taken on an earlier day already paid for this work: it is neither today's money nor udhaar.
+  const advanceByWork = useMemo(() => {
+    const ids = new Set(workEntries.map((w) => w.id));
+    const m = new Map<string, number>();
+    for (const e of book.entries) {
+      if (e.type === "payment" && e.linkId && e.date < date && ids.has(e.linkId)) m.set(e.linkId, (m.get(e.linkId) ?? 0) + e.amount);
+    }
+    return m;
+  }, [book.entries, date, workEntries]);
+  const sameDayLinked = (w: Entry) => withWork.filter((p) => p.linkId === w.id).reduce((s, p) => s + p.amount, 0);
+  const workAdvance = roundMoney(
+    workEntries.reduce((s, w) => s + Math.min(advanceByWork.get(w.id) ?? 0, Math.max(0, w.amount - (w.paid ?? 0) - sameDayLinked(w))), 0),
+  );
+  const workUdhaar = Math.max(0, roundMoney(workTotal - (workCash + workOnline) - workAdvance));
   const dayPayments = dayEntries.filter((e) => e.type === "payment" && !forDayWork(e));
   const paymentCash = dayPayments.filter((e) => e.mode !== "online").reduce((s, e) => s + e.amount, 0);
   const paymentOnline = dayPayments.filter((e) => e.mode === "online").reduce((s, e) => s + e.amount, 0);
@@ -345,6 +358,11 @@ export default function DayScreen() {
                 <View style={[styles.miniPill, { backgroundColor: colors.infoSoft }]}>
                   <MaterialIcon name="cellphone" size={14} color={colors.info} />
                   <Text style={[styles.miniPillText, { color: colors.info }]}>UPI: {formatINR(workOnline)}</Text>
+                </View>
+              ) : null}
+              {workAdvance > 0 ? (
+                <View style={[styles.miniPill, { backgroundColor: colors.successSoft }]}>
+                  <Text style={[styles.miniPillText, { color: colors.success }]}>पहले मिला एडवांस: {formatINR(workAdvance)}</Text>
                 </View>
               ) : null}
               {workUdhaar > 0 ? (
@@ -651,13 +669,19 @@ export default function DayScreen() {
                 ) : null}
                 {e.type === "work" ? (
                   <View style={{ marginTop: 2 }}>
-                    <Text style={[styles.notes, { color: (e.paid ?? 0) >= e.amount ? colors.success : colors.error }]}>
-                      {(e.paid ?? 0) >= e.amount
-                        ? "पूरे मिले"
-                        : (e.paid ?? 0) > 0
-                        ? `${formatINR(e.paid ?? 0)} मिले · ${formatINR(e.amount - (e.paid ?? 0))} बाकी`
-                        : "पैसे बाकी"}
-                    </Text>
+                    {(() => {
+                      const before = advanceByWork.get(e.id) ?? 0;
+                      const got = roundMoney((e.paid ?? 0) + sameDayLinked(e) + before);
+                      return (
+                        <Text style={[styles.notes, { color: got >= e.amount ? colors.success : colors.error }]}>
+                          {got >= e.amount
+                            ? before > 0 ? "पहले एडवांस में मिल चुके" : "पूरे मिले"
+                            : got > 0
+                            ? `${formatINR(got)} मिले · ${formatINR(roundMoney(e.amount - got))} बाकी`
+                            : "पैसे बाकी"}
+                        </Text>
+                      );
+                    })()}
                     {e.fee && e.fee > 0 ? (
                       <Text style={styles.feeInfoText}>
                         फीस {formatINR(e.fee)} ({e.feeMode === "cash" ? "गल्ला" : "बैंक"}) · फीस के बाद {formatINR(e.amount - e.fee)}

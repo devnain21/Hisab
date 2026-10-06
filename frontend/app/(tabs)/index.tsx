@@ -30,6 +30,7 @@ import { AddExpenseSheet } from "@/src/components/expense-sheet";
 import { BudgetTile } from "@/src/components/budget-card";
 import { ActivityRow, activityFeed, type Activity } from "@/src/components/activity-feed";
 import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet";
+import { Lazy } from "@/src/components/ui";
 import type { Expense } from "@/src/lib/expenses";
 /** Switching shop / personal remounts Home, so no search text, open sheet or filter carries over. */
 export default function Home() {
@@ -108,17 +109,18 @@ function HomeBody() {
     () => (allJobs ?? []).filter((j) => (j.customerId ? personaCustIds.has(j.customerId) : !isPersonal && !isPersonalTask(j))),
     [allJobs, personaCustIds, isPersonal],
   );
+  const byId = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
   const recentCustomers = useMemo(() => {
     return recentIds
-      .map((id) => customers.find((c) => c.id === id))
+      .map((id) => byId.get(id))
       .filter((c): c is (typeof customers)[0] => Boolean(c));
-  }, [recentIds, customers]);
+  }, [recentIds, byId]);
 
-  const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? labels.customer : "खुद का काम");
+  const nameOf = (id: string) => (id ? byId.get(id)?.name ?? labels.customer : "खुद का काम");
   const jobVendor = useMemo(() => vendorByJob(entries), [entries]);
   const feed = useMemo(
-    () => (isPersonal ? activityFeed(book, "personal", (id) => customers.find((c) => c.id === id)?.name ?? "व्यक्ति", 12) : []),
-    [book, customers, isPersonal],
+    () => (isPersonal ? activityFeed(book, "personal", (id) => byId.get(id)?.name ?? "व्यक्ति", 12) : []),
+    [book, byId, isPersonal],
   );
   const openActivity = (a: Activity) => {
     const s = a.src;
@@ -131,7 +133,7 @@ function HomeBody() {
   const searchResults = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
     if (!needle) return { customers: [], jobs: [] };
-    const nameOf = (id: string) => (id ? customers.find((c) => c.id === id)?.name ?? "" : "");
+    const nameOf = (id: string) => (id ? byId.get(id)?.name ?? "" : "");
     const matchedCusts = customers
       .filter((c) => c.name.toLowerCase().includes(needle) || c.phone.includes(needle))
       .slice(0, 5)
@@ -143,7 +145,7 @@ function HomeBody() {
       .filter((j) => j.title.toLowerCase().includes(needle) || (j.customerId && nameOf(j.customerId).toLowerCase().includes(needle)))
       .slice(0, 5);
     return { customers: matchedCusts, jobs: matchedJobs };
-  }, [searchQuery, customers, jobs, entries]);
+  }, [searchQuery, customers, byId, jobs, entries]);
 
   const stats = useMemo(() => {
     const bals = customers.filter((c) => !isVendor(c)).map((c) => computeBalance(entries, c.id));
@@ -700,17 +702,17 @@ function HomeBody() {
         )
       )}
 
-      <AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} />
-      <AddEntrySheet visible={moneySheet} type={isPersonal ? "given" : "payment"} kinds={isPersonal ? ["given", "payment", "purchase"] : ["payment", "given"]} onClose={() => setMoneySheet(false)} />
-      <AddExpenseSheet visible={expenseSheet} onClose={() => setExpenseSheet(false)} />
-      <EditRecordSheet job={editingJob} onClose={() => setEditingJob(null)} />
-      <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
-      <TaskSheet visible={taskSheet !== null} initial={taskSheet?.initial} onClose={() => setTaskSheet(null)} />
-      <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
-      <MoneyMoveSheet kind={moveSheet} onClose={() => setMoveSheet(null)} />
-      <MoneyMoveSheet kind={null} initial={editMove} onClose={() => setEditMove(null)} />
-      <EditRecordSheet entry={editEntry} onClose={() => setEditEntry(null)} />
-      <AddExpenseSheet visible={!!editExpense} initial={editExpense} onClose={() => setEditExpense(null)} />
+      <Lazy when={jobSheet}><AddJobSheet visible={jobSheet} onClose={() => setJobSheet(false)} /></Lazy>
+      <Lazy when={moneySheet}><AddEntrySheet visible={moneySheet} type={isPersonal ? "given" : "payment"} kinds={isPersonal ? ["given", "payment", "purchase"] : ["payment", "given"]} onClose={() => setMoneySheet(false)} /></Lazy>
+      <Lazy when={expenseSheet}><AddExpenseSheet visible={expenseSheet} onClose={() => setExpenseSheet(false)} /></Lazy>
+      <Lazy when={!!editingJob}><EditRecordSheet job={editingJob} onClose={() => setEditingJob(null)} /></Lazy>
+      <Lazy when={!!completing}><CompleteJobSheet job={completing} onClose={() => setCompleting(null)} /></Lazy>
+      <Lazy when={taskSheet !== null}><TaskSheet visible={taskSheet !== null} initial={taskSheet?.initial} onClose={() => setTaskSheet(null)} /></Lazy>
+      <Lazy when={!!shareDoc}><ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} /></Lazy>
+      <Lazy when={!!moveSheet}><MoneyMoveSheet kind={moveSheet} onClose={() => setMoveSheet(null)} /></Lazy>
+      <Lazy when={!!editMove}><MoneyMoveSheet kind={null} initial={editMove} onClose={() => setEditMove(null)} /></Lazy>
+      <Lazy when={!!editEntry}><EditRecordSheet entry={editEntry} onClose={() => setEditEntry(null)} /></Lazy>
+      <Lazy when={!!editExpense}><AddExpenseSheet visible={!!editExpense} initial={editExpense} onClose={() => setEditExpense(null)} /></Lazy>
       {isPersonal ? null : (
         <>
           <SheetShell visible={vendorMenu} onClose={() => setVendorMenu(false)} title="Vendor" testID="sheet-vendor-menu">
@@ -776,8 +778,8 @@ function HomeBody() {
               <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
             </Pressable>
           </SheetShell>
-          <AddEntrySheet visible={vendorOrder} type="purchase" vendor onClose={() => setVendorOrder(false)} />
-          <SettleSheet work={settling} onClose={() => setSettling(null)} />
+          <Lazy when={vendorOrder}><AddEntrySheet visible={vendorOrder} type="purchase" vendor onClose={() => setVendorOrder(false)} /></Lazy>
+          <Lazy when={!!settling}><SettleSheet work={settling} onClose={() => setSettling(null)} /></Lazy>
         </>
       )}
     </View>

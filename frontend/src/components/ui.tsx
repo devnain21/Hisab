@@ -1,10 +1,10 @@
 // Shared building blocks. New and reworked screens use these instead of one-off styles,
 // so sizes, colours and tap targets stay the same everywhere.
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ActivityIndicator, Animated, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useRouter } from "expo-router";
-import { Pressable } from "@/src/components/tap";
+import { Pressable, useOnce } from "@/src/components/tap";
 import { HIDDEN, usePrefs } from "@/src/lib/prefs";
 import { formatINR } from "@/src/lib/format";
 import { TAP, colors, elevation, radius, semantic, spacing, type, weight } from "@/src/theme";
@@ -70,7 +70,7 @@ export function Button({
   testID,
 }: {
   label: string;
-  onPress: () => void;
+  onPress: () => unknown;
   variant?: ButtonVariant;
   icon?: IconName;
   disabled?: boolean;
@@ -81,9 +81,10 @@ export function Button({
   const bg = variant === "primary" ? colors.brandPrimary : variant === "danger" ? colors.error : variant === "secondary" ? colors.brandTertiary : "transparent";
   const fg = variant === "primary" || variant === "danger" ? colors.onBrandPrimary : colors.brandSecondary;
   const off = disabled || loading;
+  const press = useOnce(onPress);
   return (
     <Pressable
-      onPress={onPress}
+      onPress={press}
       disabled={off}
       accessibilityRole="button"
       accessibilityLabel={label}
@@ -180,6 +181,13 @@ export function Chip({
 }
 
 /** A heading or line with a leading vector icon (in place of an emoji). */
+/** Mounts a sheet only once it is first opened, then keeps it mounted so its close animation still plays. */
+export function Lazy({ when, children }: { when: boolean; children: ReactNode }) {
+  const [seen, setSeen] = useState(when);
+  if (when && !seen) setSeen(true);
+  return seen ? <>{children}</> : null;
+}
+
 export function IconLabel({
   icon,
   label,

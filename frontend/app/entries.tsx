@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, radius, spacing } from "@/src/theme";
-import { type Entry } from "@/src/lib/data";
+import { useNameOf, type Entry } from "@/src/lib/data";
 import { formatDateShort, formatINR, formatWeekdayDate, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { EditRecordSheet } from "@/src/components/sheets";
@@ -52,7 +52,7 @@ export default function EntriesScreen() {
   const oneDay = from === to;
   const dayLabel = (d: string) => (d === today ? "आज" : d === todayISO(-1) ? "कल" : formatWeekdayDate(d));
   const rangeLabel = oneDay ? dayLabel(from) : `${formatDateShort(from)} – ${formatDateShort(to)}`;
-  const nameOf = (id: string) => book.customers.find((c) => c.id === id)?.name ?? labels.customer;
+  const nameOf = useNameOf(book.customers, labels.customer);
   const out = OUTFLOW.has(kind);
 
   const open = (r: MetricRow) => {

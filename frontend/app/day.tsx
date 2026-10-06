@@ -5,7 +5,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { colors, spacing, radius } from "@/src/theme";
-import { isRepayment, useCustomers, type Entry } from "@/src/lib/data";
+import { isRepayment, useCustomers, useNameOf, type Entry } from "@/src/lib/data";
 import { cleanAmountInput, formatDateShort, formatINR, formatMonth, formatWeekdayDate, isBackdated, monthRange, parseAmount, roundMoney, shiftISO, todayISO, weekRange } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { EditRecordSheet } from "@/src/components/sheets";
@@ -72,7 +72,7 @@ export default function DayScreen() {
     AsyncStorage.setItem(`hisab_counted_cash_${persona}_${date}`, clean).catch(() => {});
   };
 
-  const nameOf = (id: string) => customers.find((c) => c.id === id)?.name ?? labels.customer;
+  const nameOf = useNameOf(customers, labels.customer);
 
   const mineIds = useMemo(
     () => new Set(customers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal")).map((c) => c.id)),

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TextInput } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
-import { Pressable } from "@/src/components/tap";
+import { Pressable, useOnce } from "@/src/components/tap";
 import { addExpense, deleteExpense, expensePersona, EXPENSE_CATEGORIES, PERSONAL_EXPENSE_CATEGORIES, type Expense, type ExpenseMode } from "@/src/lib/expenses";
 import { usePersona } from "@/src/lib/persona";
 import { OLD_ENTRY_DAYS, dateOnSave, formatDateShort, formatINR, isBackdated, isValidISO, parseAmount, todayISO } from "@/src/lib/format";
@@ -63,7 +63,6 @@ export function AddExpenseSheet({
   // An edit that moves the row too far before the day it was typed takes it out of galla / bank.
   const nowOld = initial ? isBackdated(date, initial.createdAt) && !isBackdated(initial.date, initial.createdAt) : false;
 
-  const handleSave = () => (initial ? confirmOldDate(initial.date, date, initial.createdAt, labels.cash, saveNow) : saveNow());
   const saveNow = async () => {
     if (!valid) return;
     setSaving(true);
@@ -85,6 +84,7 @@ export function AddExpenseSheet({
       setSaving(false);
     }
   };
+  const handleSave = useOnce(() => (initial ? confirmOldDate(initial.date, date, initial.createdAt, labels.cash, saveNow) : saveNow()));
 
   const remove = () => {
     if (!initial) return;

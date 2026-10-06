@@ -10,7 +10,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { formatDateShort, formatINR, formatMonth, formatWeekdayDate, monthRange, roundMoney, shiftISO, todayISO, weekRange } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { usePersona, type Persona } from "@/src/lib/persona";
-import { useCustomers, type Entry } from "@/src/lib/data";
+import { useCustomers, useNameOf, type Entry } from "@/src/lib/data";
 import type { Expense } from "@/src/lib/expenses";
 import { computeFlows, isInflow, isInternal, pocketNet, useMoneyBook, walletTxns, type FlowKey, type Move, type Pocket, type WalletTxn } from "@/src/lib/wallet";
 import { FLOW, FlowHead, FlowRow, FlowTile, NetRow } from "@/src/components/money-flow";
@@ -101,7 +101,7 @@ export default function PocketScreen() {
     return { nowBal, opening, ins: roundMoney(ins), outs: roundMoney(outs), closing: roundMoney(opening + ins - outs), byKey, withBal, count: list.length };
   }, [book, persona, pocket, both, range.from, to, today]);
 
-  const nameOf = (id: string) => customers.find((c) => c.id === id)?.name ?? labels.customer;
+  const nameOf = useNameOf(customers, labels.customer);
   const needle = query.trim().toLowerCase();
   const filtering = dir !== "all" || !!keyFilter || !!needle;
   // The running balance stays the pocket's real balance; filters only hide rows.

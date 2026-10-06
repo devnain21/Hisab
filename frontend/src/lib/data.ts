@@ -1,3 +1,4 @@
+import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/src/lib/api";
 import { withPending } from "@/src/lib/store";
@@ -20,6 +21,12 @@ export type Customer = {
 };
 
 export const isVendor = (c: Pick<Customer, "role"> | undefined | null) => c?.role === "vendor";
+
+/** Name per customer id, built once per list so long feeds don't search the whole list for every row. */
+export function useNameOf(customers: Customer[] | undefined, fallback: string): (id: string) => string {
+  const names = useMemo(() => new Map((customers ?? []).map((c) => [c.id, c.name])), [customers]);
+  return useCallback((id: string) => names.get(id) ?? fallback, [names, fallback]);
+}
 // work: service done · payment: money received from them · given: money handed to them (loan, or
 // paying back a purchase when linkId points at it) · purchase: goods / service taken from them on credit.
 // paid: money settled on the spot (work: taken from them, purchase: paid to them; 0..amount).

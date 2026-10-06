@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Linking, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ScrollView, FlatList, Linking, ActivityIndicator } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
@@ -220,7 +220,42 @@ export default function CustomerDetail() {
         ) : null}
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 96 + insets.bottom }}>
+      <FlatList
+        data={visible.slice(0, shown)}
+        keyExtractor={(e) => e.id}
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: 96 + insets.bottom, gap: spacing.sm }}
+        initialNumToRender={12}
+        windowSize={7}
+        renderItem={({ item: e, index: i }) => (
+          <Animated.View entering={FadeInDown.delay(Math.min(i, 8) * 40).duration(250)}>
+            {e.type !== "payment" ? (
+              <WorkCard entry={e} status={ledger.work.get(e.id)!} vendor={vendor} onPress={() => setEditing(e)} onSettle={() => setSettling(e)} onReceipt={() => openReceipt(e)} />
+            ) : (
+              <JamaCard entry={e} onPress={() => setEditing(e)} onReceipt={() => openReceipt(e)} />
+            )}
+          </Animated.View>
+        )}
+        ListEmptyComponent={
+          rows.length === 0 ? (
+            <View style={styles.empty}>
+              <MaterialIcon name="notebook-outline" size={28} color={colors.muted} />
+              <Text style={{ color: colors.muted, marginTop: spacing.sm }}>अभी कोई एंट्री नहीं</Text>
+            </View>
+          ) : (
+            <View style={styles.empty}>
+              <Text style={{ color: colors.muted }}>इस सूची में कुछ नहीं</Text>
+            </View>
+          )
+        }
+        ListFooterComponent={
+          visible.length > shown ? (
+            <Pressable style={styles.moreBtn} onPress={() => setShown((n) => n + PAGE)} testID="ledger-more">
+              <Text style={styles.linkText}>और दिखाएँ ({visible.length - shown})</Text>
+            </Pressable>
+          ) : null
+        }
+        ListHeaderComponent={
+        <>
         <Pressable style={styles.balanceCard} onPress={entries.length > 0 ? openStatement : undefined} disabled={entries.length === 0} accessibilityRole="button" accessibilityHint="पूरा हिसाब खोलें" testID="cust-balance-card">
           <Text style={styles.balanceLabel}>{balanceLabel}</Text>
           {due === 0 ? (
@@ -331,34 +366,9 @@ export default function CustomerDetail() {
             })}
           </ScrollView>
         ) : null}
-        {rows.length === 0 ? (
-          <View style={styles.empty}>
-            <MaterialIcon name="notebook-outline" size={28} color={colors.muted} />
-            <Text style={{ color: colors.muted, marginTop: spacing.sm }}>अभी कोई एंट्री नहीं</Text>
-          </View>
-        ) : visible.length === 0 ? (
-          <View style={styles.empty}>
-            <Text style={{ color: colors.muted }}>इस सूची में कुछ नहीं</Text>
-          </View>
-        ) : (
-          <View style={{ gap: spacing.sm }}>
-            {visible.slice(0, shown).map((e, i) => (
-              <Animated.View key={e.id} entering={FadeInDown.delay(Math.min(i, 8) * 40).duration(250)}>
-                {e.type !== "payment" ? (
-                  <WorkCard entry={e} status={ledger.work.get(e.id)!} vendor={vendor} onPress={() => setEditing(e)} onSettle={() => setSettling(e)} onReceipt={() => openReceipt(e)} />
-                ) : (
-                  <JamaCard entry={e} onPress={() => setEditing(e)} onReceipt={() => openReceipt(e)} />
-                )}
-              </Animated.View>
-            ))}
-            {visible.length > shown ? (
-              <Pressable style={styles.moreBtn} onPress={() => setShown((n) => n + PAGE)} testID="ledger-more">
-                <Text style={styles.linkText}>और दिखाएँ ({visible.length - shown})</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        )}
-      </ScrollView>
+        </>
+        }
+      />
 
       <View style={[styles.bottomBar, { paddingBottom: spacing.sm + insets.bottom }]}>
         <Button

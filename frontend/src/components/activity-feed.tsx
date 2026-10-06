@@ -48,7 +48,8 @@ type Book = { entries: Entry[]; customers: Customer[]; aeps: AepsTxn[]; expenses
  * accounts as one neutral row, and khata rows that moved no money (taken on credit, old history).
  */
 export function activityFeed(book: Book, persona: Persona, nameOf: (id: string) => string, limit: number): Activity[] {
-  const rows: Activity[] = [];
+  // Rows are sorted first and only the ones shown get their titles and names built.
+  const rows: { date: string; createdAt: string; make: () => Activity }[] = [];
   const shownMoves = new Set<string>();
   for (const t of walletTxns(book, persona, () => true)) {
     if (t.src.kind === "move" && isInternal(t, persona)) {
@@ -56,11 +57,18 @@ export function activityFeed(book: Book, persona: Persona, nameOf: (id: string) 
       const m = t.src.move;
       if (shownMoves.has(m.id)) continue;
       shownMoves.add(m.id);
-      rows.push({ id: m.id, date: t.date, createdAt: t.createdAt, tone: "neutral", amount: t.amount, title: `${accountLabel(m.from)} → ${accountLabel(m.to)}`, sub: m.note || "ट्रांसफर", icon: "swap-horizontal", src: t.src });
+      const src = t.src;
+      rows.push({ date: t.date, createdAt: t.createdAt, make: () => ({ id: m.id, date: t.date, createdAt: t.createdAt, tone: "neutral", amount: t.amount, title: `${accountLabel(m.from)} → ${accountLabel(m.to)}`, sub: m.note || "ट्रांसफर", icon: "swap-horizontal", src }) });
       continue;
     }
-    const d = describeTxn(t, persona, t.pocket, nameOf);
-    rows.push({ id: t.id, date: t.date, createdAt: t.createdAt, tone: isInflow(t.key) ? "in" : "out", amount: t.amount, title: d.title, sub: `${d.sub} · ${pocketTitle(persona, t.pocket)}`, icon: d.icon, src: t.src });
+    rows.push({
+      date: t.date,
+      createdAt: t.createdAt,
+      make: () => {
+        const d = describeTxn(t, persona, t.pocket, nameOf);
+        return { id: t.id, date: t.date, createdAt: t.createdAt, tone: isInflow(t.key) ? "in" : "out", amount: t.amount, title: d.title, sub: `${d.sub} · ${pocketTitle(persona, t.pocket)}`, icon: d.icon, src: t.src };
+      },
+    });
   }
   const byId = new Map(book.customers.map((c) => [c.id, c]));
   for (const e of book.entries) {
@@ -68,17 +76,33 @@ export function activityFeed(book: Book, persona: Persona, nameOf: (id: string) 
     const old = isBackdated(e.date, e.createdAt);
     const onCredit = e.type === "purchase" && !((e.paid ?? 0) > 0);
     if (!old && !onCredit) continue;
-    const sub = [onCredit ? "उधार पर लिया" : "पुराना हिसाब", e.description].filter(Boolean).join(" · ");
-    rows.push({ id: `${e.id}:khata`, date: e.date, createdAt: e.createdAt, tone: "neutral", amount: e.amount, title: nameOf(e.customerId), sub, icon: onCredit ? "cart-outline" : "history", src: { kind: "entry", entry: e } });
+    rows.push({
+      date: e.date,
+      createdAt: e.createdAt,
+      make: () => ({
+        id: `${e.id}:khata`,
+        date: e.date,
+        createdAt: e.createdAt,
+        tone: "neutral",
+        amount: e.amount,
+        title: nameOf(e.customerId),
+        sub: [onCredit ? "उधार पर लिया" : "पुराना हिसाब", e.description].filter(Boolean).join(" · "),
+        icon: onCredit ? "cart-outline" : "history",
+        src: { kind: "entry", entry: e },
+      }),
+    });
   }
   // Old expenses written in later never touch cash / bank, but they were still spent; list them so none goes missing.
   for (const x of book.expenses) {
     if (expensePersona(x) !== persona || !isBackdated(x.date, x.createdAt)) continue;
-    const sub = ["पुराना खर्च", x.notes].filter(Boolean).join(" · ");
-    rows.push({ id: `${x.id}:old`, date: x.date, createdAt: x.createdAt, tone: "neutral", amount: x.amount, title: x.title, sub, icon: "history", src: { kind: "expense", expense: x } });
+    rows.push({
+      date: x.date,
+      createdAt: x.createdAt,
+      make: () => ({ id: `${x.id}:old`, date: x.date, createdAt: x.createdAt, tone: "neutral", amount: x.amount, title: x.title, sub: ["पुराना खर्च", x.notes].filter(Boolean).join(" · "), icon: "history", src: { kind: "expense", expense: x } }),
+    });
   }
   rows.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
-  return rows.slice(0, limit);
+  return rows.slice(0, limit).map((r) => r.make());
 }
 
 const TONE: Record<Tone, { fg: string; bg: string; sign: string }> = {

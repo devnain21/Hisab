@@ -8,7 +8,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, semantic, type, elevation } from "@/src/theme";
 import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, isVendor, type Entry, type Job } from "@/src/lib/data";
-import { buildAllLedgers, isWorkVendorCost, vendorByJob, workForJob } from "@/src/lib/records";
+import { buildAllLedgers, vendorByJob, workForJob } from "@/src/lib/records";
 import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import * as Updates from "expo-updates";
@@ -19,7 +19,7 @@ import { clearRejected, flush, rejectedChanges, retryRejected, retryableRejected
 import { cashTotals, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
 import { FlowTile, signedINR } from "@/src/components/money-flow";
 import { useCounterMode } from "@/src/lib/counter";
-import { aepsTotals } from "@/src/lib/aeps";
+import { metricRows, metricSum, type MetricKind } from "@/src/lib/metrics";
 import { accountName, usePersona } from "@/src/lib/persona";
 import { TERMS, balanceTerm } from "@/src/lib/terms";
 import { HIDDEN, savePrefs, usePrefs } from "@/src/lib/prefs";
@@ -187,26 +187,15 @@ function HomeBody() {
   // Work booked today in any mode (cash, online or udhaar). AEPS counter money is pass-through, so only
   // its commission counts. Fees and vendor cost match the day screen's work profit.
   const todayWork = useMemo(() => {
-    const w = { gross: 0, count: 0, fees: 0, vendor: 0, commission: 0, booked: 0, net: 0 };
-    if (isPersonal) return w;
-    const workIds = new Set(entries.filter((e) => e.type === "work").map((e) => e.id));
-    for (const e of entries) {
-      if (e.date !== today || !personaCustIds.has(e.customerId)) continue;
-      if (e.type === "work") {
-        w.gross += e.amount;
-        w.fees += e.fee ?? 0;
-        w.count += 1;
-      } else if (isWorkVendorCost(e, workIds)) w.vendor += e.amount;
-    }
-    if (counter.on) w.commission = aepsTotals(aeps, (d) => d === today).commission;
-    w.gross = roundMoney(w.gross);
-    w.fees = roundMoney(w.fees);
-    w.vendor = roundMoney(w.vendor);
-    w.commission = roundMoney(w.commission);
-    w.booked = roundMoney(w.gross + w.commission);
-    w.net = roundMoney(w.gross - w.fees - w.vendor + w.commission);
-    return w;
-  }, [entries, aeps, today, personaCustIds, isPersonal, counter.on]);
+    if (isPersonal) return { gross: 0, count: 0, fees: 0, vendor: 0, commission: 0, booked: 0, net: 0 };
+    const work = metricRows(book, "business", "work", today, today);
+    const gross = roundMoney(work.reduce((s, r) => s + r.amount, 0));
+    const fees = metricSum(book, "business", "fee", today, today);
+    const vendor = metricSum(book, "business", "workVendor", today, today);
+    const commission = metricSum(book, "business", "commission", today, today);
+    return { gross, count: work.length, fees, vendor, commission, booked: roundMoney(gross + commission), net: roundMoney(gross - fees - vendor + commission) };
+  }, [book, today, isPersonal]);
+  const openMetric = (kind: MetricKind) => router.push({ pathname: "/entries" as never, params: { kind, from: today } });
   const [workSheet, setWorkSheet] = useState(false);
   const pendingSum = useMemo(() => {
     const open = jobs.filter((j) => j.status !== "done" && j.customerId);
@@ -578,7 +567,7 @@ function HomeBody() {
             {isPersonal ? null : (
             <>
             <View style={styles.sectionRow}>
-              <View style={{ flex: 1, minWidth: 0 }}>
+              <Pressable style={{ flex: 1, minWidth: 0 }} onPress={() => go("/(tabs)/work", { filter: "open" })} accessibilityRole="button" testID="home-pending-head">
                 <Text style={styles.sectionHead} testID="stat-pending-jobs">
                   पेंडिंग काम{stats.openJobs > 0 ? ` (${stats.openJobs})` : ""}
                   {stats.overdue > 0 ? <Text style={styles.lateTag}>  {stats.overdue} देर से</Text> : null}
@@ -590,7 +579,7 @@ function HomeBody() {
                     {pendingSum.advance > 0 ? `एडवांस ${money(pendingSum.advance)}` : ""}
                   </Text>
                 ) : null}
-              </View>
+              </Pressable>
               {stats.openJobs > upcoming.length ? (
                 <Pressable onPress={() => go("/(tabs)/work", { filter: "open" })} hitSlop={8}>
                   <Text style={styles.link}>सभी देखें</Text>
@@ -762,11 +751,11 @@ function HomeBody() {
           <SheetShell visible={workSheet} onClose={() => setWorkSheet(false)} title="आज का काम" testID="sheet-today-work">
             {(
               [
-                { key: "gross", label: "कुल काम बुक", sub: `${todayWork.count} काम · नकद, ऑनलाइन, उधार सब`, value: todayWork.gross, sign: "", to: () => router.push({ pathname: "/day", params: { type: "work" } }) },
-                { key: "fees", label: "पोर्टल / सरकारी फीस", sub: "", value: todayWork.fees, sign: "−", to: () => router.push({ pathname: "/day", params: { type: "work" } }) },
-                { key: "vendor", label: "Vendor लागत", sub: "", value: todayWork.vendor, sign: "−", to: () => router.push({ pathname: "/day", params: { type: "work" } }) },
-                ...(counter.on
-                  ? [{ key: "aeps", label: "AEPS / सेवा कमीशन", sub: "जमा-निकासी की रकम नहीं जुड़ती", value: todayWork.commission, sign: "+", to: () => go("/(tabs)/aeps", { range: "today" }) }]
+                { key: "gross", label: "कुल काम बुक", sub: `${todayWork.count} काम · नकद, ऑनलाइन, उधार सब`, value: todayWork.gross, sign: "", to: () => openMetric("work") },
+                { key: "fees", label: "पोर्टल / सरकारी फीस", sub: "", value: todayWork.fees, sign: "−", to: () => openMetric("fee") },
+                { key: "vendor", label: "Vendor लागत", sub: "", value: todayWork.vendor, sign: "−", to: () => openMetric("workVendor") },
+                ...(counter.on || todayWork.commission > 0
+                  ? [{ key: "aeps", label: "AEPS / सेवा कमीशन", sub: "जमा-निकासी की रकम नहीं जुड़ती", value: todayWork.commission, sign: "+", to: () => openMetric("commission") }]
                   : []),
               ] as const
             ).map((r) => (

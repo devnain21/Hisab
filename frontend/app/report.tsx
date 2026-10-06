@@ -7,10 +7,9 @@ import { colors, radius, semantic, spacing } from "@/src/theme";
 import { formatDateShort, formatINR, formatMonth, formatWeekdayDate, monthRange, roundMoney, shiftISO, todayISO, weekRange } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { usePersona, type Persona } from "@/src/lib/persona";
-import { computeBalance, isRepayment, isVendor } from "@/src/lib/data";
-import { expensePersona } from "@/src/lib/expenses";
-import { cashTotals, computeFlows, personaOfEntry, pocketIn, pocketNet, pocketOut, useMoneyBook, type FlowKey, type Pocket } from "@/src/lib/wallet";
-import { commissionDate } from "@/src/lib/aeps";
+import { computeBalance, isVendor } from "@/src/lib/data";
+import { cashTotals, computeFlows, pocketIn, pocketNet, pocketOut, useMoneyBook, type FlowKey, type Pocket } from "@/src/lib/wallet";
+import { metricRows, metricSum, type MetricKind } from "@/src/lib/metrics";
 import { useBudget } from "@/src/lib/budget";
 import { useAuth } from "@/src/context/AuthContext";
 import { pdfSupported, reportDoc, sharePdf, type Line } from "@/src/lib/receipt";
@@ -47,55 +46,32 @@ type Stats = {
 };
 
 function periodStats(book: Book, persona: Persona, from: string, to: string): Stats {
-  const inRange = (d: string) => d >= from && d <= to;
-  const byId = new Map(book.customers.map((c) => [c.id, c]));
-  let billed = 0, billedCount = 0, collected = 0, fee = 0, given = 0, paidOut = 0, vendorCost = 0;
-  // A vendor order of a job still pending is not a cost yet; it counts on the day the job is finished.
-  const workIds = new Set(book.entries.filter((e) => e.type === "work").map((e) => e.id));
-  for (const e of book.entries) {
-    if (!inRange(e.date) || personaOfEntry(e, byId) !== persona) continue;
-    if (e.type === "work") {
-      billed += e.amount;
-      billedCount += 1;
-      collected += e.paid ?? 0;
-      fee += e.fee ?? 0;
-    } else if (e.type === "payment") collected += e.amount;
-    else if (e.type === "purchase") {
-      paidOut += e.paid ?? 0;
-      if (persona === "business" && isVendor(byId.get(e.customerId)) && (!e.refId || workIds.has(e.refId))) vendorCost += e.amount;
-    }
-    else if (e.type === "given") {
-      if (isRepayment(e)) paidOut += e.amount;
-      else given += e.amount;
-    }
-  }
+  const sum = (k: MetricKind) => metricSum(book, persona, k, from, to);
+  const work = metricRows(book, persona, "work", from, to);
   const cats = new Map<string, number>();
-  let expense = 0;
-  for (const x of book.expenses) {
-    if (!inRange(x.date) || expensePersona(x) !== persona) continue;
-    expense += x.amount;
-    cats.set(x.title, (cats.get(x.title) ?? 0) + x.amount);
+  for (const r of metricRows(book, persona, "expense", from, to)) {
+    if (r.source === "expense") cats.set(r.expense.title, (cats.get(r.expense.title) ?? 0) + r.amount);
   }
-  // By its day like the work and expenses above; galla flows would leave out late-typed rows.
-  let commission = 0;
-  if (persona === "business") {
-    for (const t of book.aeps) {
-      const day = t.commission > 0 ? commissionDate(t) : null;
-      if (day && inRange(day)) commission += t.commission;
-    }
-  }
+  const billed = roundMoney(work.reduce((s, r) => s + r.amount, 0));
+  const collected = sum("collected");
+  const commission = sum("commission");
+  const fee = sum("fee");
+  const expense = sum("expense");
+  const given = sum("given");
+  const paidOut = sum("paidOut");
+  const vendorCost = sum("vendor");
   const result = persona === "business" ? billed + commission - expense - fee - vendorCost : collected - given - paidOut - expense;
   return {
-    billed: roundMoney(billed),
-    billedCount,
-    collected: roundMoney(collected),
-    commission: roundMoney(commission),
-    fee: roundMoney(fee),
-    expense: roundMoney(expense),
-    given: roundMoney(given),
-    paidOut: roundMoney(paidOut),
-    vendorCost: roundMoney(vendorCost),
-    byCat: [...cats].sort((a, b) => b[1] - a[1]),
+    billed,
+    billedCount: work.length,
+    collected,
+    commission,
+    fee,
+    expense,
+    given,
+    paidOut,
+    vendorCost,
+    byCat: [...cats].sort((x, y) => y[1] - x[1]),
     result: roundMoney(result),
   };
 }
@@ -173,20 +149,21 @@ export default function ReportScreen() {
   const recovery = !isPersonal && period === "month" && isCurrent && now.collected + outstanding > 0 ? Math.round((now.collected / (now.collected + outstanding)) * 100) : null;
 
   const resultLabel = isPersonal ? "बचत" : "कमाई";
-  const profitRows: { label: string; value: number; sign: "+" | "−" }[] = isPersonal
+  const profitRows: { label: string; value: number; sign: "+" | "−"; kind: MetricKind }[] = isPersonal
     ? [
-        { label: "पैसे आए", value: now.collected, sign: "+" },
-        { label: "लोगों को गए", value: now.given, sign: "−" },
-        { label: "सामान / सेवा चुकाए", value: now.paidOut, sign: "−" },
-        { label: "खर्च", value: now.expense, sign: "−" },
+        { label: "पैसे आए", value: now.collected, sign: "+", kind: "collected" },
+        { label: "लोगों को गए", value: now.given, sign: "−", kind: "given" },
+        { label: "सामान / सेवा चुकाए", value: now.paidOut, sign: "−", kind: "paidOut" },
+        { label: "खर्च", value: now.expense, sign: "−", kind: "expense" },
       ]
     : [
-        { label: `काम / बिक्री (${now.billedCount})`, value: now.billed, sign: "+" },
-        { label: "कमीशन", value: now.commission, sign: "+" },
-        { label: "खर्च", value: now.expense, sign: "−" },
-        { label: "पोर्टल फीस", value: now.fee, sign: "−" },
-        ...(now.vendorCost > 0 ? [{ label: "Vendor लागत", value: now.vendorCost, sign: "−" as const }] : []),
+        { label: `काम / बिक्री (${now.billedCount})`, value: now.billed, sign: "+", kind: "work" },
+        { label: "कमीशन", value: now.commission, sign: "+", kind: "commission" },
+        { label: "खर्च", value: now.expense, sign: "−", kind: "expense" },
+        { label: "पोर्टल फीस", value: now.fee, sign: "−", kind: "fee" },
+        ...(now.vendorCost > 0 ? [{ label: "Vendor लागत", value: now.vendorCost, sign: "−" as const, kind: "vendor" as const }] : []),
       ];
+  const openMetric = (kind: MetricKind) => router.push({ pathname: "/entries" as never, params: { kind, from, to: end } });
   const resultChange = change(now.result, prev.result);
 
   const sourceRows = (rows: typeof IN_ROWS) => rows.map((r) => ({ r, v: flow.byKey.get(r.key) ?? 0 })).filter((x) => x.v > 0);
@@ -318,7 +295,12 @@ export default function ReportScreen() {
 
         <Text style={styles.sectionTitle}>{resultLabel}</Text>
         <View style={styles.card}>
-          <View style={styles.profitHead}>
+          <Pressable
+            style={styles.profitHead}
+            onPress={() => router.push({ pathname: "/day", params: { type: isPersonal ? "txns" : "work", date: period === "day" ? date : range.from, period } })}
+            accessibilityRole="button"
+            testID="report-result"
+          >
             <Text style={[styles.profitValue, now.result < 0 && { color: colors.error }]}>{now.result < 0 ? "−" : ""}{money(Math.abs(now.result))}</Text>
             {resultChange ? (
               <View style={styles.changePill}>
@@ -326,14 +308,23 @@ export default function ReportScreen() {
                 <Text style={[styles.changeText, { color: resultChange.up ? colors.success : colors.error }]}>{resultChange.text}</Text>
               </View>
             ) : null}
-          </View>
+            <View style={{ flex: 1 }} />
+            <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
+          </Pressable>
           {profitRows.map((r) => (
-            <FlowRow key={r.label} label={r.label} value={`${r.sign}${money(r.value)}`} color={r.sign === "+" ? FLOW.in.color : FLOW.out.color} />
+            <FlowRow
+              key={r.label}
+              label={r.label}
+              value={`${r.sign}${money(r.value)}`}
+              color={r.sign === "+" ? FLOW.in.color : FLOW.out.color}
+              onPress={() => openMetric(r.kind)}
+              testID={`report-metric-${r.kind}`}
+            />
           ))}
         </View>
 
         {monthBudget > 0 ? (
-          <View style={styles.card}>
+          <Pressable style={styles.card} onPress={() => openMetric("expense")} accessibilityRole="button" testID="report-budget">
             <View style={styles.rowBetween}>
               <Text style={styles.cardTitle}>बजट</Text>
               <Text style={styles.cardTitle}>{money(now.expense)} / {money(monthBudget)}</Text>
@@ -341,11 +332,11 @@ export default function ReportScreen() {
             <View style={styles.track}>
               <View style={[styles.fill, { width: `${Math.min(100, Math.max(2, (now.expense / monthBudget) * 100))}%`, backgroundColor: now.expense > monthBudget ? colors.error : colors.success }]} />
             </View>
-          </View>
+          </Pressable>
         ) : null}
 
         {now.byCat.length > 0 ? (
-          <Pressable style={styles.card} onPress={() => openFlow("out", "expense")} testID="report-expenses">
+          <Pressable style={styles.card} onPress={() => openMetric("expense")} testID="report-expenses">
             <View style={styles.rowBetween}>
               <Text style={styles.cardTitle}>खर्च</Text>
               <MaterialIcon name="chevron-right" size={16} color={colors.muted} />

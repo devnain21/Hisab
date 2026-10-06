@@ -19,6 +19,7 @@ import { MoneyMoveSheet, type MoveKind } from "@/src/components/money-move-sheet
 import { PocketCard } from "@/src/components/pocket-card";
 import { DayCloseModal } from "@/src/components/day-close-modal";
 import { isWorkVendorCost } from "@/src/lib/records";
+import type { MetricKind } from "@/src/lib/metrics";
 import { useAuth } from "@/src/context/AuthContext";
 import { usePersona } from "@/src/lib/persona";
 import { accountKey, accountLabel, addMove, balanceOf, computeFlows, pocketNet, useMoneyBook, type Move } from "@/src/lib/wallet";
@@ -31,7 +32,7 @@ const PERIOD_LABEL: Record<Period, string> = { day: "दिन", week: "हफ�
 const SHORT_DAY = ["रवि", "सोम", "मंगल", "बुध", "गुरु", "शुक्र", "शनि"];
 
 export default function DayScreen() {
-  const params = useLocalSearchParams<{ type?: Kind; date?: string }>();
+  const params = useLocalSearchParams<{ type?: Kind; date?: string; period?: Period }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
@@ -51,7 +52,7 @@ export default function DayScreen() {
   const [moveSheet, setMoveSheet] = useState<MoveKind | null>(null);
   const [dayCloseOpen, setDayCloseOpen] = useState(false);
   const [countedCash, setCountedCash] = useState<string>("");
-  const [period, setPeriod] = useState<Period>("day");
+  const [period, setPeriod] = useState<Period>(params.period === "week" || params.period === "month" ? params.period : "day");
   const [calendar, setCalendar] = useState(false);
   const [editExpense, setEditExpense] = useState<Expense | null>(null);
   const [editMove, setEditMove] = useState<Move | null>(null);
@@ -301,22 +302,22 @@ export default function DayScreen() {
               <Text style={[styles.totalValue, { fontSize: 24, marginTop: 0 }]}>{formatINR(workTotal)}</Text>
             </View>
             {workFees > 0 ? (
-              <View style={styles.workFeeRow}>
+              <Pressable style={styles.workFeeRow} onPress={() => router.push({ pathname: "/entries" as never, params: { kind: "fee", from: date } })} testID="day-work-fees">
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                   <MaterialIcon name="receipt" size={14} color={colors.error} />
                   <Text style={styles.feeLabel}>फीस</Text>
                 </View>
                 <Text style={styles.feeValue}>-{formatINR(workFees)}</Text>
-              </View>
+              </Pressable>
             ) : null}
             {workVendor > 0 ? (
-              <View style={styles.workFeeRow}>
+              <Pressable style={styles.workFeeRow} onPress={() => router.push({ pathname: "/entries" as never, params: { kind: "workVendor", from: date } })} testID="day-work-vendor">
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                   <MaterialIcon name="truck-outline" size={14} color={colors.error} />
                   <Text style={styles.feeLabel}>Vendor लागत</Text>
                 </View>
                 <Text style={styles.feeValue}>-{formatINR(workVendor)}</Text>
-              </View>
+              </Pressable>
             ) : null}
             {workFees > 0 || workVendor > 0 ? (
               <View style={styles.workProfitRow}>
@@ -732,14 +733,16 @@ function RangeView({
     };
   }, [from, to, book, persona, isPersonal, mineIds]);
   const signed = (n: number) => `${n < 0 ? "−" : "+"}${formatINR(Math.abs(n))}`;
+  const router = useRouter();
+  const openMetric = (kind: MetricKind) => router.push({ pathname: "/entries" as never, params: { kind, from, to } });
 
   return (
     <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl * 2 }}>
       <View style={styles.rangeGrid}>
-        <RangeCell label={isPersonal ? "⬆ लोगों को" : "काम"} value={formatINR(data.work)} color={isPersonal ? colors.error : colors.onSurface} />
-        <RangeCell label={isPersonal ? "⬇ लोगों से" : "⬇ ग्राहकों से"} value={formatINR(data.got)} color={colors.success} />
+        <RangeCell label={isPersonal ? "⬆ लोगों को" : "काम"} value={formatINR(data.work)} color={isPersonal ? colors.error : colors.onSurface} onPress={() => openMetric(isPersonal ? "given" : "work")} />
+        <RangeCell label={isPersonal ? "⬇ लोगों से" : "⬇ ग्राहकों से"} value={formatINR(data.got)} color={colors.success} onPress={() => openMetric("collected")} />
         {isPersonal ? <RangeCell label="सामान / सेवा" value={formatINR(data.goods)} color={colors.warning} /> : null}
-        <RangeCell label="खर्च" value={formatINR(data.exp)} color={colors.error} />
+        <RangeCell label="खर्च" value={formatINR(data.exp)} color={colors.error} onPress={() => openMetric("expense")} />
         {isPersonal ? null : <RangeCell label="कमीशन" value={formatINR(data.commission)} color={colors.brandPrimary} />}
         {isPersonal ? null : <RangeCell label="कमाई" value={formatINR(data.profit)} color={data.profit < 0 ? colors.error : colors.brandPrimary} />}
         <RangeCell label={`${cashLabel} / बैंक बदलाव`} value={`${signed(data.cashNet)} / ${signed(data.bankNet)}`} color={colors.onSurface} small />
@@ -800,12 +803,17 @@ function Pill({ text, color, soft }: { text: string; color: string; soft: string
   );
 }
 
-function RangeCell({ label, value, color, small }: { label: string; value: string; color: string; small?: boolean }) {
-  return (
-    <View style={styles.rangeCell}>
+function RangeCell({ label, value, color, small, onPress }: { label: string; value: string; color: string; small?: boolean; onPress?: () => void }) {
+  const body = (
+    <>
       <Text style={styles.totalLabel}>{label}</Text>
       <Text style={[styles.rangeVal, { color }, small && { fontSize: 14 }]} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
-    </View>
+    </>
+  );
+  return onPress ? (
+    <Pressable style={styles.rangeCell} onPress={onPress} accessibilityRole="button">{body}</Pressable>
+  ) : (
+    <View style={styles.rangeCell}>{body}</View>
   );
 }
 

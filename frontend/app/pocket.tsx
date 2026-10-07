@@ -155,6 +155,7 @@ export default function PocketScreen() {
     if (s.kind === "entry") setEditEntry(s.entry);
     else if (s.kind === "expense") setEditExpense(s.expense);
     else if (s.kind === "move") setEditMove(s.move);
+    else if (s.kind === "job") router.push(`/customer/${s.job.customerId}`);
     else router.push(`/aeps/${s.txn.id}`);
   };
 

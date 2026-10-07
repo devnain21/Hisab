@@ -75,13 +75,7 @@ export function DayCloseModal({
                   <Text style={[styles.rowVal, { color: colors.error }]}>-{formatINR(data.workFees)}</Text>
                 </View>
               ) : null}
-              {data.workVendor > 0 ? (
-                <View style={styles.row}>
-                  <Text style={styles.rowLabel}>Vendor लागत:</Text>
-                  <Text style={[styles.rowVal, { color: colors.error }]}>-{formatINR(data.workVendor)}</Text>
-                </View>
-              ) : null}
-              {data.workFees > 0 || data.workVendor > 0 ? (
+              {data.workFees > 0 ? (
                 <View style={styles.row}>
                   <Text style={styles.rowLabel}>काम से कमाई:</Text>
                   <Text style={[styles.rowVal, { fontWeight: "800", color: colors.brandPrimary }]}>{formatINR(data.workProfit)}</Text>

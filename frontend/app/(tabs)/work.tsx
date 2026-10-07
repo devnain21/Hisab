@@ -25,12 +25,8 @@ const TABS: { key: Filter; label: string }[] = [
 ];
 const TILE_FILTER_LABEL: Partial<Record<Filter, string>> = { today: "आज देने हैं", late: "देर से", unpaid: "पैसे बाकी", doneToday: "आज पूरे" };
 
-/** The vendor side of a job: who has it, what they charge, and what has been given to them so far. */
-type VendorSide = { name: string; cost: number; given: number; due: string; back: boolean };
-
 type JobInfo = {
   job: Job;
-  vendor?: VendorSide;
   /** Customer advance on a job still open. */
   advance: number;
   work?: Entry;
@@ -93,30 +89,12 @@ function ShopWork() {
   const infos = useMemo(() => {
     const ledger = buildAllLedgers(entries);
     const workOf = workForJobs(jobs.filter((j) => j.status === "done"), entries);
-    const orderByRef = new Map<string, Entry>();
-    const givenByLink = new Map<string, number>();
-    for (const e of entries) {
-      if (e.type === "purchase" && e.refId) orderByRef.set(e.refId, e);
-      else if (e.type === "given" && e.linkId) givenByLink.set(e.linkId, (givenByLink.get(e.linkId) ?? 0) + e.amount);
-    }
-    const vendorOf = (row: Entry | undefined): VendorSide | undefined =>
-      row
-        ? {
-            name: nameById.get(row.customerId) ?? "Vendor",
-            cost: row.amount,
-            given: roundMoney(Math.min(row.amount, (row.paid ?? 0) + (givenByLink.get(row.id) ?? 0))),
-            due: row.status === "ordered" ? row.dueDate ?? "" : "",
-            back: row.status !== "ordered",
-          }
-        : undefined;
     return jobs.map((job): JobInfo => {
-      if (job.status !== "done") {
-        return { job, vendor: vendorOf(orderByRef.get(job.id)), advance: jobAdvanceLeft(job, entries) };
-      }
+      if (job.status !== "done") return { job, advance: jobAdvanceLeft(job, entries) };
       const work = workOf.get(job.id);
-      return { job, work, pay: work ? ledger.get(work.id) : undefined, vendor: vendorOf(work ? orderByRef.get(work.id) : undefined), advance: 0 };
+      return { job, work, pay: work ? ledger.get(work.id) : undefined, advance: 0 };
     });
-  }, [jobs, entries, nameById]);
+  }, [jobs, entries]);
 
   const stats = useMemo(() => {
     const open = infos.filter((i) => i.job.status !== "done");
@@ -141,8 +119,7 @@ function ShopWork() {
       !needle ||
       i.job.title.toLowerCase().includes(needle) ||
       nameOf(i.job.customerId).toLowerCase().includes(needle) ||
-      i.job.notes.toLowerCase().includes(needle) ||
-      (i.vendor?.name.toLowerCase().includes(needle) ?? false);
+      i.job.notes.toLowerCase().includes(needle);
     const list = infos.filter((i) => matches(i, filter, today) && hit(i));
     const openList = list.filter((i) => i.job.status !== "done").sort((a, b) => a.job.dueDate.localeCompare(b.job.dueDate));
     // Finished work: most recent first (day finished, then when it was written).
@@ -218,7 +195,7 @@ function ShopWork() {
       </View>
       {searching ? (
         <View style={{ paddingHorizontal: spacing.lg }}>
-          <SearchBox value={q} onChange={setQ} placeholder="काम, ग्राहक या Vendor खोजें" testID="work-search" />
+          <SearchBox value={q} onChange={setQ} placeholder="काम या ग्राहक खोजें" testID="work-search" />
         </View>
       ) : null}
 
@@ -304,13 +281,14 @@ function JobCard({ info, today, customer, money, onOpen, onComplete }: {
   onOpen: () => void;
   onComplete: () => void;
 }) {
-  const { job: j, vendor, advance, pay, work } = info;
+  const { job: j, advance, pay, work } = info;
   const done = j.status === "done";
   const due = dueText(j, today);
   const late = !done && j.dueDate < today;
   const left = pay?.remaining ?? 0;
   const amount = done && work ? work.amount : j.estimatedAmount;
-  const accent = done ? colors.success : late ? colors.warning : vendor ? colors.info : colors.brandPrimary;
+  const accent = done ? colors.success : late ? colors.warning : colors.brandPrimary;
+  const fee = !done ? j.fee ?? 0 : 0;
   const notes = done ? stripPayNote(j.notes) : j.notes;
   return (
     <Pressable style={styles.card} onPress={onOpen} testID={`job-card-${j.id}`}>
@@ -340,25 +318,8 @@ function JobCard({ info, today, customer, money, onOpen, onComplete }: {
           <View style={[styles.dueChip, { borderColor: due.tone }]}>
             <Text style={[styles.dueText, { color: due.tone }]} numberOfLines={1}>{due.text}</Text>
           </View>
-          {!done && j.status === "doing" && !vendor ? <Text style={styles.doing}>चल रहा</Text> : null}
+          {!done && j.status === "doing" ? <Text style={styles.doing}>चल रहा</Text> : null}
         </View>
-
-        {vendor ? (
-          <View style={styles.vendorStrip} testID={`job-vendor-${j.id}`}>
-            <MaterialIcon name={done || vendor.back ? "truck-check-outline" : "truck-fast-outline"} size={16} color={colors.info} />
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.vendorName} numberOfLines={1}>
-                {vendor.name}
-                {!done && vendor.due ? <Text style={styles.vendorDue}> · {vendor.due === today ? "आज देगा" : `${formatDateShort(vendor.due)} तक`}</Text> : null}
-              </Text>
-              <Text style={styles.vendorMoney} numberOfLines={1}>
-                लागत {money(vendor.cost)}
-                {vendor.given > 0 ? ` · दिए ${money(vendor.given)}` : ""}
-                {vendor.cost - vendor.given > 0 ? ` · बाकी ${money(roundMoney(vendor.cost - vendor.given))}` : " · पूरे दिए"}
-              </Text>
-            </View>
-          </View>
-        ) : null}
 
         <View style={styles.moneyRow}>
           {!done && advance > 0 ? (
@@ -368,6 +329,14 @@ function JobCard({ info, today, customer, money, onOpen, onComplete }: {
             </View>
           ) : null}
           {!done && advance > 0 && j.estimatedAmount > advance ? <Text style={styles.moneyHint}>बाकी {money(roundMoney(j.estimatedAmount - advance))}</Text> : null}
+          {fee > 0 ? (
+            <View style={[styles.moneyChip, { backgroundColor: j.feePaidOn ? semantic.dueSoft : semantic.pendingSoft }]} testID={`job-fee-${j.id}`}>
+              <MaterialIcon name="receipt-text-outline" size={13} color={j.feePaidOn ? semantic.due : semantic.pending} />
+              <Text style={[styles.moneyChipText, { color: j.feePaidOn ? semantic.due : semantic.pending }]}>
+                फीस {money(fee)} · {j.feePaidOn ? "लग गई" : "अभी नहीं लगी"}
+              </Text>
+            </View>
+          ) : null}
           {done && !work && j.customerId ? <Text style={styles.moneyHint}>मुफ़्त</Text> : null}
         </View>
 
@@ -592,10 +561,6 @@ const styles = StyleSheet.create({
   dueChip: { borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
   dueText: { fontSize: 11, fontWeight: "700" },
   doing: { fontSize: 11, fontWeight: "700", color: semantic.pending },
-  vendorStrip: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.md, padding: spacing.sm + 2, borderRadius: radius.sm + 2, backgroundColor: semantic.bankSoft },
-  vendorName: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
-  vendorDue: { fontSize: 12, fontWeight: "600", color: colors.info },
-  vendorMoney: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 1 },
   moneyRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm },
   moneyChip: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
   moneyChipText: { fontSize: 12, fontWeight: "700" },

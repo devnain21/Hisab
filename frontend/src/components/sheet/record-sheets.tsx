@@ -2,24 +2,23 @@ import { useState, useEffect } from "react";
 import { View, Text, TextInput } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { store } from "@/src/lib/store";
-import { computeBalance, isVendor, itemsOf, useAeps, useCustomers, useEntries, useJobs, type Entry, type EntryType, type Job } from "@/src/lib/data";
-import { ADVANCE, advancesForJob, buildLedger, jobForWork, jobStart, linkedPayment, olderAdvances, refundsForJob, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, vendorCostsFor, vendorOrdersForJob, workForJob, workForPayment } from "@/src/lib/records";
+import { computeBalance, itemsOf, useAeps, useCustomers, useEntries, useJobs, type Entry, type EntryType, type Job } from "@/src/lib/data";
+import { ADVANCE, advancesForJob, buildLedger, feePaid, jobForWork, jobStart, linkedPayment, olderAdvances, refundsForJob, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
 import { cleanAmountInput, dateOnSave, formatDate, formatINR, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { useContactPicker } from "@/src/components/contact-picker-modal";
 import { usePersona } from "@/src/lib/persona";
-import { getPrefs, savePrefs } from "@/src/lib/prefs";
+import { getPrefs } from "@/src/lib/prefs";
 import { useRouter } from "expo-router";
 import { EditHistory } from "@/src/components/edit-history";
 import { outsideCostId, saveOutsideCost, useExpenseList } from "@/src/lib/expenses";
 import { SheetShell, Field, inputStyle, LimitWarning, MoreInfo, Chip, DateField, samePhone, useCustomerChoice, CustomerPicker, useMoneyInput, MoneyFields, useItems, ItemsField, type PayMode, useSplitPay, splitOf, PayModeField, FeeField, OutsideCostField, settleDescription, bookAdvance, createPaid, confirmOldDate, PrimaryButton, DangerLink, styles } from "./parts";
 import { CompleteJobSheet } from "./job-sheets";
 
-export function AddCustomerSheet({ visible, onClose, initial, onDelete, role: roleProp }: { visible: boolean; onClose: () => void; initial?: any; onDelete?: () => void; role?: "customer" | "vendor" }) {
+export function AddCustomerSheet({ visible, onClose, initial, onDelete }: { visible: boolean; onClose: () => void; initial?: any; onDelete?: () => void }) {
   const { isPersonal } = usePersona();
-  const [role, setRole] = useState<"customer" | "vendor">("customer");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
@@ -41,14 +40,12 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete, role: ro
       setLimit(initial?.creditLimit ? String(initial.creditLimit) : "");
       // Rows saved before personas existed belong to the shop.
       setTargetPersona(initial ? (initial.persona === "personal" ? "personal" : "business") : isPersonal ? "personal" : "business");
-      setRole(initial ? (isVendor(initial) ? "vendor" : "customer") : roleProp ?? "customer");
     }
     // Only when the sheet opens for a record, not when a sync hands over a fresh copy of it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initial?.id, isPersonal]);
 
   const allCustomers = useCustomers().data ?? [];
-  const asVendor = targetPersona !== "personal" && role === "vendor";
   const sameBook = allCustomers.filter((c) => (targetPersona === "personal" ? c.persona === "personal" : c.persona !== "personal"));
   const phoneDupe = samePhone(sameBook, phone, initial?.id);
   const nameDupe = !!name.trim() && sameBook.some((c) => c.id !== initial?.id && c.name.trim().toLowerCase() === name.trim().toLowerCase());
@@ -63,8 +60,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete, role: ro
         address: address.trim(),
         notes: notes.trim(),
         persona: targetPersona,
-        creditLimit: targetPersona === "personal" || asVendor ? 0 : parseAmount(limit) || 0,
-        ...(targetPersona === "personal" ? {} : { role: asVendor ? ("vendor" as const) : ("customer" as const) }),
+        creditLimit: targetPersona === "personal" ? 0 : parseAmount(limit) || 0,
       };
       if (initial?.id) await store.updateCustomer(initial.id, body);
       else await store.createCustomer(body);
@@ -73,17 +69,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete, role: ro
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title={initial ? "विवरण बदलें" : targetPersona === "personal" ? "नया व्यक्ति" : asVendor ? "नया Vendor" : "नया ग्राहक"} testID="sheet-customer">
-      {targetPersona !== "personal" && !!initial && isVendor(initial) ? (
-        <View style={styles.segment}>
-          {(["customer", "vendor"] as const).map((r) => (
-            <Pressable key={r} onPress={() => setRole(r)} style={[styles.segmentBtn, role === r && { backgroundColor: colors.brandPrimary }]} testID={`cust-role-${r}`}>
-              <MaterialIcon name={r === "vendor" ? "truck-outline" : "account-outline"} size={16} color={role === r ? "#fff" : colors.onSurface} />
-              <Text style={[styles.segmentText, role === r && { color: "#fff" }]}>{r === "vendor" ? "Vendor / कारीगर" : "ग्राहक"}</Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
+    <SheetShell visible={visible} onClose={onClose} title={initial ? "विवरण बदलें" : targetPersona === "personal" ? "नया व्यक्ति" : "नया ग्राहक"} testID="sheet-customer">
       {!initial ? (
         <View style={{ marginBottom: spacing.md, gap: spacing.sm }}>
           <Pressable
@@ -128,7 +114,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete, role: ro
       </Field>
       <MoreInfo
         open={!!address || !!notes || !!limit}
-        hint={targetPersona === "personal" || asVendor ? "पता, नोट" : "पता, नोट, उधार सीमा"}
+        hint={targetPersona === "personal" ? "पता, नोट" : "पता, नोट, उधार सीमा"}
         testID="cust-more-info"
       >
         <Field label="पता">
@@ -137,14 +123,14 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete, role: ro
         <Field label="नोट">
           <TextInput style={[inputStyle, { minHeight: 72 }]} value={notes} onChangeText={setNotes} multiline placeholderTextColor={colors.muted} testID="input-cust-notes" />
         </Field>
-        {targetPersona === "personal" || asVendor ? null : (
+        {targetPersona === "personal" ? null : (
           <Field label="उधार सीमा (₹)">
             <TextInput style={inputStyle} value={limit} onChangeText={(v) => setLimit(cleanAmountInput(v))} placeholder="खाली = कोई सीमा नहीं" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-cust-limit" />
             <Text style={styles.hint}>इससे ज़्यादा उधार होने पर एंट्री लिखते समय चेतावनी दिखेगी</Text>
           </Field>
         )}
       </MoreInfo>
-      <PrimaryButton label={initial ? "बदलाव सेव करें" : targetPersona === "personal" ? "व्यक्ति जोड़ें" : asVendor ? "Vendor जोड़ें" : "ग्राहक जोड़ें"} onPress={save} disabled={!name.trim()} saving={saving} testID="save-customer-btn" />
+      <PrimaryButton label={initial ? "बदलाव सेव करें" : targetPersona === "personal" ? "व्यक्ति जोड़ें" : "ग्राहक जोड़ें"} onPress={save} disabled={!name.trim()} saving={saving} testID="save-customer-btn" />
       {initial?.id && onDelete ? (
         <DangerLink
           label="यह खाता हटाएँ"
@@ -176,7 +162,6 @@ export function AddEntrySheet({
   onClose,
   customerId: fixedCustomerId,
   initial,
-  vendor: vendorProp,
 }: {
   visible: boolean;
   type: EntryType;
@@ -184,17 +169,9 @@ export function AddEntrySheet({
   onClose: () => void;
   customerId?: string;
   initial?: Entry;
-  /** Shop vendor order: purchase from a vendor with a promised date and terms. */
-  vendor?: boolean;
 }) {
-  const allCustomers = useCustomers().data ?? [];
-  const vendor = !!vendorProp || (initial?.type === "purchase" && isVendor(allCustomers.find((c) => c.id === initial.customerId)));
-  const choice = useCustomerChoice(visible, fixedCustomerId ?? initial?.customerId, vendor ? "vendor" : "customer");
+  const choice = useCustomerChoice(visible, fixedCustomerId ?? initial?.customerId);
   const [kind, setKind] = useState<EntryType>(type);
-  const [dueDate, setDueDate] = useState(todayISO(3));
-  const [delivered, setDelivered] = useState(false);
-  const [doneOn, setDoneOn] = useState(todayISO());
-  const [terms, setTerms] = useState("");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const money = useMoneyInput();
@@ -229,10 +206,6 @@ export function AddEntrySheet({
     setDate(initial?.date ?? todayISO());
     setOpenedOn(todayISO());
     setNotes(initial?.notes ?? "");
-    setDueDate(initial?.dueDate || todayISO(3));
-    setDelivered(initial ? initial.status !== "ordered" : false);
-    setDoneOn(initial?.doneOn || initial?.date || todayISO());
-    setTerms(initial ? initial.terms ?? "" : getPrefs().vendorTerms);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initial, type]);
 
@@ -250,8 +223,7 @@ export function AddEntrySheet({
   const repaidLater = isPurchase ? roundMoney(later.reduce((s, p) => s + p.amount, 0)) : 0;
   const overRepaid = isPurchase && amt > 0 && paidNow + repaidLater > amt + 0.005;
   const filled = isPurchase ? items.titled && paidNow <= amt && !overRepaid : !needsDescription || !!description.trim();
-  const doneOk = !vendor || !delivered || doneOn >= date;
-  const valid = (initial ? true : choice.ready) && filled && isFinite(amt) && amt > 0 && doneOk;
+  const valid = (initial ? true : choice.ready) && filled && isFinite(amt) && amt > 0;
   // Personal: lent money, or goods still to be paid for, can carry a "by when" that lands in मेरे काम.
   const canRemind = !initial && isPersonalBook && (kind === "given" || (isPurchase && amt - paidNow > 0));
 
@@ -262,10 +234,8 @@ export function AddEntrySheet({
     setSaving(true);
     try {
       const day = initial ? date : dateOnSave(date, openedOn);
-      const order = vendor ? { dueDate, status: delivered ? ("delivered" as const) : ("ordered" as const), doneOn: delivered ? doneOn : "", terms: terms.trim() } : {};
-      if (vendor && terms.trim() !== getPrefs().vendorTerms) void savePrefs({ vendorTerms: terms.trim() });
       const body = isPurchase
-        ? { type: kind, date: day, description: items.description, amount: amt, paid: paidNow, mode: payMode, notes: notes.trim(), items: items.saved(), ...order }
+        ? { type: kind, date: day, description: items.description, amount: amt, paid: paidNow, mode: payMode, notes: notes.trim(), items: items.saved() }
         : { type: kind, date: day, description: description.trim(), amount: amt, mode: payMode, notes: notes.trim() };
       if (initial) await store.updateEntry(initial.id, body);
       else {
@@ -289,8 +259,8 @@ export function AddEntrySheet({
   };
 
   return (
-    <SheetShell visible={visible} onClose={onClose} title={vendor ? (initial ? "Vendor ऑर्डर बदलें" : "नया Vendor ऑर्डर") : initial ? "एंट्री बदलें" : kinds ? "लेन-देन" : ui.title} testID={`sheet-entry-${vendor ? "vendor" : kind}`}>
-      {kinds && !initial && !vendor ? (
+    <SheetShell visible={visible} onClose={onClose} title={initial ? "एंट्री बदलें" : kinds ? "लेन-देन" : ui.title} testID={`sheet-entry-${kind}`}>
+      {kinds && !initial ? (
         <View style={styles.segment}>
           {kinds.map((k) => (
             <Pressable key={k} onPress={() => setKind(k)} style={[styles.segmentBtn, kind === k && { backgroundColor: ENTRY_UI[k].color }]} testID={`entry-kind-${k}`}>
@@ -300,36 +270,17 @@ export function AddEntrySheet({
           ))}
         </View>
       ) : null}
-      {isPurchase && !initial && !fixedCustomerId ? <CustomerPicker choice={choice} label={vendor ? "Vendor / कारीगर" : PICKER_LABEL[kind]} testPrefix="chip-cust" /> : null}
+      {isPurchase && !initial && !fixedCustomerId ? <CustomerPicker choice={choice} label={PICKER_LABEL[kind]} testPrefix="chip-cust" /> : null}
       {isPurchase ? (
         <>
-          <ItemsField items={items} label={vendor ? "काम / सामान क्या" : "क्या लिया"} placeholder={vendor ? "जैसे फ्रेम 12×18 · 20 पीस" : ui.placeholder} addLabel="और जोड़ें" />
-          <MoneyFields money={money} receivedLabel={vendor ? "कितने चुकाए (₹)" : "अभी कितने दिए (₹)"} hideTotal purchase />
-          {vendor ? (
-            <>
-              <DateField label="कब सौंपा" value={date} onChange={setDate} money createdAt={initial?.createdAt} testID="input-entry-date" />
-              <DateField label="Vendor कब तक देगा" value={dueDate} onChange={setDueDate} future min={date} testID="input-vendor-due" />
-              <Field label="काम की स्थिति">
-                <View style={styles.chipRow}>
-                  <Chip label="चल रहा" icon="progress-clock" active={!delivered} onPress={() => setDelivered(false)} tone={colors.warning} testID="vendor-open" />
-                  <Chip label="पूरा हो गया" icon="check-circle" active={delivered} onPress={() => setDelivered(true)} tone={colors.success} testID="vendor-delivered" />
-                </View>
-              </Field>
-              {delivered ? <DateField label="कब पूरा हुआ" value={doneOn} onChange={setDoneOn} min={date} testID="input-vendor-done" /> : null}
-            </>
-          ) : null}
+          <ItemsField items={items} label="क्या लिया" placeholder={ui.placeholder} addLabel="और जोड़ें" />
+          <MoneyFields money={money} receivedLabel="अभी कितने दिए (₹)" hideTotal purchase />
           {overRepaid ? (
             <Text style={[styles.hint, { color: colors.error }]}>
               कुल {formatINR(paidNow + repaidLater)} चुका चुके हैं — रकम इससे कम नहीं हो सकती। ज़्यादा दिए पैसे नीचे से हटाएँ।
             </Text>
           ) : null}
-          {paidNow > 0 ? (
-            vendor ? (
-              <PayModeField label="कहाँ से दिए" value={payMode} onChange={setPayMode} cashLabel="गल्ले से" onlineLabel="बैंक से" split={initial ? undefined : split} total={paidNow} />
-            ) : (
-              <PayModeField label="कैसे दिए" value={payMode} onChange={setPayMode} split={initial ? undefined : split} total={paidNow} />
-            )
-          ) : null}
+          {paidNow > 0 ? <PayModeField label="कैसे दिए" value={payMode} onChange={setPayMode} split={initial ? undefined : split} total={paidNow} /> : null}
         </>
       ) : (
         <>
@@ -384,7 +335,7 @@ export function AddEntrySheet({
           ))}
         </Field>
       ) : null}
-      {vendor ? null : <DateField label="तारीख" value={date} onChange={setDate} money createdAt={initial?.createdAt} testID="input-entry-date" />}
+      <DateField label="तारीख" value={date} onChange={setDate} money createdAt={initial?.createdAt} testID="input-entry-date" />
       {canRemind ? (
         <View style={{ marginBottom: spacing.md }}>
           <Chip
@@ -410,15 +361,10 @@ export function AddEntrySheet({
         <Field label="नोट">
           <TextInput style={inputStyle} value={notes} onChangeText={setNotes} placeholderTextColor={colors.muted} testID="input-entry-notes" />
         </Field>
-        {vendor ? (
-          <Field label="शर्तें">
-            <TextInput style={[inputStyle, { minHeight: 72, textAlignVertical: "top" }]} value={terms} onChangeText={setTerms} multiline placeholder="जैसे बाकी भुगतान डिलीवरी पर · सैंपल जैसी क्वालिटी" placeholderTextColor={colors.muted} testID="input-vendor-terms" />
-          </Field>
-        ) : null}
       </MoreInfo>
       {kind === "work" || kind === "given" ? <LimitWarning customerId={personId} extra={amt} /> : null}
       <PrimaryButton
-        label={initial ? "बदलाव सेव करें" : vendor ? "ऑर्डर सेव करें" : `${ui.title} — सेव करें`}
+        label={initial ? "बदलाव सेव करें" : `${ui.title} — सेव करें`}
         onPress={save}
         disabled={!valid}
         saving={saving}
@@ -482,8 +428,6 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   const extraSum = extras.reduce((s, e) => s + e.amount, 0);
   // Every other payment booked against this work, shown so it can be seen / removed here.
   const later = entry ? settlementsFor(entry, entries).filter((p) => p.id !== legacyLink?.id && !extras.some((e) => e.id === p.id)) : [];
-  const vendorRow = entry ? vendorCostsFor(entry, entries)[0] : undefined;
-  const router = useRouter();
   const expenseList = useExpenseList().data;
   const customerName = useCustomers().data?.find((c) => c.id === entry?.customerId)?.name ?? "";
   const costIds = entry ? [outsideCostId(entry.id), ...(job ? [outsideCostId(job.id)] : [])] : [];
@@ -515,8 +459,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   }, [entry?.id]);
 
   const amt = money.totalNum;
-  // Older free work can exist only to carry a vendor order's cost.
-  const valid = items.titled && (amt > 0 || parseAmount(govtFee) > 0 || !!vendorRow);
+  const valid = items.titled && (amt > 0 || parseAmount(govtFee) > 0);
 
   const cashWord = usePersona().labels.cash;
   const save = () => (entry ? confirmOldDate(entry.date, date, entry.createdAt, cashWord, saveNow) : undefined);
@@ -563,14 +506,10 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       <MoneyFields money={money} receivedLabel="उस दिन मिले (₹)" hideTotal />
       {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
       <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
-      <OutsideCostField cost={outside} setCost={setOutside} mode={outsideMode} setMode={setOutsideMode} />
-      {vendorRow ? (
-        <Pressable hitSlop={{ top: 4, bottom: 4 }} style={styles.feeToVendor} onPress={() => { onClose(); router.push(`/customer/${vendorRow.customerId}`); }} testID="work-open-vendor">
-          <MaterialIcon name="truck-outline" size={16} color={colors.brandPrimary} />
-          <Text style={styles.feeToVendorText}>Vendor खाता</Text>
-          <MaterialIcon name="chevron-right" size={16} color={colors.brandPrimary} />
-        </Pressable>
+      {entry?.feeOn && parseAmount(govtFee) > 0 ? (
+        <Text style={[styles.hint, { marginTop: -spacing.sm, marginBottom: spacing.md }]}>फीस {formatDate(entry.feeOn)} को कटी थी (काम पेंडिंग था)</Text>
       ) : null}
+      <OutsideCostField cost={outside} setCost={setOutside} mode={outsideMode} setMode={setOutsideMode} />
       {later.length > 0 ? (
         <Field label="अलग से मिले पैसे">
           {later.map((p) => (
@@ -602,7 +541,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   );
 }
 
-export function confirmRemoveJob(job: Job, entries: Entry[], hasVendor: boolean, onDone: () => void) {
+export function confirmRemoveJob(job: Job, entries: Entry[], onDone: () => void) {
   const all = advancesForJob(job, entries).reduce((s, e) => s + e.amount, 0);
   const back = refundsForJob(job, entries).reduce((s, e) => s + e.amount, 0);
   const lines = [job.title];
@@ -617,7 +556,10 @@ export function confirmRemoveJob(job: Job, entries: Entry[], hasVendor: boolean,
     if (kept > 0) lines.push(`बाद में लिया एडवांस ${formatINR(kept)} खाते में जमा रहेगा।`);
     if (all > 0) lines.push(`ग्राहक को पैसे लौटाए हैं तो हटाने की जगह "एडवांस लौटाएँ / काम रद्द" चुनें।`);
   }
-  if (hasVendor) lines.push("Vendor को दिया काम भी हटेगा; उन्हें पिछले दिनों दिया एडवांस उन पर बकाया रहेगा।");
+  if (feePaid(job) && back > 0) lines.push(`लगी हुई फीस ${formatINR(job.fee ?? 0)} खर्च में जाएगी।`);
+  else if (feePaid(job)) {
+    lines.push(`लगी हुई फीस ${formatINR(job.fee ?? 0)} भी हिसाब से हट जाएगी (गलती से लिखा काम)। काम रद्द हुआ है तो "काम रद्द" चुनें — फीस वापस मिली या खर्च में, वहाँ बताएँ।`);
+  } else if ((job.fee ?? 0) > 0 && !feePaid(job)) lines.push(`फीस ${formatINR(job.fee ?? 0)} अभी नहीं लगी थी; वह भी हटेगी।`);
   confirmAction("काम हटाएँ?", lines.join("\n"), "हटा दें", () => {
     removeJobWithAdvances(job, entries);
     onDone();
@@ -633,7 +575,6 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
   const [notes, setNotes] = useState("");
   const [status, setStatus] = useState<Job["status"]>("pending");
   const [saving, setSaving] = useState(false);
-  const vendorRow = job ? vendorOrdersForJob(job, entries)[0] : undefined;
   const start = job ? jobStart(job, entries) : todayISO();
 
   useEffect(() => {
@@ -655,7 +596,7 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
   };
 
   const remove = () => {
-    if (job) confirmRemoveJob(job, entries, !!vendorRow, onClose);
+    if (job) confirmRemoveJob(job, entries, onClose);
   };
 
   return (

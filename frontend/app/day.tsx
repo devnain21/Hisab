@@ -124,8 +124,7 @@ export default function DayScreen() {
 
   const workTotal = roundMoney(arrived.reduce((s, r) => s + r.amount, 0));
   const workFees = useMemo(() => (isPersonal ? 0 : metricSum(book, "business", "fee", date, date)), [book, date, isPersonal]);
-  const workVendor = useMemo(() => (isPersonal ? 0 : metricSum(book, "business", "workVendor", date, date)), [book, date, isPersonal]);
-  const workProfit = roundMoney(workTotal - workFees - workVendor);
+  const workProfit = roundMoney(workTotal - workFees);
   // Khata totals include old (backdated) rows; only the galla / bank cards leave them out.
   // Money for the day's own work is that work's; everything else that came in (old udhaar, work that came in
   // on an earlier day) is "ग्राहकों से".
@@ -206,7 +205,6 @@ export default function DayScreen() {
     shop: user || {},
     workTotal,
     workFees,
-    workVendor,
     workProfit,
     workCash,
     workOnline,
@@ -320,16 +318,7 @@ export default function DayScreen() {
                 <Text style={styles.feeValue}>-{formatINR(workFees)}</Text>
               </Pressable>
             ) : null}
-            {workVendor > 0 ? (
-              <Pressable style={styles.workFeeRow} onPress={() => router.push({ pathname: "/entries" as never, params: { kind: "workVendor", from: date } })} testID="day-work-vendor">
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                  <MaterialIcon name="truck-outline" size={14} color={colors.error} />
-                  <Text style={styles.feeLabel}>Vendor लागत</Text>
-                </View>
-                <Text style={styles.feeValue}>-{formatINR(workVendor)}</Text>
-              </Pressable>
-            ) : null}
-            {workFees > 0 || workVendor > 0 ? (
+            {workFees > 0 ? (
               <View style={styles.workProfitRow}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                   <MaterialIcon name="star-outline" size={15} color={colors.brandPrimary} />

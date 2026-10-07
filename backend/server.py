@@ -243,6 +243,8 @@ class Entry(BaseModel):
     assignedOn: str = ""
     # Vendor order: day the vendor finished the work ("" = not yet).
     doneOn: str = ""
+    # Day the fee left the drawer / bank when that was before the work row's own date ("" = on that date).
+    feeOn: str = ""
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updatedAt: Optional[str] = None
 
@@ -272,6 +274,7 @@ class EntryCreate(BaseModel):
     refId: str = Field("", max_length=64)
     assignedOn: OptISODate = ""
     doneOn: OptISODate = ""
+    feeOn: OptISODate = ""
 
     @model_validator(mode="after")
     def validate_paid(self):
@@ -297,6 +300,7 @@ class EntryUpdate(BaseModel):
     refId: Optional[str] = Field(None, max_length=64)
     assignedOn: Optional[OptISODate] = None
     doneOn: Optional[OptISODate] = None
+    feeOn: Optional[OptISODate] = None
 
     @model_validator(mode="after")
     def validate_paid(self):
@@ -316,6 +320,10 @@ class Job(BaseModel):
     persona: Optional[str] = "business"
     priority: str = ""
     time: str = ""
+    # Fee the job will cost the shop; feePaidOn is the day it was paid ("" = when the job is finished).
+    fee: float = 0
+    feeMode: str = ""
+    feePaidOn: str = ""
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updatedAt: Optional[str] = None
 
@@ -334,6 +342,9 @@ class JobCreate(BaseModel):
     persona: Optional[Literal["business", "personal"]] = "business"
     priority: Literal["", "high"] = ""
     time: str = Field("", max_length=5)
+    fee: Money = 0
+    feeMode: Literal["", "cash", "online"] = ""
+    feePaidOn: OptISODate = ""
 
 
 class JobUpdate(BaseModel):
@@ -345,6 +356,9 @@ class JobUpdate(BaseModel):
     entryId: Optional[Id] = None
     priority: Optional[Literal["", "high"]] = None
     time: Optional[str] = Field(None, max_length=5)
+    fee: Optional[Money] = None
+    feeMode: Optional[Literal["", "cash", "online"]] = None
+    feePaidOn: Optional[OptISODate] = None
 
 
 AepsType = Literal["withdrawal", "cash", "deposit", "transfer", "upi", "balance", "recharge", "bill", "other"]

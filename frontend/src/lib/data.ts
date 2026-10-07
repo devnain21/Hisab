@@ -15,12 +15,8 @@ export type Customer = {
   creditLimit?: number;
   /** Day to chase the udhaar (YYYY-MM-DD); "" / missing = none. */
   remindOn?: string;
-  /** "vendor": the shop buys from / outsources work to them; missing = customer. */
-  role?: "customer" | "vendor";
   createdAt: string;
 };
-
-export const isVendor = (c: Pick<Customer, "role"> | undefined | null) => c?.role === "vendor";
 
 /** Name per customer id, built once per list so long feeds don't search the whole list for every row. */
 export function useNameOf(customers: Customer[] | undefined, fallback: string): (id: string) => string {
@@ -54,16 +50,10 @@ export type Entry = {
   notes: string;
   linkId?: string;
   items?: EntryItem[];
-  /** Vendor order (purchase row): promised date, delivery state, terms on the work order. */
-  dueDate?: string;
-  status?: "" | "ordered" | "delivered";
-  terms?: string;
-  /** Vendor cost row of an outsourced job: id of the customer's work row it belongs to. */
+  /** Advance given back ("एडवांस वापस"): id of the job it was taken for. */
   refId?: string;
-  /** Day a pending job was handed to the vendor (the row's date moves to the day the work was finished). */
-  assignedOn?: string;
-  /** Vendor order: day the vendor finished the work ("" = not yet). */
-  doneOn?: string;
+  /** Day the fee left the drawer / bank when it was paid while the job was still pending ("" = on `date`). */
+  feeOn?: string;
   createdAt: string;
 };
 // customerId "" = the shopkeeper's own task (no customer, no money).
@@ -81,6 +71,11 @@ export type Job = {
   persona?: "business" | "personal";
   priority?: "" | "high";
   time?: string;
+  /** Fee this job costs the shop. Counted on the day the job came in; leaves the drawer / bank on feePaidOn. */
+  fee?: number;
+  feeMode?: "" | PaymentMode;
+  /** Day the fee was paid while the job was pending; "" = it will be paid when the job is finished. */
+  feePaidOn?: string;
 };
 
 /** A to-do of the personal book: no customer, never part of the shop's work list. */

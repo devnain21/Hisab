@@ -126,7 +126,9 @@ export type WalletSource =
   | { kind: "entry"; entry: Entry }
   | { kind: "expense"; expense: Expense }
   | { kind: "move"; move: Move }
-  | { kind: "aeps"; txn: AepsTxn };
+  | { kind: "aeps"; txn: AepsTxn }
+  /** Fee paid for a job that is still pending. */
+  | { kind: "job"; job: Job };
 
 /** One rupee movement of one pocket. `amount` is always positive; `key` says which way and why. */
 export type WalletTxn = {
@@ -151,13 +153,18 @@ export function walletTxns(book: Book, persona: Persona, keep: (date: string) =>
   };
 
   for (const e of book.entries) {
-    if (!keep(e.date) || isBackdated(e.date, e.createdAt) || personaOfEntry(e, byId) !== persona) continue;
+    if (personaOfEntry(e, byId) !== persona) continue;
     const src: WalletSource = { kind: "entry", entry: e };
-    const p = pocketOf(e.mode);
-    if (e.type === "work") {
-      push(e.id, p, "work", e.paid ?? 0, e.date, e.createdAt, src);
+    // A fee paid while the job was pending left on that day (it was booked live then, on the job card).
+    if (e.type === "work" && e.feeOn) {
+      if (keep(e.feeOn)) push(`${e.id}:fee`, e.feeMode === "cash" ? "cash" : "bank", "fee", e.fee ?? 0, e.feeOn, e.createdAt, src);
+    } else if (e.type === "work" && keep(e.date) && !isBackdated(e.date, e.createdAt)) {
       push(`${e.id}:fee`, e.feeMode === "cash" ? "cash" : "bank", "fee", e.fee ?? 0, e.date, e.createdAt, src);
-    } else if (e.type === "payment") push(e.id, p, "received", e.amount, e.date, e.createdAt, src);
+    }
+    if (!keep(e.date) || isBackdated(e.date, e.createdAt)) continue;
+    const p = pocketOf(e.mode);
+    if (e.type === "work") push(e.id, p, "work", e.paid ?? 0, e.date, e.createdAt, src);
+    else if (e.type === "payment") push(e.id, p, "received", e.amount, e.date, e.createdAt, src);
     else if (e.type === "aeps") continue;
     else if (e.type === "purchase") push(e.id, p, "purchase", e.paid ?? 0, e.date, e.createdAt, src);
     else if (isRepayment(e)) push(e.id, p, "purchase", e.amount, e.date, e.createdAt, src);
@@ -165,6 +172,11 @@ export function walletTxns(book: Book, persona: Persona, keep: (date: string) =>
   }
 
   if (persona === "business") {
+    for (const j of book.jobs ?? []) {
+      if (j.status === "done" || !j.customerId || !j.feePaidOn || !keep(j.feePaidOn)) continue;
+      if (byId.get(j.customerId)?.persona === "personal") continue;
+      push(`${j.id}:fee`, j.feeMode === "cash" ? "cash" : "bank", "fee", j.fee ?? 0, j.feePaidOn, j.createdAt, { kind: "job", job: j });
+    }
     for (const t of book.aeps) {
       aepsLegs(t).forEach((l, i) => {
         if (!keep(l.date)) return;

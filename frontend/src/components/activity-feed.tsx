@@ -35,6 +35,9 @@ export function describeTxn(t: WalletTxn, persona: Persona, pocket: Pocket, name
     const title = t.key === "moveIn" ? (m.from ? `${accountLabel(m.from)} से आए` : "बाहर से जोड़े") : m.to ? `${accountLabel(m.to)} में गए` : "बाहर निकाले";
     return { title, sub: m.note || (t.key === "moveIn" ? "जोड़े" : "निकाले"), icon: m.from && m.to ? "swap-horizontal" : t.key === "moveIn" ? "plus-circle-outline" : "minus-circle-outline" };
   }
+  if (s.kind === "job") {
+    return { title: nameOf(s.job.customerId), sub: `फीस · ${s.job.title} (काम पेंडिंग)`, icon: "receipt" };
+  }
   const x = s.txn;
   return { title: x.customerName || "AEPS ग्राहक", sub: `${AEPS_META[x.type]?.hi ?? "AEPS"} · ${flowLabel(t.key, persona, pocket)}`, icon: "fingerprint" };
 }

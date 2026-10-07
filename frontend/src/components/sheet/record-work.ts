@@ -1,9 +1,8 @@
 import { store } from "@/src/lib/store";
-import type { Entry, EntryItem } from "@/src/lib/data";
+import type { EntryItem } from "@/src/lib/data";
 import { settleDescription, bookAdvance } from "./parts";
 
 // One row per piece of work: `paid` is the money taken now (capped at the amount), the rest is udhaar.
-// Vendor cost never rides on the customer's work: it is booked once, on the vendor's own order.
 export function recordWork({
   customerId,
   title,
@@ -14,9 +13,9 @@ export function recordWork({
   mode = "cash",
   fee = 0,
   feeMode = "online",
+  feeOn = "",
   items = [],
   split = null,
-  keepRow = false,
 }: {
   customerId: string;
   title: string;
@@ -27,14 +26,14 @@ export function recordWork({
   mode?: "cash" | "online";
   fee?: number;
   feeMode?: "cash" | "online";
+  /** Day the fee left the galla / bank when that was before the work was finished (a pending job's fee). */
+  feeOn?: string;
   items?: EntryItem[];
   /** Paid partly cash, partly online (adds up to `received`). */
   split?: { cash: number; online: number } | null;
-  /** Book the row even when free (an older vendor order is attached to it). */
-  keepRow?: boolean;
 }): string {
   // Free work is still booked when the shop paid a fee for it, so the cost shows up.
-  if (amount <= 0 && !((fee > 0 || keepRow) && customerId)) return "";
+  if (amount <= 0 && !(fee > 0 && customerId)) return "";
   // Split: the cash part sits on the work row, the online part is a linked payment the same day.
   const cashPart = split ? split.cash : received;
   const rowMode = split ? "cash" : mode;
@@ -49,6 +48,7 @@ export function recordWork({
     mode: rowMode,
     fee: Math.max(0, fee),
     feeMode,
+    ...(fee > 0 && feeOn ? { feeOn } : {}),
     notes,
     items,
   });
@@ -59,13 +59,4 @@ export function recordWork({
     bookAdvance(customerId, split.online - onlinePaid, date, title, work.id, "online");
   }
   return work.id;
-}
-
-/**
- * A vendor order made for a pending job before vendors moved to their own tab: when the job is finished
- * it becomes that work's cost (counted once, from the vendor row), or a plain vendor order when no work
- * row was booked. Amount and payments stay as they are.
- */
-export function closeJobVendorOrder(row: Entry, workId: string, doneOn: string) {
-  store.updateEntry(row.id, { refId: workId, status: "delivered", doneOn });
 }

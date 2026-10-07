@@ -7,7 +7,7 @@ import { colors, radius, semantic, spacing } from "@/src/theme";
 import { formatDateShort, formatINR, formatMonth, formatWeekdayDate, monthRange, roundMoney, shiftISO, todayISO, weekRange } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { usePersona, type Persona } from "@/src/lib/persona";
-import { computeBalance, isVendor } from "@/src/lib/data";
+import { computeBalance } from "@/src/lib/data";
 import { cashTotals, computeFlows, pocketIn, pocketNet, pocketOut, useMoneyBook, type FlowKey, type Pocket } from "@/src/lib/wallet";
 import { metricRows, metricSum, shopProfit, type MetricKind } from "@/src/lib/metrics";
 import { useBudget } from "@/src/lib/budget";
@@ -38,10 +38,10 @@ type Stats = {
   expense: number;
   given: number;
   paidOut: number;
-  /** Business: agreed value of vendor orders booked in the period (outsourced work / stock). */
-  vendorCost: number;
+  /** Business: goods bought in the period (only older books have them). */
+  goods: number;
   byCat: [string, number][];
-  /** Business: billed + commission − expenses − fees − vendor cost. Personal: money in − money out. */
+  /** Business: billed + commission − expenses − fees − goods. Personal: money in − money out. */
   result: number;
 };
 
@@ -59,7 +59,7 @@ function periodStats(book: Book, persona: Persona, from: string, to: string): St
   const expense = sum("expense");
   const given = sum("given");
   const paidOut = sum("paidOut");
-  const vendorCost = sum("vendor");
+  const goods = persona === "business" ? sum("goods") : 0;
   const result = persona === "business" ? shopProfit(book, from, to).profit : collected - given - paidOut - expense;
   return {
     billed,
@@ -70,7 +70,7 @@ function periodStats(book: Book, persona: Persona, from: string, to: string): St
     expense,
     given,
     paidOut,
-    vendorCost,
+    goods,
     byCat: [...cats].sort((x, y) => y[1] - x[1]),
     result: roundMoney(result),
   };
@@ -142,12 +142,10 @@ export default function ReportScreen() {
 
   const balances = useMemo(() => {
     const mine = book.customers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal"));
-    return mine.map((c) => ({ c, bal: roundMoney(computeBalance(book.entries, c.id)), vendor: !isPersonal && isVendor(c) }));
+    return mine.map((c) => ({ c, bal: roundMoney(computeBalance(book.entries, c.id)) }));
   }, [book.customers, book.entries, isPersonal]);
-  const owedToYou = balances.filter((b) => !b.vendor && b.bal > 0).sort((a, b) => b.bal - a.bal);
-  const youOwe = balances.filter((b) => !b.vendor && b.bal < 0).sort((a, b) => a.bal - b.bal);
-  const vendorsOwed = balances.filter((b) => b.vendor && b.bal < 0).sort((a, b) => a.bal - b.bal);
-  const vendorPayable = roundMoney(vendorsOwed.reduce((s, b) => s - b.bal, 0));
+  const owedToYou = balances.filter((b) => b.bal > 0).sort((a, b) => b.bal - a.bal);
+  const youOwe = balances.filter((b) => b.bal < 0).sort((a, b) => a.bal - b.bal);
   const outstanding = roundMoney(owedToYou.reduce((s, b) => s + b.bal, 0));
   const theirs = roundMoney(youOwe.reduce((s, b) => s - b.bal, 0));
   const recovery = !isPersonal && period === "month" && isCurrent && now.collected + outstanding > 0 ? Math.round((now.collected / (now.collected + outstanding)) * 100) : null;
@@ -165,7 +163,7 @@ export default function ReportScreen() {
         { label: "कमीशन", value: now.commission, sign: "+", kind: "commission" },
         { label: "खर्च", value: now.expense, sign: "−", kind: "expense" },
         { label: "फीस", value: now.fee, sign: "−", kind: "fee" },
-        ...(now.vendorCost > 0 ? [{ label: "Vendor लागत", value: now.vendorCost, sign: "−" as const, kind: "vendor" as const }] : []),
+        ...(now.goods > 0 ? [{ label: "खरीद (पुरानी)", value: now.goods, sign: "−" as const, kind: "goods" as const }] : []),
       ];
   const openMetric = (kind: MetricKind) => router.push({ pathname: "/entries" as never, params: { kind, from, to } });
   const resultChange = change(now.result, prev.result);
@@ -176,8 +174,7 @@ export default function ReportScreen() {
   const maxSource = Math.max(1, ...ins.map((x) => x.v), ...outs.map((x) => x.v));
   const openFlow = (dir: "in" | "out", key?: FlowKey) => router.push({ pathname: "/pocket" as never, params: { p: "all", dir, ...(key ? { key } : {}), ...nav } });
   const openPocket = (p: Pocket) => router.push({ pathname: "/pocket" as never, params: { p, ...nav } });
-  const openCustomers = (filter: "due" | "owe") => router.push({ pathname: "/(tabs)/customers", params: { filter, book: "customer", t: String(Date.now()) } });
-  const openVendors = () => router.push({ pathname: "/(tabs)/customers", params: { filter: "owe", book: "vendor", t: String(Date.now()) } });
+  const openCustomers = (filter: "due" | "owe") => router.push({ pathname: "/(tabs)/customers", params: { filter, t: String(Date.now()) } });
 
   const sharePdfDoc = async () => {
     if (sharing) return;
@@ -195,7 +192,6 @@ export default function ReportScreen() {
         { title: "खर्च कहाँ हुआ", lines: now.byCat.map(([t, v]) => ({ label: t, value: formatINR(v) })) },
         { title: `${TERMS.get} (अभी)`, lines: owedToYou.slice(0, 10).map((b) => ({ label: b.c.name, value: formatINR(b.bal), tone: "due" as const })) },
         ...(isPersonal ? [{ title: `${TERMS.give} (अभी)`, lines: youOwe.slice(0, 10).map((b) => ({ label: b.c.name, value: formatINR(-b.bal) })) }] : []),
-        ...(vendorsOwed.length ? [{ title: "Vendor को देने हैं (अभी)", lines: vendorsOwed.slice(0, 10).map((b) => ({ label: b.c.name, value: formatINR(-b.bal), tone: "due" as const })) }] : []),
       ]);
       if (pdfSupported) await sharePdf(doc);
       else await shareMessage(doc.message);
@@ -370,18 +366,6 @@ export default function ReportScreen() {
             <Text style={[styles.closing, { color: theirs > 0 ? semantic.pending : colors.onSurface }]} numberOfLines={1} adjustsFontSizeToFit>{money(theirs)}</Text>
           </Pressable>
         </View>
-        {vendorsOwed.length > 0 ? (
-          <Pressable style={[styles.card, styles.rowBetween]} onPress={openVendors} testID="report-vendor-payable">
-            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexShrink: 1 }}>
-              <MaterialIcon name="truck-outline" size={18} color={colors.info} />
-              <Text style={styles.cardTitle} numberOfLines={1}>Vendor को देने · {vendorsOwed.length}</Text>
-            </View>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
-              <Text style={[styles.rowValue, { color: semantic.due, fontSize: 16 }]}>{money(vendorPayable)}</Text>
-              <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
-            </View>
-          </Pressable>
-        ) : null}
         {recovery !== null ? <FlowRow label="वसूली दर (इस महीने)" value={`${recovery}%`} color={recovery >= 60 ? colors.success : recovery >= 35 ? colors.warning : colors.error} /> : null}
 
         {owedToYou.length > 0 ? (

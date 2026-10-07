@@ -12,7 +12,7 @@ export type TrashColl = "customers" | "entries" | "jobs" | "aeps" | "expenses" |
 /** Rows the server removes (or unlinks) together with a customer, so a restore brings the whole khata back. */
 export type CustomerBundle = { entries: Entry[]; jobs: Job[]; aepsIds: string[]; jamaMoveIds?: string[] };
 
-/** Rows one delete took away together (a work with its payments, vendor cost, job card), and links it cut. */
+/** Rows one delete took away together (a work with its payments, outside cost, job card), and links it cut. */
 export type TrashGroup = { entries: Entry[]; jobs: Job[]; relink: { id: string; linkId: string; notes: string }[]; aeps?: AepsTxn[] };
 
 export type TrashItem = {
@@ -148,7 +148,7 @@ let openGroup: TrashGroup | null = null;
 
 /**
  * Everything `fn` deletes goes to the bin as one item, so "वापस लाएं" brings the whole record back the
- * way it was (payments, vendor cost, job card and the links that were cut), not one loose row.
+ * way it was (payments, outside cost, job card and the links that were cut), not one loose row.
  */
 export function trashGroup(fn: () => void) {
   if (openGroup) return fn();

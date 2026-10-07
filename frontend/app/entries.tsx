@@ -19,8 +19,6 @@ import type { Expense } from "@/src/lib/expenses";
 const TITLES: Record<MetricKind, string> = {
   work: "आए काम",
   fee: "फीस",
-  vendor: "Vendor लागत",
-  workVendor: "Vendor लागत",
   commission: "AEPS / सेवा कमीशन",
   expense: "खर्च",
   collected: "पैसे मिले",
@@ -29,7 +27,7 @@ const TITLES: Record<MetricKind, string> = {
   goods: "सामान / सेवा ली",
 };
 
-const OUTFLOW = new Set<MetricKind>(["fee", "vendor", "workVendor", "expense", "given", "paidOut", "goods"]);
+const OUTFLOW = new Set<MetricKind>(["fee", "expense", "given", "paidOut", "goods"]);
 
 /** Every row behind one summary figure (Home / Report), for a day or a range; tap a row to open it. */
 export default function EntriesScreen() {
@@ -68,7 +66,11 @@ export default function EntriesScreen() {
       const t = r.txn;
       return { title: t.customerName || "काउंटर ग्राहक", sub: `${AEPS_META[t.type].hi} ${formatINR(t.amount)} · कमीशन` };
     }
-    if (r.source === "job") return { title: nameOf(r.job.customerId), sub: `${r.job.title} · ${workMoneyText(workMoney(r, book.entries))}` };
+    if (r.source === "job") {
+      const j = r.job;
+      if (kind === "fee") return { title: nameOf(j.customerId), sub: `${j.title} (पेंडिंग) · ${j.feePaidOn ? `${formatDateShort(j.feePaidOn)} को कटी` : "काम पूरा होने पर कटेगी"}` };
+      return { title: nameOf(j.customerId), sub: `${j.title} · ${workMoneyText(workMoney(r, book.entries))}` };
+    }
     const e = r.entry;
     let sub = e.description || (e.type === "work" ? "काम" : "");
     if (kind === "fee") sub = `${e.description || "काम"} · काम ${formatINR(e.amount)}`;

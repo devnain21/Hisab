@@ -4,7 +4,7 @@ import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { colors, radius, spacing } from "@/src/theme";
 import { Pressable } from "@/src/components/tap";
 import { formatINR, isValidISO, todayISO } from "@/src/lib/format";
-import { isVendor, useCustomers, type EntryType } from "@/src/lib/data";
+import { useCustomers, type EntryType } from "@/src/lib/data";
 import { parseQuickText } from "@/src/lib/quick-parser";
 import { store } from "@/src/lib/store";
 import { usePersona } from "@/src/lib/persona";
@@ -23,7 +23,7 @@ export function VoiceEntryModal({
   const { isPersonal } = usePersona();
   const allCustomers = useCustomers().data;
   const customers = useMemo(
-    () => (allCustomers ?? []).filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal" && !isVendor(c))),
+    () => (allCustomers ?? []).filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal")),
     [allCustomers, isPersonal]
   );
 

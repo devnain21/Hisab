@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { colors, spacing, radius, semantic, elevation, type } from "@/src/theme";
-import { entryDelta, isVendor, useCustomers, useEntries } from "@/src/lib/data";
+import { entryDelta, useCustomers, useEntries } from "@/src/lib/data";
 import { buildAllLedgers } from "@/src/lib/records";
 import { formatDateShort, formatINR, formatPhone, initials, roundMoney, todayISO } from "@/src/lib/format";
 import { HIDDEN, usePrefs } from "@/src/lib/prefs";
@@ -33,14 +33,10 @@ export default function CustomersScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { labels, isPersonal } = usePersona();
-  const params = useLocalSearchParams<{ filter?: Filter; t?: string; book?: "vendor" | "customer" }>();
-  const [book, setBook] = useState<"customer" | "vendor">("customer");
+  const params = useLocalSearchParams<{ filter?: Filter; t?: string }>();
   const customersQ = useCustomers();
   const entriesQ = useEntries();
   const allCustomers = useMemo(() => customersQ.data ?? [], [customersQ.data]);
-  // Vendors are no longer added; the list only stays for ones saved earlier.
-  const vendorCount = useMemo(() => (isPersonal ? 0 : allCustomers.filter((c) => c.persona !== "personal" && isVendor(c)).length), [allCustomers, isPersonal]);
-  const vendors = !isPersonal && book === "vendor" && vendorCount > 0;
   const entries = useMemo(() => entriesQ.data ?? [], [entriesQ.data]);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("due");
@@ -55,10 +51,9 @@ export default function CustomersScreen() {
   const daysSince = (d: string) => Math.round((new Date(today).getTime() - new Date(d).getTime()) / 86400000);
 
   const customers = useMemo(
-    () => allCustomers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal" && isVendor(c) === vendors)),
-    [allCustomers, isPersonal, vendors]
+    () => allCustomers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal")),
+    [allCustomers, isPersonal]
   );
-  const customerCount = useMemo(() => (isPersonal ? 0 : allCustomers.filter((c) => c.persona !== "personal" && !isVendor(c)).length), [allCustomers, isPersonal]);
 
   // Shop and Personal are different books: a search or filter from one means nothing in the other.
   const [listBook, setListBook] = useState(isPersonal);
@@ -66,22 +61,15 @@ export default function CustomersScreen() {
     setListBook(isPersonal);
     setQ("");
     setFilter("due");
-    setBook("customer");
   }
 
   useEffect(() => {
-    if (params.book === "vendor" || params.book === "customer") setBook(params.book);
     if (params.filter && FILTERS.includes(params.filter)) {
       setFilter(params.filter);
       setQ("");
-    } else if (params.book) setFilter(params.book === "vendor" ? "owe" : "due");
-  }, [params.filter, params.t, params.book]);
+    }
+  }, [params.filter, params.t]);
 
-  const switchBook = (b: "customer" | "vendor") => {
-    setBook(b);
-    setFilter(b === "vendor" ? "owe" : "due");
-    setQ("");
-  };
   const pickFilter = (f: Filter) => {
     setFilter(f);
     if (f === "all") setSort("name");
@@ -116,10 +104,8 @@ export default function CustomersScreen() {
   const oldDue = useMemo(() => all.filter((r) => r.due > 0 && r.since && daysSince(r.since) >= OLD_DAYS).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [all, today]);
-  const filterLabel: Record<Filter, string> = vendors
-    ? { due: "एडवांस दिया", owe: "देने हैं", all: "सभी" }
-    : { due: balanceTerm(1, isPersonal, true), owe: balanceTerm(-1, isPersonal, true), all: "सभी" };
-  const listName = vendors ? "Vendor" : labels.customers;
+  const filterLabel: Record<Filter, string> = { due: balanceTerm(1, isPersonal, true), owe: balanceTerm(-1, isPersonal, true), all: "सभी" };
+  const listName = labels.customers;
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -148,12 +134,8 @@ export default function CustomersScreen() {
   const loadFailed = !loading && (customersQ.isError || entriesQ.isError) && (customersQ.data == null || entriesQ.data == null);
 
   // Two sides of the book: what comes to us, and what is with us (advance) / what we owe.
-  const dueSide = vendors
-    ? { label: "एडवांस दिया", value: totalDue, count: counts.due, icon: "arrow-top-right" }
-    : { label: totalTerm(true, isPersonal), value: totalDue, count: counts.due, icon: "arrow-bottom-left" };
-  const oweSide = vendors
-    ? { label: "देने हैं", value: totalOwe, count: counts.owe, icon: "arrow-top-right" }
-    : { label: totalTerm(false, isPersonal), value: totalOwe, count: counts.owe, icon: isPersonal ? "arrow-top-right" : "wallet-outline" };
+  const dueSide = { label: totalTerm(true, isPersonal), value: totalDue, count: counts.due, icon: "arrow-bottom-left" };
+  const oweSide = { label: totalTerm(false, isPersonal), value: totalOwe, count: counts.owe, icon: isPersonal ? "arrow-top-right" : "wallet-outline" };
 
   const header = (
     <View>
@@ -164,7 +146,7 @@ export default function CustomersScreen() {
               <MaterialIcon name={dueSide.icon as never} size={14} color={filter === "due" ? colors.brandSecondary : "rgba(255,255,255,0.8)"} />
               <Text style={[styles.heroLabel, filter === "due" && { color: colors.brandSecondary }]} numberOfLines={1}>{dueSide.label}</Text>
             </View>
-            <Text style={[styles.heroValue, filter === "due" && { color: vendors ? semantic.received : semantic.due }]} numberOfLines={1} adjustsFontSizeToFit>{money(dueSide.value)}</Text>
+            <Text style={[styles.heroValue, filter === "due" && { color: semantic.due }]} numberOfLines={1} adjustsFontSizeToFit>{money(dueSide.value)}</Text>
             <Text style={[styles.heroSub, filter === "due" && { color: colors.muted }]}>{dueSide.count} {listName}</Text>
           </Pressable>
           <Pressable style={[styles.heroHalf, filter === "owe" && styles.heroHalfOn]} onPress={() => pickFilter("owe")} accessibilityRole="button" testID="hero-owe">
@@ -172,11 +154,11 @@ export default function CustomersScreen() {
               <MaterialIcon name={oweSide.icon as never} size={14} color={filter === "owe" ? colors.brandSecondary : "rgba(255,255,255,0.8)"} />
               <Text style={[styles.heroLabel, filter === "owe" && { color: colors.brandSecondary }]} numberOfLines={1}>{oweSide.label}</Text>
             </View>
-            <Text style={[styles.heroValue, filter === "owe" && { color: vendors ? semantic.due : isPersonal ? semantic.pending : semantic.received }]} numberOfLines={1} adjustsFontSizeToFit>{money(oweSide.value)}</Text>
+            <Text style={[styles.heroValue, filter === "owe" && { color: isPersonal ? semantic.pending : semantic.received }]} numberOfLines={1} adjustsFontSizeToFit>{money(oweSide.value)}</Text>
             <Text style={[styles.heroSub, filter === "owe" && { color: colors.muted }]}>{oweSide.count} {listName}</Text>
           </Pressable>
         </View>
-        {!vendors && counts.due > 0 ? (
+        {counts.due > 0 ? (
           <View style={styles.heroFoot}>
             <Text style={styles.heroFootText} numberOfLines={1}>
               {oldDue > 0 ? `${oldDue} का ${OLD_DAYS}+ दिन से बाकी` : `${counts.due} से पैसे आने हैं`}
@@ -224,20 +206,6 @@ export default function CustomersScreen() {
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
         <Text style={styles.h1}>{listName}</Text>
-        {!isPersonal && vendorCount > 0 ? (
-          <View style={styles.bookSeg}>
-            {(["customer", "vendor"] as const).map((b) => {
-              const on = book === b;
-              const n = b === "vendor" ? vendorCount : customerCount;
-              return (
-                <Pressable hitSlop={{ top: 4, bottom: 4 }} key={b} onPress={() => switchBook(b)} style={[styles.bookBtn, on && styles.bookOn]} accessibilityRole="tab" accessibilityState={{ selected: on }} testID={`book-${b}`}>
-                  <MaterialIcon name={b === "vendor" ? "truck-outline" : "account-group-outline"} size={16} color={on ? colors.onBrandPrimary : colors.onSurface} />
-                  <Text style={[styles.bookText, on && { color: colors.onBrandPrimary }]}>{b === "vendor" ? "Vendor" : "ग्राहक"}{n ? ` · ${n}` : ""}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : null}
         <View style={styles.searchWrap}>
           <MaterialIcon name="magnify" size={18} color={colors.muted} />
           <TextInput
@@ -274,22 +242,20 @@ export default function CustomersScreen() {
                 title={
                   q
                     ? "कोई नहीं मिला"
-                    : vendors
-                      ? customers.length === 0 ? "अभी कोई Vendor नहीं" : filter === "owe" ? "किसी Vendor को देने नहीं हैं" : filter === "due" ? "किसी Vendor को एडवांस नहीं दिया" : "इस सूची में कोई नहीं"
-                      : customers.length === 0 ? (isPersonal ? "अभी कोई नहीं" : "अभी कोई ग्राहक नहीं") : filter === "due" ? "किसी से पैसे नहीं मिलने हैं" : filter === "owe" ? (isPersonal ? "किसी को देने नहीं हैं" : "किसी का एडवांस नहीं") : "इस सूची में कोई नहीं"
+                    : customers.length === 0 ? (isPersonal ? "अभी कोई नहीं" : "अभी कोई ग्राहक नहीं") : filter === "due" ? "किसी से पैसे नहीं मिलने हैं" : filter === "owe" ? (isPersonal ? "किसी को देने नहीं हैं" : "किसी का एडवांस नहीं") : "इस सूची में कोई नहीं"
                 }
-                message={!q && customers.length === 0 && !vendors ? "एंट्री लिखते ही यहाँ दिखेंगे, या अभी जोड़ें" : undefined}
-                action={!q && customers.length === 0 && !vendors ? { label: labels.newCustomer, onPress: () => setAdding(true), testID: "customers-empty-add" } : undefined}
+                message={!q && customers.length === 0 ? "एंट्री लिखते ही यहाँ दिखेंगे, या अभी जोड़ें" : undefined}
+                action={!q && customers.length === 0 ? { label: labels.newCustomer, onPress: () => setAdding(true), testID: "customers-empty-add" } : undefined}
               />
             </View>
           }
           renderItem={({ item, index }) => {
             const due = item.due;
             const old = due > 0 && !!item.since && daysSince(item.since) >= OLD_DAYS;
-            const tone: "due" | "received" | "pending" = vendors ? (due < 0 ? "due" : "received") : due > 0 ? "due" : isPersonal ? "pending" : "received";
+            const tone: "due" | "received" | "pending" = due > 0 ? "due" : isPersonal ? "pending" : "received";
             const toneColor = due === 0 ? colors.muted : tone === "due" ? semantic.due : tone === "pending" ? semantic.pending : semantic.received;
             const toneSoft = due === 0 ? colors.surfaceTertiary : tone === "due" ? semantic.dueSoft : tone === "pending" ? semantic.pendingSoft : semantic.receivedSoft;
-            const tag = due === 0 ? TERMS.settled : vendors ? (due < 0 ? "देने हैं" : "एडवांस दिया") : balanceTerm(due, isPersonal, true);
+            const tag = due === 0 ? TERMS.settled : balanceTerm(due, isPersonal, true);
             const dupe = dupePhones.has(phoneKey(item.c.phone || ""));
             return (
               <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 25).duration(200)}>
@@ -336,7 +302,7 @@ export default function CustomersScreen() {
                       <Text style={styles.dupe} numberOfLines={1}>यही नंबर किसी और खाते में भी है</Text>
                     </View>
                   ) : null}
-                  {!vendors && due > 0 ? (
+                  {due > 0 ? (
                     <View style={styles.actRow}>
                       <Pressable
                         onPress={() => setShareDoc(reminderDoc(item.c, due, user ?? {}, entries))}
@@ -378,7 +344,7 @@ export default function CustomersScreen() {
       >
         <MaterialIcon name="account-plus" size={26} color={colors.onBrandPrimary} />
       </Pressable>
-      <AddCustomerSheet visible={adding} onClose={() => setAdding(false)} role="customer" />
+      <AddCustomerSheet visible={adding} onClose={() => setAdding(false)} />
       <AddEntrySheet visible={paying !== null} type="payment" onClose={() => setPaying(null)} customerId={paying ?? undefined} />
       <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
     </View>
@@ -387,10 +353,6 @@ export default function CustomersScreen() {
 
 const styles = StyleSheet.create({
   h1: { fontSize: 30, fontWeight: "700", color: colors.onSurface, marginBottom: spacing.sm },
-  bookSeg: { flexDirection: "row", gap: 4, padding: 4, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md },
-  bookBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 36, borderRadius: radius.pill },
-  bookOn: { backgroundColor: colors.brandPrimary },
-  bookText: { ...type.caption, fontWeight: "800", color: colors.onSurface },
   searchWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 46, borderWidth: 1, borderColor: colors.border },
   search: { flex: 1, color: colors.onSurface, fontSize: 15 },
 

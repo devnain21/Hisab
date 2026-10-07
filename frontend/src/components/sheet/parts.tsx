@@ -3,7 +3,7 @@ import { Modal, View, Text, StyleSheet, Pressable as RNPressable, TextInput, Scr
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { store } from "@/src/lib/store";
-import { computeBalance, isVendor, useCustomers, useEntries, type Customer, type Entry, type EntryItem } from "@/src/lib/data";
+import { computeBalance, useCustomers, useEntries, type Customer, type Entry, type EntryItem } from "@/src/lib/data";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
 import { OLD_ENTRY_DAYS, formatDate, formatINR, isBackdated, isValidISO, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
@@ -227,7 +227,7 @@ export function samePhone(list: Customer[], phone: string, exceptId?: string): C
 
 // Lets a sheet pick an existing customer (searchable, most recent first), create one from the
 // typed name, or — for jobs — mark it as the shopkeeper's own task.
-export function useCustomerChoice(visible: boolean, fixedCustomerId?: string, role: "customer" | "vendor" = "customer") {
+export function useCustomerChoice(visible: boolean, fixedCustomerId?: string) {
   const { isPersonal } = usePersona();
   const allCustomers = useCustomers().data ?? [];
   const entries = useEntries().data ?? [];
@@ -235,10 +235,7 @@ export function useCustomerChoice(visible: boolean, fixedCustomerId?: string, ro
   const [query, setQuery] = useState("");
   const [newPhone, setNewPhone] = useState("");
 
-  // Shop vendors are never offered where a customer is picked, and the other way round.
-  const customers = useMemo(() => {
-    return allCustomers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal" && isVendor(c) === (role === "vendor")));
-  }, [allCustomers, isPersonal, role]);
+  const customers = useMemo(() => allCustomers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal")), [allCustomers, isPersonal]);
 
   useEffect(() => {
     if (visible) {
@@ -274,7 +271,6 @@ export function useCustomerChoice(visible: boolean, fixedCustomerId?: string, ro
       address: "",
       notes: "",
       persona: isPersonal ? "personal" : "business",
-      ...(!isPersonal && role === "vendor" ? { role: "vendor" as const } : {}),
     });
     setCustomerId(c.id);
     return c.id;
@@ -668,6 +664,47 @@ export function FeeField({ fee, setFee, feeMode, setFeeMode, amount }: { fee: st
   );
 }
 
+/**
+ * Fee of a pending job. It always comes off the margin of the day the job came in; it leaves the galla / bank
+ * on the day it was paid, or on the day the job is finished when it hasn't been paid yet.
+ */
+export function PendingFeeField({ fee, setFee, paid, setPaid, mode, setMode, day, setDay, min }: {
+  fee: string;
+  setFee: (v: string) => void;
+  paid: boolean;
+  setPaid: (v: boolean) => void;
+  mode: PayMode;
+  setMode: (m: PayMode) => void;
+  day: string;
+  setDay: (d: string) => void;
+  min?: string;
+}) {
+  const n = parseAmount(fee);
+  return (
+    <>
+      <Field label="फीस (₹)">
+        <TextInput style={inputStyle} value={fee} onChangeText={setFee} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-fee" />
+        <Text style={styles.hint}>सरकारी / पोर्टल फीस · काम आने वाले दिन के काम से घटेगी</Text>
+      </Field>
+      {n > 0 ? (
+        <Field label="फीस लग गई?">
+          <View style={styles.chipRow}>
+            <Chip label="अभी नहीं लगी" icon="clock-outline" active={!paid} onPress={() => setPaid(false)} tone={colors.warning} testID="job-fee-later" />
+            <Chip label="लग गई" icon="check-circle-outline" active={paid} onPress={() => setPaid(true)} tone={colors.success} testID="job-fee-paid" />
+          </View>
+          {!paid ? <Text style={styles.hint}>काम पूरा होने वाले दिन गल्ले / बैंक से कटेगी</Text> : null}
+        </Field>
+      ) : null}
+      {n > 0 && paid ? (
+        <>
+          <PayModeField label="कहाँ से दी" value={mode} onChange={setMode} cashLabel="गल्ले से" onlineLabel="बैंक से" />
+          <DateField label="फीस कब लगी" value={day} onChange={setDay} min={min} testID="input-job-fee-date" />
+        </>
+      ) : null}
+    </>
+  );
+}
+
 /** Money paid out for this job besides the fee; saved as a shop expense, so it stays out of the work margin. */
 export function OutsideCostField({ cost, setCost, mode, setMode }: { cost: string; setCost: (v: string) => void; mode: PayMode; setMode: (m: PayMode) => void }) {
   return (
@@ -762,9 +799,7 @@ export const styles = StyleSheet.create({
   moreInfoHint: { flex: 1, fontSize: 12, color: colors.muted, textAlign: "right" },
   resultBox: { marginBottom: spacing.md, paddingVertical: spacing.sm, paddingHorizontal: spacing.md, borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed" },
   resultText: { fontSize: 14, fontWeight: "700" },
-  vendorBox: { marginBottom: spacing.md, padding: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
-  feeToVendor: { flexDirection: "row", alignItems: "center", gap: spacing.xs, alignSelf: "flex-start", minHeight: 36, marginTop: -spacing.sm, marginBottom: spacing.sm },
-  feeToVendorText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
+  detailBox: { marginBottom: spacing.md, padding: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   pickedRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 48, paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.border },
   pickedName: { flex: 1, fontSize: 15, fontWeight: "700", color: colors.onSurface },
   changeText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },

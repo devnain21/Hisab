@@ -7,8 +7,8 @@ import { useFocusEffect, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, semantic, type, elevation } from "@/src/theme";
-import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, isVendor, type Entry, type Job } from "@/src/lib/data";
-import { buildAllLedgers, vendorByJob, workForJob } from "@/src/lib/records";
+import { useAeps, useCustomers, useEntries, useJobs, computeBalance, isPersonalTask, type Entry, type Job } from "@/src/lib/data";
+import { buildAllLedgers, workForJob } from "@/src/lib/records";
 import { receiptDoc, type ShareDoc } from "@/src/lib/receipt";
 import { ReceiptSheet } from "@/src/components/receipt-sheet";
 import * as Updates from "expo-updates";
@@ -115,7 +115,6 @@ function HomeBody() {
   }, [recentIds, byId]);
 
   const nameOf = (id: string) => (id ? byId.get(id)?.name ?? labels.customer : "खुद का काम");
-  const jobVendor = useMemo(() => vendorByJob(entries), [entries]);
   const feed = useMemo(
     () => (isPersonal ? activityFeed(book, "personal", (id) => byId.get(id)?.name ?? "व्यक्ति", 12) : []),
     [book, byId, isPersonal],
@@ -125,6 +124,7 @@ function HomeBody() {
     if (s.kind === "entry") setEditEntry(s.entry);
     else if (s.kind === "expense") setEditExpense(s.expense);
     else if (s.kind === "move") setEditMove(s.move);
+    else if (s.kind === "job") router.push(`/customer/${s.job.customerId}`);
     else router.push(`/aeps/${s.txn.id}`);
   };
 
@@ -146,25 +146,19 @@ function HomeBody() {
   }, [searchQuery, customers, byId, jobs, entries]);
 
   const stats = useMemo(() => {
-    const bals = customers.filter((c) => !isVendor(c)).map((c) => computeBalance(entries, c.id));
+    const bals = customers.map((c) => computeBalance(entries, c.id));
     const dues = bals.filter((d) => d > 0);
     const owes = bals.filter((d) => d < 0);
-    const vendorBals = isPersonal ? [] : customers.filter(isVendor).map((c) => computeBalance(entries, c.id));
-    const payables = vendorBals.filter((d) => d < 0);
-    const receivables = vendorBals.filter((d) => d > 0);
     const open = jobs.filter((j) => j.status !== "done");
     return {
-      vendorReceivable: receivables.reduce((s, d) => s + d, 0),
       totalDue: dues.reduce((s, d) => s + d, 0),
       dueCustomers: dues.length,
       totalOwe: -owes.reduce((s, d) => s + d, 0),
       oweCount: owes.length,
-      vendorPayable: -payables.reduce((s, d) => s + d, 0),
-      vendorCount: payables.length,
       openJobs: open.length,
       overdue: open.filter((j) => j.dueDate < today).length,
     };
-  }, [customers, entries, jobs, today, isPersonal]);
+  }, [customers, entries, jobs, today]);
 
   const persona = isPersonal ? "personal" : "business";
   const pockets = useMemo(() => computeFlows(book, persona, (d) => d <= today), [book, persona, today]);
@@ -173,15 +167,14 @@ function HomeBody() {
   const todayTotals = useMemo(() => cashTotals(book, persona, (d) => d === today), [book, persona, today]);
   const todaySpend = todayTotals.byKey.get("expense") ?? 0;
   // Work booked today in any mode (cash, online or udhaar). AEPS counter money is pass-through, so only
-  // its commission counts. Fees and vendor cost match the day screen's work profit.
+  // its commission counts. Fees (a pending job's too) match the day screen's work profit.
   const todayWork = useMemo(() => {
-    if (isPersonal) return { rows: [], gross: 0, count: 0, fees: 0, vendor: 0, commission: 0, booked: 0, net: 0 };
+    if (isPersonal) return { rows: [], gross: 0, count: 0, fees: 0, commission: 0, booked: 0, net: 0 };
     const work = metricRows(book, "business", "work", today, today);
     const gross = roundMoney(work.reduce((s, r) => s + r.amount, 0));
     const fees = metricSum(book, "business", "fee", today, today);
-    const vendor = metricSum(book, "business", "workVendor", today, today);
     const commission = metricSum(book, "business", "commission", today, today);
-    return { rows: work, gross, count: work.length, fees, vendor, commission, booked: roundMoney(gross + commission), net: roundMoney(gross - fees - vendor + commission) };
+    return { rows: work, gross, count: work.length, fees, commission, booked: roundMoney(gross + commission), net: roundMoney(gross - fees + commission) };
   }, [book, today, isPersonal]);
   const openMetric = (kind: MetricKind) => router.push({ pathname: "/entries" as never, params: { kind, from: today } });
   const [workSheet, setWorkSheet] = useState(false);
@@ -302,15 +295,9 @@ function HomeBody() {
                       <Text style={styles.resultTitle}>{c.name}</Text>
                       {c.phone ? <Text style={styles.resultSub}>{formatPhone(c.phone)}</Text> : null}
                     </View>
-                    {isVendor(c) ? (
-                      <Text style={[styles.resultDue, { color: b < 0 ? colors.error : colors.success }]}>
-                        {b === 0 ? TERMS.settled : `${money(Math.abs(b))} ${b < 0 ? "देने हैं" : "एडवांस दिया"}`}
-                      </Text>
-                    ) : (
-                      <Text style={[styles.resultDue, { color: b > 0 ? colors.error : b < 0 && c.persona === "personal" ? colors.warning : colors.success }]}>
-                        {b === 0 ? TERMS.settled : `${money(Math.abs(b))} ${balanceTerm(b, c.persona === "personal", true)}`}
-                      </Text>
-                    )}
+                    <Text style={[styles.resultDue, { color: b > 0 ? colors.error : b < 0 && c.persona === "personal" ? colors.warning : colors.success }]}>
+                      {b === 0 ? TERMS.settled : `${money(Math.abs(b))} ${balanceTerm(b, c.persona === "personal", true)}`}
+                    </Text>
                   </Pressable>
                 ))}
                 {searchResults.jobs.map((j) => (
@@ -349,9 +336,9 @@ function HomeBody() {
                     style={styles.recentChip}
                     onPress={() => router.push(`/customer/${c.id}`)}
                   >
-                    <MaterialIcon name={isVendor(c) ? "truck-outline" : "account-outline"} size={14} color={colors.brandPrimary} />
+                    <MaterialIcon name="account-outline" size={14} color={colors.brandPrimary} />
                     <Text style={styles.recentChipName} numberOfLines={1}>{c.name}</Text>
-                    {bal > 0 && !hideAmounts && !isVendor(c) ? (
+                    {bal > 0 && !hideAmounts ? (
                       <Text style={styles.recentChipDue}>{formatINR(bal)}</Text>
                     ) : null}
                   </Pressable>
@@ -449,9 +436,9 @@ function HomeBody() {
               </View>
             </View>
 
-            {!isPersonal && (stats.totalDue > 0 || stats.vendorPayable > 0) ? (
+            {!isPersonal && stats.totalDue > 0 ? (
               <View style={styles.duesStrip}>
-                <Pressable style={styles.duesCell} onPress={() => go("/(tabs)/customers", { filter: "due", book: "customer" })} accessibilityRole="button" testID="stat-total-due">
+                <Pressable style={styles.duesCell} onPress={() => go("/(tabs)/customers", { filter: "due" })} accessibilityRole="button" testID="stat-total-due">
                   <View style={styles.duesHead}>
                     <Text style={styles.duesLabel} numberOfLines={1}>मिलेंगे</Text>
                     {stats.totalDue > 0 ? (
@@ -463,16 +450,6 @@ function HomeBody() {
                   <Text style={[styles.duesValue, { color: stats.totalDue > 0 ? semantic.due : colors.muted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(stats.totalDue)}</Text>
                   <Text style={styles.duesSub} numberOfLines={1}>{stats.dueCustomers} ग्राहक</Text>
                 </Pressable>
-                {stats.vendorPayable > 0 ? (
-                  <>
-                    <View style={styles.walletDivider} />
-                    <Pressable style={styles.duesCell} onPress={() => go("/(tabs)/customers", { filter: "owe", book: "vendor" })} accessibilityRole="button" testID="stat-vendor-payable">
-                      <Text style={styles.duesLabel} numberOfLines={1}>देने हैं</Text>
-                      <Text style={[styles.duesValue, { color: semantic.due }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(stats.vendorPayable)}</Text>
-                      <Text style={styles.duesSub} numberOfLines={1}>{stats.vendorCount} Vendor</Text>
-                    </Pressable>
-                  </>
-                ) : null}
               </View>
             ) : null}
 
@@ -484,14 +461,8 @@ function HomeBody() {
                 </Pressable>
               ) : null}
               {stats.totalOwe > 0 ? (
-                <Pressable hitSlop={{ top: 4, bottom: 4 }} style={styles.chip} onPress={() => go("/(tabs)/customers", isPersonal ? { filter: "owe" } : { filter: "owe", book: "customer" })} testID="stat-total-owe">
+                <Pressable hitSlop={{ top: 4, bottom: 4 }} style={styles.chip} onPress={() => go("/(tabs)/customers", { filter: "owe" })} testID="stat-total-owe">
                   <Text style={styles.chipText} numberOfLines={1}>{isPersonal ? TERMS.give : "ग्राहकों का एडवांस"} {money(stats.totalOwe)} · {stats.oweCount}</Text>
-                  <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
-                </Pressable>
-              ) : null}
-              {stats.vendorReceivable > 0 ? (
-                <Pressable hitSlop={{ top: 4, bottom: 4 }} style={styles.chip} onPress={() => go("/(tabs)/customers", { filter: "due", book: "vendor" })} testID="stat-vendor-receivable">
-                  <Text style={styles.chipText} numberOfLines={1}>Vendor से लेने {money(stats.vendorReceivable)}</Text>
                   <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
                 </Pressable>
               ) : null}
@@ -590,12 +561,6 @@ function HomeBody() {
                         <Text style={styles.rowSub} numberOfLines={1}>
                           {nameOf(j.customerId)}{j.estimatedAmount > 0 ? ` · ${money(j.estimatedAmount)}` : ""}{late ? " · देर" : ""}
                         </Text>
-                        {jobVendor.has(j.id) ? (
-                          <View style={styles.vendorTag}>
-                            <MaterialIcon name="truck-outline" size={12} color={colors.info} />
-                            <Text style={styles.vendorTagText} numberOfLines={1}>{nameOf(jobVendor.get(j.id)!)}</Text>
-                          </View>
-                        ) : null}
                       </View>
                       <Pressable
                         style={styles.doneBtn}
@@ -705,11 +670,13 @@ function HomeBody() {
             {todayWork.rows.map((r) => {
               const customerId = r.source === "job" ? r.job.customerId : r.source === "entry" ? r.entry.customerId : "";
               const what = r.source === "job" ? r.job.title : r.source === "entry" ? r.entry.description || "काम" : "";
+              const fee = r.source === "job" ? r.job.fee ?? 0 : r.source === "entry" ? r.entry.fee ?? 0 : 0;
+              const feeText = fee > 0 ? `फीस ${money(fee)}${r.source === "job" ? (r.job.feePaidOn ? " कटी" : " कटनी है") : ""}` : "";
               return (
                 <Pressable key={r.key} style={styles.workItem} onPress={() => { setWorkSheet(false); setTimeout(() => router.push(`/customer/${customerId}` as never), 250); }} accessibilityRole="button" testID={`today-work-item-${r.key}`}>
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.workItemTitle} numberOfLines={1}>{nameOf(customerId)} · {what}</Text>
-                    <Text style={styles.rowSub} numberOfLines={1}>{hideAmounts ? "" : workMoneyText(workMoney(r, entries))}</Text>
+                    <Text style={styles.rowSub} numberOfLines={1}>{hideAmounts ? "" : [workMoneyText(workMoney(r, entries)), feeText].filter(Boolean).join(" · ")}</Text>
                   </View>
                   <Text style={styles.workItemValue} numberOfLines={1}>{money(r.amount)}</Text>
                 </Pressable>
@@ -717,8 +684,7 @@ function HomeBody() {
             })}
             {(
               [
-                { key: "fees", label: "फीस", sub: "", value: todayWork.fees, sign: "−", to: () => openMetric("fee") },
-                ...(todayWork.vendor > 0 ? [{ key: "vendor", label: "पुरानी Vendor लागत", sub: "", value: todayWork.vendor, sign: "−", to: () => openMetric("workVendor") }] : []),
+                { key: "fees", label: "फीस", sub: "पेंडिंग काम की फीस भी", value: todayWork.fees, sign: "−", to: () => openMetric("fee") },
                 ...(counter.on || todayWork.commission > 0
                   ? [{ key: "aeps", label: "AEPS / सेवा कमीशन", sub: "जमा-निकासी की रकम नहीं जुड़ती", value: todayWork.commission, sign: "+", to: () => openMetric("commission") }]
                   : []),
@@ -777,13 +743,6 @@ const styles = StyleSheet.create({
   duesLabel: { fontSize: 12, fontWeight: "700", color: colors.muted },
   duesValue: { fontSize: 20, fontWeight: "800", fontVariant: ["tabular-nums"] },
   duesSub: { ...type.caption, color: colors.muted, fontWeight: "600" },
-  vendorNew: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandPrimary },
-  vendorNewTitle: { fontSize: 15, fontWeight: "800", color: colors.onBrandPrimary },
-  vendorHead: { ...type.caption, color: colors.muted, fontWeight: "800", textTransform: "uppercase", marginTop: spacing.lg, marginBottom: spacing.xs },
-  vendorEmpty: { fontSize: 13, color: colors.muted, paddingVertical: spacing.md },
-  vendorRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 56, paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  vendorIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.infoSoft },
-  vendorAll: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 2, paddingVertical: spacing.md, marginTop: spacing.xs },
   chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: spacing.md, paddingRight: spacing.sm, minHeight: 36, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   chipText: { fontSize: 13, fontWeight: "600", color: colors.onSurfaceSecondary },
   heroLabel: { ...type.caption, color: colors.muted, fontWeight: "700" },
@@ -925,8 +884,6 @@ const styles = StyleSheet.create({
   miniActionText: { ...type.caption, fontWeight: "700", color: colors.brandPrimary },
   doneBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md, minHeight: 40, borderRadius: radius.pill, backgroundColor: colors.brandPrimary },
   doneBtnText: { fontSize: 13, fontWeight: "700", color: colors.onBrandPrimary },
-  vendorTag: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", marginTop: 4, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm, backgroundColor: colors.infoSoft },
-  vendorTagText: { ...type.caption, fontWeight: "700", color: colors.info, maxWidth: 160 },
   rowTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   rowSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   emptyRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.lg, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },

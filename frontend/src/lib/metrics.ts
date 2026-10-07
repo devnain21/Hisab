@@ -1,7 +1,7 @@
-import { isRepayment, isVendor, type AepsTxn, type Customer, type Entry, type Job } from "./data";
+import { isRepayment, type AepsTxn, type Customer, type Entry, type Job } from "./data";
 import { expensePersona, type Expense } from "./expenses";
 import { commissionEarnedOn } from "./aeps";
-import { buildAllLedgers, isWorkVendorCost } from "./records";
+import { buildAllLedgers } from "./records";
 import { formatINR, localDay, roundMoney } from "./format";
 import { personaOfEntry } from "./wallet";
 import type { Persona } from "./persona";
@@ -13,15 +13,15 @@ type Book = { entries: Entry[]; customers: Customer[]; aeps: AepsTxn[]; expenses
  * to the figure that opened it. Rows count by their own date (old-dated rows included), like the khata.
  *
  * work: work that came in that day, in any mode and whether finished or still pending (a job finished later
- * counts on the day it came in) · fee: govt / portal fees on that work · vendor: every vendor order
- * (outsourced work and stock) · workVendor: only the vendor cost of finished work · commission: AEPS / service
- * commission (never the counter amount) · expense · collected: money received from customers / people ·
- * given: money lent out · paidOut: money paid for goods / services and repaid · goods: goods / services bought.
- * Fees and vendor cost of a piece of work sit on the day that work came in, so the day's margin adds up.
+ * counts on the day it came in) · fee: govt / portal fees on that work, a pending job's fee included ·
+ * commission: AEPS / service commission (never the counter amount) · expense · collected: money received from
+ * customers / people · given: money lent out · paidOut: money paid for goods / services and repaid ·
+ * goods: goods / services bought (in the shop book only older rows have them).
+ * The fee of a piece of work sits on the day that work came in, so the day's margin adds up.
  */
-export type MetricKind = "work" | "fee" | "vendor" | "workVendor" | "commission" | "expense" | "collected" | "given" | "paidOut" | "goods";
+export type MetricKind = "work" | "fee" | "commission" | "expense" | "collected" | "given" | "paidOut" | "goods";
 
-export const METRIC_KINDS: MetricKind[] = ["work", "fee", "vendor", "workVendor", "commission", "expense", "collected", "given", "paidOut", "goods"];
+export const METRIC_KINDS: MetricKind[] = ["work", "fee", "commission", "expense", "collected", "given", "paidOut", "goods"];
 
 export type MetricRow =
   | { key: string; date: string; amount: number; source: "entry"; entry: Entry }
@@ -118,23 +118,21 @@ export function workMoneyText(m: WorkMoney): string {
 export function metricRows(book: Book, persona: Persona, kind: MetricKind, from: string, to: string): MetricRow[] {
   const inRange = (d: string | null | undefined) => !!d && d >= from && d <= to;
   const rows: MetricRow[] = [];
-  if (kind === "work" || kind === "fee" || kind === "workVendor" || kind === "vendor") {
+  if (kind === "work" || kind === "fee") {
     const byId = new Map(book.customers.map((c) => [c.id, c]));
-    const workIds = new Set(book.entries.filter((e) => e.type === "work").map((e) => e.id));
     const arrivals = workArrivals(book.entries, book.jobs ?? NO_JOBS);
     for (const e of book.entries) {
-      const workId = e.type === "work" ? e.id : e.type === "purchase" && e.refId && workIds.has(e.refId) ? e.refId : "";
-      const day = (workId && arrivals.work.get(workId)) || e.date;
+      if (e.type !== "work") continue;
+      const day = arrivals.work.get(e.id) || e.date;
       if (!inRange(day) || personaOfEntry(e, byId) !== persona) continue;
-      const amount = entryAmount(e, kind, persona, byId, workIds);
+      const amount = entryAmount(e, kind);
       if (amount > 0) rows.push({ key: e.id, date: day, amount, source: "entry", entry: e });
     }
-    if (kind === "work") {
-      for (const { job, date } of arrivals.open) {
-        if (!inRange(date) || job.estimatedAmount <= 0) continue;
-        if ((byId.get(job.customerId)?.persona === "personal" ? "personal" : "business") !== persona) continue;
-        rows.push({ key: job.id, date, amount: job.estimatedAmount, source: "job", job });
-      }
+    for (const { job, date } of arrivals.open) {
+      const amount = kind === "work" ? job.estimatedAmount : job.fee ?? 0;
+      if (!inRange(date) || amount <= 0) continue;
+      if ((byId.get(job.customerId)?.persona === "personal" ? "personal" : "business") !== persona) continue;
+      rows.push({ key: job.id, date, amount, source: "job", job });
     }
   } else if (kind === "expense") {
     for (const x of book.expenses) {
@@ -148,27 +146,21 @@ export function metricRows(book: Book, persona: Persona, kind: MetricKind, from:
     }
   } else {
     const byId = new Map(book.customers.map((c) => [c.id, c]));
-    const workIds = new Set(book.entries.filter((e) => e.type === "work").map((e) => e.id));
     for (const e of book.entries) {
       if (!inRange(e.date) || personaOfEntry(e, byId) !== persona) continue;
-      const amount = entryAmount(e, kind, persona, byId, workIds);
+      const amount = entryAmount(e, kind);
       if (amount > 0) rows.push({ key: e.id, date: e.date, amount, source: "entry", entry: e });
     }
   }
   return rows.sort((a, b) => b.date.localeCompare(a.date) || createdOf(b).localeCompare(createdOf(a)));
 }
 
-function entryAmount(e: Entry, kind: MetricKind, persona: Persona, byId: Map<string, Customer>, workIds: Set<string>): number {
+function entryAmount(e: Entry, kind: MetricKind): number {
   switch (kind) {
     case "work":
       return e.type === "work" ? e.amount : 0;
     case "fee":
       return e.type === "work" ? e.fee ?? 0 : 0;
-    case "vendor":
-      // A vendor order of a job still pending is not a cost yet; it counts on the day the job is finished.
-      return persona === "business" && e.type === "purchase" && isVendor(byId.get(e.customerId)) && (!e.refId || workIds.has(e.refId)) ? e.amount : 0;
-    case "workVendor":
-      return isWorkVendorCost(e, workIds) ? e.amount : 0;
     case "collected":
       return e.type === "payment" ? e.amount : e.type === "work" ? e.paid ?? 0 : 0;
     case "given":
@@ -191,8 +183,9 @@ export function metricSum(book: Book, persona: Persona, kind: MetricKind, from: 
 }
 
 /**
- * कमाई of the shop, the one rule every screen shows: work + commission − expenses − portal fees − vendor cost.
- * बचत is only ever the galla / bank change; the work margin (work − fees − vendor cost of that work) is "मार्जिन".
+ * कमाई of the shop, the one rule every screen shows: work + commission − expenses − portal fees − goods bought.
+ * बचत is only ever the galla / bank change; the work margin (work − fees + commission) is "मार्जिन".
+ * `goods`: purchases kept from older builds' supplier accounts; new shop books have none.
  */
 export function shopProfit(book: Book, from: string, to: string) {
   const sum = (k: MetricKind) => metricSum(book, "business", k, from, to);
@@ -200,6 +193,6 @@ export function shopProfit(book: Book, from: string, to: string) {
   const commission = sum("commission");
   const expense = sum("expense");
   const fee = sum("fee");
-  const vendor = sum("vendor");
-  return { work, commission, expense, fee, vendor, profit: roundMoney(work + commission - expense - fee - vendor) };
+  const goods = sum("goods");
+  return { work, commission, expense, fee, goods, profit: roundMoney(work + commission - expense - fee - goods) };
 }

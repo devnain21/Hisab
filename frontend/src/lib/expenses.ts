@@ -57,6 +57,15 @@ export function saveOutsideCost(ownerId: string, amount: number, mode: ExpenseMo
   store.createExpense({ id: outsideCostId(ownerId), createdAt: new Date().toISOString(), ...fields });
 }
 
+/** Title of a fee paid for a job that was called off and not given back: it stays as the shop's loss. */
+export const LOST_FEE = "फीस (रद्द काम)";
+
+/** Books a lost fee on the day it was paid; `createdAt` keeps it on that day's galla / bank. */
+export function lostFee(jobId: string, amount: number, mode: ExpenseMode, date: string, about: string, createdAt: string) {
+  if (amount <= 0) return;
+  store.createExpense({ id: `fee-${jobId}`, amount, title: LOST_FEE, mode, date, notes: about, persona: "business", createdAt });
+}
+
 export function removeOutsideCost(ownerIds: (string | undefined)[]) {
   const row = outsideCostOf(ownerIds);
   if (row) store.deleteExpense(row.id);

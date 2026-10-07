@@ -17,8 +17,6 @@ export type Prefs = {
   lockAfterMs: number;
   /** ISO time of the last Excel or full backup made from this phone. */
   lastBackupAt: string;
-  /** Terms printed on vendor work orders; the last ones typed become the default. */
-  vendorTerms: string;
   /** Last line of a shared slip text while money is still due; "" uses DUE_NOTE_DEFAULT. */
   dueNote: string;
   /** Last line of a shared slip text once fully paid; "" uses PAID_NOTE_DEFAULT. */
@@ -53,7 +51,6 @@ const DEFAULTS: Prefs = {
   hideAmounts: false,
   lockAfterMs: 30_000,
   lastBackupAt: "",
-  vendorTerms: "",
   dueNote: "",
   paidNote: "",
   tagline: "",

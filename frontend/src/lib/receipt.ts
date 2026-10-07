@@ -397,121 +397,6 @@ export function receiptDoc(
   };
 }
 
-/** Order number printed on a vendor work order: WO-YYMM- plus a short id, stable for the same row. */
-export const workOrderNo = (e: Entry) => `WO-${e.date.slice(2, 4)}${e.date.slice(5, 7)}-${e.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase()}`;
-
-/** Work order / payment voucher for one vendor order: scope, promised date, advance, balance and terms. */
-export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendor: Customer, shopIn: Partial<ShopProfile>, entries: Entry[] = []): ShareDoc {
-  const shop = fullShop(shopIn, vendor);
-  const items = itemsOf(entry, "काम / सामान");
-  const paid = status?.received ?? entry.paid ?? 0;
-  const left = status?.remaining ?? Math.max(0, entry.amount - paid);
-  const no = workOrderNo(entry);
-  const delivered = entry.status === "delivered";
-  const late = !delivered && !!entry.dueDate && entry.dueDate < todayISO();
-  // An outsourced job (refId) is paid for work already done; an order paid up front is an advance.
-  const job = !!entry.refId;
-  const assigned = entry.assignedOn && entry.assignedOn <= entry.date ? entry.assignedOn : entry.date;
-  const finished = job ? entry.doneOn || entry.date : delivered ? entry.doneOn ?? "" : "";
-  const heading = job ? "VOUCHER" : "WORK ORDER";
-  const jobRef = job ? `JOB-${entry.refId!.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase()}` : "";
-  const state = left <= 0 ? "पूरा भुगतान" : job || delivered ? "भुगतान बाकी" : late ? "तारीख निकल गई" : "ऑर्डर दिया";
-
-  // One line per payment with its day and mode, oldest first.
-  const booked = status?.paidAtBooking ?? entry.paid ?? 0;
-  const pays = [
-    ...(booked > 0 ? [{ date: entry.date, mode: entry.mode, amount: booked, first: true }] : []),
-    ...entries
-      .filter((e) => e.type === "given" && e.linkId === entry.id)
-      .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt))
-      .map((e) => ({ date: e.date, mode: e.mode, amount: e.amount, first: false })),
-  ];
-  const payments: Line[] = pays.map((p) => ({
-    label: `${p.first && !job && !delivered ? "एडवांस" : "भुगतान"} · ${formatDate(p.date)} · ${payMode(p.mode)}`,
-    value: formatINR(p.amount),
-    tone: "ok" as Tone,
-  }));
-  const fromJama = status?.fromJama ?? 0;
-  const lines: Line[] = [
-    { label: job ? "तय भुगतान" : "तय रकम", value: formatINR(entry.amount) },
-    ...payments,
-    ...(fromJama > 0 ? [{ label: "पहले के एडवांस से", value: formatINR(fromJama), tone: "ok" as Tone }] : []),
-    { label: TERMS.docDueShort, value: formatINR(left), tone: left > 0 ? "due" : "ok" },
-  ];
-  const terms = (entry.terms ?? "").trim();
-  const many = items.length > 1;
-
-  const message = [
-    ...messageHead(shop),
-    `*${heading}* · ${no}${jobRef ? ` · ${jobRef}` : ""}`,
-    finished && finished !== assigned
-      ? `📅 सौंपा: ${formatDate(assigned)} · पूरा: ${formatDate(finished)}`
-      : `📅 ${job ? "काम" : "तारीख"}: ${formatDate(assigned)}${entry.dueDate && !finished ? ` · कब तक: *${formatDate(entry.dueDate)}*` : ""}`,
-    `Vendor: ${vendor.name}`,
-    "",
-    ...items.map((it, i) => `${many ? `${i + 1}. ` : ""}${it.title} — ${formatINR(it.amount)}`),
-    "──────────",
-    ...lines.map(lineText),
-    ...(left <= 0 ? ["पूरा भुगतान ✓"] : !job && !delivered ? [`स्थिति: ${state}`] : []),
-    ...(terms ? ["", "शर्तें:", terms] : []),
-  ].join("\n");
-
-  const rows: CardRow[] = [
-    personRow(vendor, "Vendor Name"),
-    { ...itemsRow(items, "कार्य विवरण", entry.notes), ...(jobRef ? { sub: [jobRef, entry.notes.trim()].filter(Boolean).join(" · ") } : {}) },
-    { icon: "cal", tint: DUE, label: "Work Assign Date", value: formatDate(assigned) },
-  ];
-  if (finished) rows.push({ icon: "cal", tint: BLUE, label: "कार्य पूर्ण तिथि", value: formatDate(finished) });
-  else if (!delivered && entry.dueDate) rows.push({ icon: "cal", tint: BLUE, label: "कब तक", value: formatDate(entry.dueDate), tone: late ? "due" : undefined });
-  if (pays.length === 1 && fromJama <= 0) {
-    rows.push(
-      { icon: "cal", tint: OK, label: pays[0].first && !job && !delivered ? "Advance Date" : "Payment Date", value: formatDate(pays[0].date) },
-      { icon: "card", tint: BLUE, label: "Payment Mode", value: payMode(pays[0].mode) },
-    );
-  } else if (pays.length || fromJama > 0) {
-    rows.push({ icon: "cal", tint: OK, label: "Payment Dates", value: `${pays.length + (fromJama > 0 ? 1 : 0)} भुगतान`, list: [...payments.map((p) => `${p.label.replace(/^(भुगतान|एडवांस) · /, "")} — ${p.value}`), ...(fromJama > 0 ? [`पहले के एडवांस से — ${formatINR(fromJama)}`] : [])] });
-  }
-  rows.push(
-    { icon: "rupee", tint: "#7B4DD6", label: "तय राशि", value: formatINR(entry.amount) },
-    { icon: "paid", tint: OK, label: "भुगतान की गई राशि", value: formatINR(roundMoney(entry.amount - left)), tone: "ok" },
-    { icon: "scale", tint: AMBER, label: "बकाया", value: formatINR(left), tone: left > 0 ? "due" : "ok" },
-  );
-  const seal = left <= 0 ? { text: "FULLY PAID", color: OK } : job || delivered ? { text: "PENDING", color: AMBER } : late ? { text: "LATE", color: DUE } : { text: "ORDERED", color: INFO };
-  const banner: Banner =
-    left <= 0
-      ? OK_BANNER("भुगतान सफलतापूर्वक पूर्ण हो गया है।", "आपकी सेवा और सहयोग के लिए धन्यवाद।")
-      : job || delivered
-        ? { color: AMBER, bg: "#FFF4E0", icon: "clock", title: `भुगतान बाकी ${formatINR(left)}`, sub: "जल्द भुगतान किया जाएगा।" }
-        : { color: INFO, bg: "#E8F1FD", icon: "clock", title: "ऑर्डर दिया", sub: entry.dueDate ? `कब तक: ${formatDate(entry.dueDate)}` : "" };
-  const html = cardPage(
-    shop,
-    {
-      titleHi: job ? "Vendor Payment Voucher" : "Vendor Work Order",
-      titleEn: job ? "PAYMENT CONFIRMATION RECEIPT" : "WORK ORDER",
-      noLabel: job ? "Voucher No." : "Order No.",
-      no,
-      date: formatDate(pays.length ? pays[pays.length - 1].date : entry.date),
-      rows,
-      stamp: seal,
-      banner,
-      vendor: true,
-      note: terms ? `शर्तें: ${terms}` : "",
-    },
-    false,
-  );
-
-  return {
-    heading,
-    title: entry.description || items[0]?.title || "Vendor ऑर्डर",
-    sub: `${vendor.name} · ${no}${entry.dueDate ? ` · कब तक ${formatDate(entry.dueDate)}` : ""}`,
-    phone: vendor.phone,
-    lines,
-    message,
-    html,
-    fileName: docFileName(vendor.name, job ? "Voucher" : "WorkOrder", entry.date),
-  };
-}
-
 const DAY_MS = 86_400_000;
 const daysSince = (iso: string) => Math.max(0, Math.round((Date.parse(todayISO()) - Date.parse(iso)) / DAY_MS));
 /** Over a month old: printed in red. */
@@ -738,8 +623,7 @@ const sumRow = (l: Line) => `<tr><td>${esc(l.label)}</td><td class="amt" style="
 const accountBox = (l: Line) =>
   `<div class="account" style="border-color:${toneColor(l.tone)}"><span>${esc(l.label)}</span><b style="color:${toneColor(l.tone)}">${esc(l.value)}</b></div>`;
 
-/** `counterSign`: a second signature line on the left, e.g. the vendor's on a work order. */
-type PageOpts = { toLabel?: string; foot?: string; hideNote?: boolean; counterSign?: string };
+type PageOpts = { toLabel?: string; foot?: string; hideNote?: boolean };
 
 const IMAGE_URI = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
 
@@ -752,7 +636,7 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
     personal || customer.id === OWN_BOOK
       ? ""
       : `<div class="signs">
-    ${opts.counterSign ? `<div class="sign"><div class="signSpace"></div><div class="signLine">${esc(opts.counterSign)}</div></div>` : "<div></div>"}
+    <div></div>
     <div class="sign">${signImg ? `<img class="signImg" src="${signImg}" alt=""/>` : `<div class="signSpace"></div>`}<div class="signLine">अधिकृत हस्ताक्षर</div></div>
   </div>`;
   return `<!DOCTYPE html><html lang="hi"><head><meta charset="utf-8"/>
@@ -807,7 +691,7 @@ function page(shop: ShopProfile, heading: string, docMeta: string, customer: Cus
 </body></html>`;
 }
 
-// ---------- Card slip (customer receipt and vendor voucher) ----------
+// ---------- Card slip (customer receipt) ----------
 
 const NAVY = "#0D2B5E";
 const BLUE = "#1E6FD9";
@@ -841,8 +725,6 @@ type Card = {
   rows: CardRow[];
   stamp: { text: string; color: string };
   banner?: Banner;
-  /** Vendor voucher: banner and owner's signature side by side, no thank-you line. */
-  vendor?: boolean;
   note?: string;
   /** Money handed over: a line for the person who took it, in place of the thank-you. */
   receiverSign?: string;
@@ -916,13 +798,7 @@ function cardPage(shop: ShopProfile, card: Card, personal: boolean): string {
   const signArt = signImg ? `<img class="signImg" src="${signImg}" alt=""/>` : `<div class="signSpace"></div>`;
   const tagline = personal ? "" : getPrefs().tagline.trim();
   const stampSize = card.stamp.text.length > 8 ? 14 : card.stamp.text.length > 6 ? 17 : 24;
-  const foot = card.vendor
-    ? `<div class="vfoot">
-        <div style="flex:1">${card.banner ? bannerHtml(card.banner) : ""}</div>
-        <div class="vsign">${signArt}<div class="signLine"><b>Owner Signature</b></div><div class="vsMeta">${esc(shop.shop_name)}${shop.shop_address ? `<br/>${esc(shop.shop_address)}` : ""}</div></div>
-      </div>
-      ${card.note ? `<div class="cnote" style="text-align:left">${esc(card.note)}</div>` : ""}`
-    : `${card.banner ? bannerHtml(card.banner) : ""}
+  const foot = `${card.banner ? bannerHtml(card.banner) : ""}
       ${card.note ? `<div class="cnote">${esc(card.note)}</div>` : ""}
       <div class="cfoot">
         ${card.receiverSign
@@ -977,10 +853,6 @@ function cardPage(shop: ShopProfile, card: Card, personal: boolean): string {
   .ty { font-family: "Brush Script MT", "Segoe Script", cursive; font-style: italic; font-size: 30px; font-weight: 700; color: ${NAVY}; }
   .tl { font-size: 11px; color: #333; margin-top: 2px; }
   .csign { width: 38%; text-align: center; }
-  .vfoot { display: flex; align-items: stretch; gap: 12px; margin-top: 10px; }
-  .vfoot .banner { margin-top: 0; height: 100%; }
-  .vsign { width: 38%; text-align: center; border-left: 1px solid #E3E9F2; padding-left: 10px; display: flex; flex-direction: column; justify-content: flex-end; }
-  .vsMeta { font-size: 9.5px; color: #444; margin-top: 2px; }
   .signImg { max-width: 140px; max-height: 52px; object-fit: contain; display: block; margin: 0 auto 2px; }
   .signSpace { height: 38px; }
   .signLine { border-top: 1px solid #999; padding-top: 4px; font-size: 11px; color: #333; }

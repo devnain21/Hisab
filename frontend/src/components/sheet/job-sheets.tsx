@@ -3,13 +3,13 @@ import { View, Text, TextInput } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { store } from "@/src/lib/store";
 import { advanceOf, useCustomers, useEntries, type Job } from "@/src/lib/data";
-import { ADVANCE, ADVANCE_BACK, cancelJob, jobAdvanceLeft, jobStart, moveJobAdvances, vendorOrdersForJob } from "@/src/lib/records";
-import { colors, spacing } from "@/src/theme";
+import { ADVANCE, ADVANCE_BACK, cancelJob, feePaid, jobAdvanceLeft, jobStart, moveJobAdvances } from "@/src/lib/records";
+import { colors } from "@/src/theme";
 import { dateOnSave, formatDate, formatINR, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { getPrefs } from "@/src/lib/prefs";
-import { SheetShell, Field, inputStyle, LimitWarning, MoreInfo, Chip, DateField, useCustomerChoice, CustomerPicker, useMoneyInput, MoneyFields, useItems, ItemsField, type PayMode, useSplitPay, splitOf, PayModeField, FeeField, OutsideCostField, bookOutsideCost, settleDescription, createPaid, PrimaryButton, styles } from "./parts";
-import { recordWork, closeJobVendorOrder } from "./work-vendor";
+import { SheetShell, Field, inputStyle, LimitWarning, MoreInfo, Chip, DateField, useCustomerChoice, CustomerPicker, useMoneyInput, MoneyFields, useItems, ItemsField, type PayMode, useSplitPay, splitOf, PayModeField, FeeField, PendingFeeField, OutsideCostField, bookOutsideCost, settleDescription, createPaid, PrimaryButton, styles } from "./parts";
+import { recordWork } from "./record-work";
 import { confirmRemoveJob } from "./record-sheets";
 
 export type JobMode = "now" | "later";
@@ -32,6 +32,10 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   const [paidDate, setPaidDate] = useState(todayISO());
   const [takenOn, setTakenOn] = useState(todayISO());
   const [openedOn, setOpenedOn] = useState(todayISO());
+  const [jobFee, setJobFee] = useState("");
+  const [jobFeePaid, setJobFeePaid] = useState(false);
+  const [jobFeeMode, setJobFeeMode] = useState<PayMode>("online");
+  const [jobFeeDay, setJobFeeDay] = useState(todayISO());
   const [saving, setSaving] = useState(false);
   const split = useSplitPay();
 
@@ -39,6 +43,10 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
     if (visible) {
       split.reset();
       setTakenOn(todayISO());
+      setJobFee("");
+      setJobFeePaid(false);
+      setJobFeeMode("online");
+      setJobFeeDay(todayISO());
       setMode(initialMode);
       setTitle("");
       items.reset();
@@ -73,7 +81,9 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
 
   const amt = self ? 0 : money.totalNum;
   const advance = choice.existingId ? advanceOf(entries, choice.existingId) : 0;
-  const pendingDatesOk = mode === "now" || self || parseAmount(paidNow) <= 0 || paidDate >= takenOn;
+  const jobFeeNum = mode === "later" && !self ? parseAmount(jobFee) : 0;
+  const pendingDatesOk =
+    mode === "now" || self || ((parseAmount(paidNow) <= 0 || paidDate >= takenOn) && (jobFeeNum <= 0 || !jobFeePaid || (jobFeeDay >= takenOn && jobFeeDay <= todayISO())));
   const valid = choice.ready && (itemized ? items.titled : !!title.trim()) && (mode !== "now" || self || amt <= 0 || money.answered) && pendingDatesOk;
   const saveLabel = mode === "later" ? "पेंडिंग काम सेव करें" : self ? "सेव करें" : amt > 0 ? "काम सेव करें" : "मुफ़्त काम सेव करें";
 
@@ -117,6 +127,9 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
           dueDate: day,
           estimatedAmount: amt,
           notes: remark.trim(),
+          ...(jobFeeNum > 0
+            ? { fee: jobFeeNum, feeMode: jobFeePaid ? jobFeeMode : "", feePaidOn: jobFeePaid ? dateOnSave(jobFeeDay, openedOn) : "" }
+            : {}),
           ...(taken !== todayISO() ? { createdAt: new Date(`${taken}T12:00:00`).toISOString() } : {}),
         });
         const got = parseAmount(paidNow);
@@ -157,7 +170,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       )}
       {!self && mode === "later" ? (
         <>
-          <DateField label="काम कब आया" value={takenOn} onChange={(d) => { setTakenOn(d); setPaidDate(d); }} testID="input-job-taken-date" />
+          <DateField label="काम कब आया" value={takenOn} onChange={(d) => { setTakenOn(d); setPaidDate(d); setJobFeeDay(d); }} testID="input-job-taken-date" />
           <Field label="एडवांस मिला (₹)">
             <TextInput style={inputStyle} value={paidNow} onChangeText={setPaidNow} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-job-paid" />
           </Field>
@@ -167,6 +180,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
               <DateField label="कब मिले" value={paidDate} onChange={setPaidDate} min={takenOn} money testID="input-job-paid-date" />
             </>
           ) : null}
+          <PendingFeeField fee={jobFee} setFee={setJobFee} paid={jobFeePaid} setPaid={setJobFeePaid} mode={jobFeeMode} setMode={setJobFeeMode} day={jobFeeDay} setDay={setJobFeeDay} min={takenOn} />
         </>
       ) : null}
 
@@ -200,19 +214,24 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
 }
 
 /**
- * The one sheet for an open job, whether opened from the row or from "पूरा करें": the customer's side only
- * (amount, money taken, govt fee). Vendors are handled on their own page. Title, notes and removal sit under
- * "विवरण बदलें".
+ * The one sheet for an open job, whether opened from the row or from "पूरा करें": amount, money taken and the
+ * govt fee. A fee already paid while pending is shown, not asked again. Title, notes, the fee and removal sit
+ * under "विवरण बदलें"; "एडवांस लौटाएँ / काम रद्द" gives an advance back and settles a paid fee.
  */
 export function CompleteJobSheet({ job, onClose, refund: refundFirst = false }: { job: Job | null; onClose: () => void; refund?: boolean }) {
   const entries = useEntries().data ?? [];
   const customers = useCustomers().data ?? [];
   const jobAdvance = job ? jobAdvanceLeft(job, entries) : 0;
+  const paidFee = !!job && feePaid(job);
+  const canCancel = !!job?.customerId && (jobAdvance > 0 || paidFee);
   const [refunding, setRefunding] = useState(false);
   const [backAmt, setBackAmt] = useState("");
   const [backMode, setBackMode] = useState<PayMode>("cash");
   const [backDay, setBackDay] = useState(todayISO());
   const [cancelToo, setCancelToo] = useState(true);
+  const [feeBack, setFeeBack] = useState(false);
+  const [feeBackMode, setFeeBackMode] = useState<PayMode>("cash");
+  const [feeBackDay, setFeeBackDay] = useState(todayISO());
   const [outside, setOutside] = useState("");
   const [outsideMode, setOutsideMode] = useState<PayMode>("cash");
   const advance = job?.customerId ? advanceOf(entries, job.customerId) : 0;
@@ -226,36 +245,47 @@ export function CompleteJobSheet({ job, onClose, refund: refundFirst = false }: 
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [status, setStatus] = useState<Job["status"]>("pending");
+  const [dFee, setDFee] = useState("");
+  const [dFeePaid, setDFeePaid] = useState(false);
+  const [dFeeMode, setDFeeMode] = useState<PayMode>("online");
+  const [dFeeDay, setDFeeDay] = useState(todayISO());
   const [details, setDetails] = useState(false);
   const [saving, setSaving] = useState(false);
   const split = useSplitPay();
-  // Handed to a vendor from this sheet in older versions: that order is closed with the job.
-  const vendorRow = job ? vendorOrdersForJob(job, entries)[0] : undefined;
   const start = job ? jobStart(job, entries) : todayISO();
   const customerName = job?.customerId ? customers.find((c) => c.id === job.customerId)?.name ?? "" : "";
-  const orderName = vendorRow ? customers.find((c) => c.id === vendorRow.customerId)?.name ?? "Vendor" : "";
 
   useEffect(() => {
     if (job) {
       split.reset();
       const est = job.estimatedAmount > 0 ? job.estimatedAmount : 0;
+      const jobFee = job.fee ?? 0;
+      const paid = feePaid(job);
+      const mode: PayMode = job.feeMode === "cash" ? "cash" : "online";
       // The advance for this job already sits in the drawer/bank; only the remainder is new money.
       money.reset(est ? String(est) : "", undefined, jobAdvance);
       setPayMode(getPrefs().defaultMode);
-      setFee("");
-      setFeeMode("online");
+      setFee(jobFee > 0 && !paid ? String(jobFee) : "");
+      setFeeMode(mode);
       setWorkDate(todayISO());
       setCashDate(todayISO());
       setOpenedOn(todayISO());
       setTitle(job.title);
       setNotes(job.notes);
       setStatus(job.status === "done" ? "pending" : job.status);
+      setDFee(jobFee > 0 ? String(jobFee) : "");
+      setDFeePaid(paid);
+      setDFeeMode(mode);
+      setDFeeDay(paid ? (job.feePaidOn as string) : todayISO());
       setDetails(false);
-      setRefunding(refundFirst && jobAdvance > 0);
+      setRefunding(refundFirst && (jobAdvance > 0 || paid));
       setBackAmt(jobAdvance > 0 ? String(jobAdvance) : "");
       setBackMode(getPrefs().defaultMode);
       setBackDay(todayISO());
       setCancelToo(true);
+      setFeeBack(false);
+      setFeeBackMode(mode);
+      setFeeBackDay(todayISO());
       setOutside("");
       setOutsideMode(getPrefs().defaultMode);
     }
@@ -268,6 +298,7 @@ export function CompleteJobSheet({ job, onClose, refund: refundFirst = false }: 
   const cleanTitle = title.trim() || job?.title || "";
   const datesOk = workDay >= start && (got <= 0 || cashDay >= start);
   const canFinish = (!job?.customerId || amt <= 0 || money.answered) && (!job?.customerId || datesOk);
+  const cashFrom = (m: string | undefined) => (m === "cash" ? "गल्ले" : "बैंक");
 
   const complete = async () => {
     if (!job || !canFinish) return;
@@ -286,12 +317,12 @@ export function CompleteJobSheet({ job, onClose, refund: refundFirst = false }: 
         // The job's own notes are internal; the work row prints on the customer's bill.
         notes: "काम पूरा",
         mode: payMode,
-        fee: parseAmount(fee),
-        feeMode,
+        // A fee paid while pending already left the galla / bank on its own day; the work row keeps that day.
+        ...(paidFee
+          ? { fee: job.fee ?? 0, feeMode: job.feeMode === "cash" ? ("cash" as const) : ("online" as const), feeOn: job.feePaidOn }
+          : { fee: parseAmount(fee), feeMode }),
         split: sameDay ? parts : null,
-        keepRow: !!vendorRow,
       });
-      if (vendorRow) closeJobVendorOrder(vendorRow, entryId, workDate);
       bookOutsideCost(entryId || job.id, parseAmount(outside), outsideMode, workDate, [customerName, cleanTitle].filter(Boolean).join(" · "));
       if (entryId) {
         moveJobAdvances(job, entries, entryId);
@@ -306,37 +337,56 @@ export function CompleteJobSheet({ job, onClose, refund: refundFirst = false }: 
     } finally { setSaving(false); }
   };
 
-  const backNum = parseAmount(backAmt);
+  const backNum = jobAdvance > 0 ? parseAmount(backAmt) : 0;
   const backDate = dateOnSave(backDay, openedOn);
-  const canRefund = backNum > 0 && backNum <= jobAdvance + 0.005 && backDate >= start;
+  const feeBackDate = dateOnSave(feeBackDay, openedOn);
+  const settleFee = paidFee && cancelToo;
+  const canRefund =
+    (backNum > 0 || cancelToo) &&
+    (backNum <= 0 || (backNum <= jobAdvance + 0.005 && backDate >= start)) &&
+    (!settleFee || !feeBack || feeBackDate >= (job?.feePaidOn ?? ""));
   const giveBack = async () => {
     if (!job || !canRefund) return;
     setSaving(true);
     try {
-      store.createEntry({ customerId: job.customerId, type: "given", date: backDate, description: ADVANCE_BACK, amount: backNum, mode: backMode, notes: `${cleanTitle} का एडवांस`, refId: job.id });
-      if (cancelToo) cancelJob(job, [...entries]);
+      if (backNum > 0) {
+        store.createEntry({ customerId: job.customerId, type: "given", date: backDate, description: ADVANCE_BACK, amount: backNum, mode: backMode, notes: `${cleanTitle} का एडवांस`, refId: job.id });
+      }
+      if (cancelToo) cancelJob(job, [...entries], settleFee && feeBack ? { back: true, mode: feeBackMode, date: feeBackDate } : { back: false });
       onClose();
     } finally { setSaving(false); }
   };
 
+  const dFeeNum = parseAmount(dFee);
+  const detailsOk = !!title.trim() && (dFeeNum <= 0 || !dFeePaid || (dFeeDay >= start && dFeeDay <= todayISO()));
   const saveDetails = () => {
-    if (!job || !title.trim()) return;
-    store.updateJob(job.id, { title: cleanTitle, notes: notes.trim(), status });
+    if (!job || !detailsOk) return;
+    const feeFields = job.customerId
+      ? dFeeNum > 0
+        ? { fee: dFeeNum, feeMode: dFeePaid ? dFeeMode : ("" as const), feePaidOn: dFeePaid ? dateOnSave(dFeeDay, openedOn) : "" }
+        : { fee: 0, feeMode: "" as const, feePaidOn: "" }
+      : {};
+    store.updateJob(job.id, { title: cleanTitle, notes: notes.trim(), status, ...feeFields });
     onClose();
   };
 
   const remove = () => {
-    if (job) confirmRemoveJob(job, entries, !!vendorRow, onClose);
+    if (job) confirmRemoveJob(job, entries, onClose);
   };
 
   return (
-    <SheetShell visible={!!job} onClose={onClose} title={refunding ? "एडवांस लौटाएँ" : "काम पूरा करें"} testID="sheet-complete-job">
+    <SheetShell visible={!!job} onClose={onClose} title={refunding ? (jobAdvance > 0 ? "एडवांस लौटाएँ" : "काम रद्द करें") : "काम पूरा करें"} testID="sheet-complete-job">
       {job ? (
         <View style={styles.jobHead}>
           <View style={{ flex: 1 }}>
             <Text style={[styles.jobName, { marginBottom: 2 }]} numberOfLines={2}>{cleanTitle}</Text>
             <Text style={styles.jobMeta} numberOfLines={1}>
-              {[customerName, job.customerId ? `आया ${formatDate(start)}` : "", jobAdvance > 0 ? `एडवांस ${formatINR(jobAdvance)}` : ""].filter(Boolean).join(" · ")}
+              {[
+                customerName,
+                job.customerId ? `आया ${formatDate(start)}` : "",
+                jobAdvance > 0 ? `एडवांस ${formatINR(jobAdvance)}` : "",
+                (job.fee ?? 0) > 0 ? `फीस ${formatINR(job.fee!)} ${paidFee ? "लग गई" : "अभी नहीं लगी"}` : "",
+              ].filter(Boolean).join(" · ")}
             </Text>
           </View>
           <Pressable onPress={() => setDetails((d) => !d)} hitSlop={8} style={styles.jobEditBtn} accessibilityRole="button" testID="toggle-job-details">
@@ -347,7 +397,7 @@ export function CompleteJobSheet({ job, onClose, refund: refundFirst = false }: 
       ) : null}
 
       {details ? (
-        <View style={styles.vendorBox}>
+        <View style={styles.detailBox}>
           <Field label="क्या काम">
             <TextInput style={inputStyle} value={title} onChangeText={setTitle} placeholderTextColor={colors.muted} testID="input-edit-job-title" />
           </Field>
@@ -360,7 +410,10 @@ export function CompleteJobSheet({ job, onClose, refund: refundFirst = false }: 
               <Chip label="चल रहा" active={status === "doing"} onPress={() => setStatus("doing")} tone={colors.warning} testID="edit-job-status-doing" />
             </View>
           </Field>
-          <Pressable onPress={saveDetails} disabled={!title.trim()} style={[styles.detailSave, !title.trim() && { opacity: 0.5 }]} accessibilityRole="button" testID="save-job-details-btn">
+          {job?.customerId ? (
+            <PendingFeeField fee={dFee} setFee={setDFee} paid={dFeePaid} setPaid={setDFeePaid} mode={dFeeMode} setMode={setDFeeMode} day={dFeeDay} setDay={setDFeeDay} min={start} />
+          ) : null}
+          <Pressable onPress={saveDetails} disabled={!detailsOk} style={[styles.detailSave, !detailsOk && { opacity: 0.5 }]} accessibilityRole="button" testID="save-job-details-btn">
             <Text style={styles.detailSaveText}>सिर्फ़ विवरण सेव करें</Text>
           </Pressable>
           <Pressable onPress={remove} style={styles.dangerLink} accessibilityRole="button" testID="delete-job-btn">
@@ -370,42 +423,63 @@ export function CompleteJobSheet({ job, onClose, refund: refundFirst = false }: 
         </View>
       ) : null}
 
-      {job?.customerId && jobAdvance > 0 && !details ? (
+      {canCancel && !details ? (
         <View style={styles.chipRow}>
           <Chip label="काम पूरा करें" active={!refunding} onPress={() => setRefunding(false)} testID="mode-complete" />
-          <Chip label="एडवांस लौटाएँ / काम रद्द" active={refunding} onPress={() => setRefunding(true)} tone={colors.warning} testID="mode-refund" />
+          <Chip label={jobAdvance > 0 ? "एडवांस लौटाएँ / काम रद्द" : "काम रद्द"} active={refunding} onPress={() => setRefunding(true)} tone={colors.warning} testID="mode-refund" />
         </View>
       ) : null}
 
       {refunding && job ? (
         <>
-          <Field label="कितना लौटाया (₹)">
-            <TextInput
-              style={inputStyle}
-              value={backAmt}
-              onChangeText={(v) => { setBackAmt(v); setCancelToo(parseAmount(v) >= jobAdvance - 0.005); }}
-              keyboardType="numeric"
-              placeholder="0"
-              placeholderTextColor={colors.muted}
-              testID="input-refund-amount"
-            />
-            <Text style={[styles.hint, backNum > jobAdvance + 0.005 && { color: colors.error }]}>
-              {backNum > jobAdvance + 0.005 ? `एडवांस सिर्फ़ ${formatINR(jobAdvance)} है` : `इस काम का एडवांस ${formatINR(jobAdvance)}`}
-            </Text>
-          </Field>
-          {backNum > 0 ? <PayModeField label="कहाँ से दिए" value={backMode} onChange={setBackMode} cashLabel="गल्ले से" onlineLabel="बैंक से" /> : null}
-          <DateField label="कब लौटाया" value={backDay} onChange={setBackDay} min={start} money testID="input-refund-date" />
-          <Field label="काम का क्या हुआ">
-            <View style={styles.chipRow}>
-              <Chip label="काम रद्द करें" active={cancelToo} onPress={() => setCancelToo(true)} tone={colors.error} testID="refund-cancel-job" />
-              <Chip label="काम चालू रहेगा" active={!cancelToo} onPress={() => setCancelToo(false)} testID="refund-keep-job" />
-            </View>
-            {cancelToo && backNum > 0 && backNum < jobAdvance - 0.005 ? (
-              <Text style={styles.hint}>बचे {formatINR(roundMoney(jobAdvance - backNum))} ग्राहक के खाते में जमा रहेंगे</Text>
-            ) : null}
-          </Field>
+          {jobAdvance > 0 ? (
+            <>
+              <Field label="कितना लौटाया (₹)">
+                <TextInput
+                  style={inputStyle}
+                  value={backAmt}
+                  onChangeText={(v) => { setBackAmt(v); setCancelToo(parseAmount(v) >= jobAdvance - 0.005); }}
+                  keyboardType="numeric"
+                  placeholder="0"
+                  placeholderTextColor={colors.muted}
+                  testID="input-refund-amount"
+                />
+                <Text style={[styles.hint, backNum > jobAdvance + 0.005 && { color: colors.error }]}>
+                  {backNum > jobAdvance + 0.005 ? `एडवांस सिर्फ़ ${formatINR(jobAdvance)} है` : `इस काम का एडवांस ${formatINR(jobAdvance)}`}
+                </Text>
+              </Field>
+              {backNum > 0 ? <PayModeField label="कहाँ से दिए" value={backMode} onChange={setBackMode} cashLabel="गल्ले से" onlineLabel="बैंक से" /> : null}
+              {backNum > 0 ? <DateField label="कब लौटाया" value={backDay} onChange={setBackDay} min={start} money testID="input-refund-date" /> : null}
+              <Field label="काम का क्या हुआ">
+                <View style={styles.chipRow}>
+                  <Chip label="काम रद्द करें" active={cancelToo} onPress={() => setCancelToo(true)} tone={colors.error} testID="refund-cancel-job" />
+                  <Chip label="काम चालू रहेगा" active={!cancelToo} onPress={() => setCancelToo(false)} testID="refund-keep-job" />
+                </View>
+                {cancelToo && backNum < jobAdvance - 0.005 ? (
+                  <Text style={styles.hint}>बचे {formatINR(roundMoney(jobAdvance - backNum))} ग्राहक के खाते में जमा रहेंगे</Text>
+                ) : null}
+              </Field>
+            </>
+          ) : null}
+          {settleFee ? (
+            <>
+              <Field label={`फीस ${formatINR(job.fee ?? 0)} (${formatDate(job.feePaidOn as string)} को ${cashFrom(job.feeMode)} से लगी)`}>
+                <View style={styles.chipRow}>
+                  <Chip label="वापस नहीं मिली" active={!feeBack} onPress={() => setFeeBack(false)} tone={colors.error} testID="fee-back-no" />
+                  <Chip label="वापस मिली" active={feeBack} onPress={() => setFeeBack(true)} tone={colors.success} testID="fee-back-yes" />
+                </View>
+                <Text style={styles.hint}>{feeBack ? "फीस न कमाई में घटेगी, न खर्च में" : "फीस खर्च में जुड़ेगी"}</Text>
+              </Field>
+              {feeBack ? (
+                <>
+                  <PayModeField label="कहाँ आई" value={feeBackMode} onChange={setFeeBackMode} cashLabel="गल्ले में" onlineLabel="बैंक में" />
+                  <DateField label="फीस कब वापस मिली" value={feeBackDay} onChange={setFeeBackDay} min={job.feePaidOn} money testID="input-fee-back-date" />
+                </>
+              ) : null}
+            </>
+          ) : null}
           <PrimaryButton
-            label={cancelToo ? "लौटाया — काम रद्द" : "लौटाया"}
+            label={cancelToo ? (backNum > 0 ? "लौटाया — काम रद्द" : "काम रद्द करें") : "लौटाया"}
             onPress={() => void giveBack()}
             disabled={!canRefund}
             saving={saving}
@@ -414,14 +488,20 @@ export function CompleteJobSheet({ job, onClose, refund: refundFirst = false }: 
         </>
       ) : (
         <>
-          {vendorRow ? (
-            <Text style={[styles.hint, { marginTop: 0, marginBottom: spacing.md }]}>{orderName} की लागत उनके Vendor खाते में ही रहेगी</Text>
-          ) : null}
           {job?.customerId ? (
             <>
               <MoneyFields money={money} advance={advance} receivedLabel="आज मिले (₹)" freeAllowed />
               {got > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={got} /> : null}
-              <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
+              {paidFee ? (
+                <View style={styles.detailBox} testID="job-fee-paid-info">
+                  <Text style={[styles.hint, { marginTop: 0, fontWeight: "700", color: colors.onSurface }]}>
+                    फीस {formatINR(job.fee ?? 0)} · {formatDate(job.feePaidOn as string)} को {cashFrom(job.feeMode)} से कट चुकी
+                  </Text>
+                  <Text style={styles.hint}>दोबारा नहीं कटेगी{amt > 0 ? ` · बचत ${formatINR(roundMoney(amt - (job.fee ?? 0)))}` : ""} · बदलनी हो तो &quot;विवरण बदलें&quot;</Text>
+                </View>
+              ) : (
+                <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
+              )}
               <OutsideCostField cost={outside} setCost={setOutside} mode={outsideMode} setMode={setOutsideMode} />
             </>
           ) : null}
@@ -440,4 +520,3 @@ export function CompleteJobSheet({ job, onClose, refund: refundFirst = false }: 
     </SheetShell>
   );
 }
-

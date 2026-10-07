@@ -3,10 +3,11 @@
 // recordWork used to name them.
 import { useEffect, useRef } from "react";
 import { store } from "@/src/lib/store";
-import { entryDelta, isDebt, isRepayment, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
+import { entryDelta, isDebt, isRepayment, useEntries, useJobs, type Entry, type Job, type PaymentMode } from "@/src/lib/data";
 import { localDay, roundMoney, todayISO } from "@/src/lib/format";
 import { noteRelink, trashGroup } from "@/src/lib/trash";
-import { removeOutsideCost } from "@/src/lib/expenses";
+import { lostFee, removeOutsideCost } from "@/src/lib/expenses";
+import { addMove } from "@/src/lib/wallet";
 
 const isLegacyPairFor = (work: Entry, e: Entry) =>
   work.type === "work" &&
@@ -110,25 +111,6 @@ function dropOrKeep(rows: Entry[], day: string, owned: Set<string> = new Set()) 
   });
 }
 
-/** Vendor purchase rows booked for this piece of work ("वेंडर से कराया"). */
-export function vendorCostsFor(work: Entry, entries: Entry[]): Entry[] {
-  return entries.filter((e) => e.type === "purchase" && e.refId === work.id);
-}
-
-/**
- * Drops a vendor cost row; a payment made to them on another day stays as their advance. For an open
- * order of a pending job only today's advance goes (earlier ones already left the drawer that day).
- */
-export function removeVendorCost(row: Entry, entries: Entry[]) {
-  trashGroup(() => {
-    store.deleteEntry(row.id);
-    const onWork = entries.some((e) => e.type === "work" && e.id === row.refId);
-    dropOrKeep(settlementsFor(row, entries), row.refId && !onWork ? todayISO() : row.date);
-  });
-}
-
-export const VENDOR_REFUND = "Vendor से वापसी";
-
 /** Removes a khata entry together with the rows that were booked with it. */
 export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]) {
   trashGroup(() => {
@@ -154,7 +136,6 @@ export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]
     const owned = new Set(legacy.filter((p) => onlyOne && p.date === work.date).map((p) => p.id));
     store.deleteEntry(work.id);
     dropOrKeep([...linked.values()], work.date, owned);
-    vendorCostsFor(work, entries).forEach((v) => removeVendorCost(v, entries));
     removeOutsideCost([work.id, job?.id]);
     if (job) store.deleteJob(job.id);
     remindersFor(work, jobs).forEach((j) => store.deleteJob(j.id));
@@ -170,7 +151,6 @@ export function removeJobWithAdvances(job: Job, entries: Entry[]) {
   if (refundsForJob(job, entries).length) return cancelJob(job, entries);
   trashGroup(() => {
     dropOrKeep(advancesForJob(job, entries), jobStart(job, entries));
-    vendorOrdersForJob(job, entries).forEach((v) => removeVendorCost(v, entries));
     removeOutsideCost([job.id, job.entryId]);
     store.deleteJob(job.id);
   });
@@ -185,7 +165,7 @@ export function refundsForJob(job: Job, entries: Entry[]): Entry[] {
 
 /**
  * "पैसे दिए" rows that handed back the customer's own money (a job's advance, or jama they had with us):
- * refunds, not loans. Repayments to a vendor (linkId) never count.
+ * refunds, not loans. Repayments of a purchase (linkId) never count.
  */
 export function refundIds(entries: Entry[]): Set<string> {
   const out = new Set<string>();
@@ -206,14 +186,34 @@ export function jobAdvanceLeft(job: Job, entries: Entry[]): number {
   return Math.max(0, roundMoney(taken - back));
 }
 
+/** A fee paid for a job that was then called off: lost (a shop expense), or given back by the portal. */
+export type FeeBack = { back: false } | { back: true; mode: PaymentMode; date: string };
+
+/** Fee of an open job already paid (it left the drawer / bank on feePaidOn). */
+export const feePaid = (job: Job) => (job.fee ?? 0) > 0 && !!job.feePaidOn;
+
 /**
  * Job called off: the card goes, the money stays on the days it moved. Advances and refunds keep pointing at
  * the old job and cancel out on the khata; whatever was not given back stays as the customer's jama.
+ * A fee already paid stays on the day it was paid: as an expense when it is lost, or as money that went out
+ * and came back when the portal returned it.
  */
-export function cancelJob(job: Job, entries: Entry[]) {
+export function cancelJob(job: Job, entries: Entry[], fee: FeeBack = { back: false }) {
   trashGroup(() => {
-    vendorOrdersForJob(job, entries).forEach((v) => removeVendorCost(v, entries));
     removeOutsideCost([job.id]);
+    if (feePaid(job)) {
+      const paidOn = job.feePaidOn as string;
+      const mode: PaymentMode = job.feeMode === "cash" ? "cash" : "online";
+      // Stamped on the day it was paid, so the money still left galla / bank that day.
+      const at = new Date(`${paidOn}T12:00:00`).toISOString();
+      if (fee.back) {
+        const from = mode === "cash" ? "business:cash" : "business:bank";
+        void addMove({ date: paidOn, from, to: "", amount: job.fee as number, note: `फीस · ${job.title}` }, at);
+        void addMove({ date: fee.date, from: "", to: fee.mode === "cash" ? "business:cash" : "business:bank", amount: job.fee as number, note: `फीस वापस मिली · ${job.title}` });
+      } else {
+        lostFee(job.id, job.fee as number, mode, paidOn, `${job.title} (काम रद्द)`, at);
+      }
+    }
     store.deleteJob(job.id);
   });
 }
@@ -241,21 +241,6 @@ export function moveJobAdvances(job: Job, entries: Entry[], workId: string) {
 export function jobStart(job: Job, entries: Entry[]): string {
   const typed = localDay(job.createdAt) ?? todayISO();
   return advancesForJob(job, entries).reduce((d, p) => (p.date < d ? p.date : d), typed);
-}
-
-/** Pending job id → the vendor it was handed to. */
-export function vendorByJob(entries: Entry[]): Map<string, string> {
-  return new Map(entries.filter((e) => e.type === "purchase" && !!e.refId).map((e) => [e.refId as string, e.customerId]));
-}
-
-/** Open vendor order of a pending job ("वेंडर को दिया"); it moves onto the work row when the job is done. */
-export function vendorOrdersForJob(job: Job, entries: Entry[]): Entry[] {
-  return entries.filter((e) => e.type === "purchase" && e.refId === job.id);
-}
-
-/** Vendor cost that belongs to finished work: plain vendor purchases, or job-linked ones once the job is done. */
-export function isWorkVendorCost(e: Entry, workIds: Set<string>): boolean {
-  return e.type === "purchase" && !!e.refId && workIds.has(e.refId);
 }
 
 /** Advance rows of this job taken on a later day than it came in (they stay when the job is removed). */

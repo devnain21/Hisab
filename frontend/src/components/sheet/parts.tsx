@@ -12,7 +12,7 @@ import { Pressable, useOnce } from "@/src/components/tap";
 import { useContactPicker } from "@/src/components/contact-picker-modal";
 import { usePersona } from "@/src/lib/persona";
 import { useKeyboardOverlap } from "@/src/lib/keyboard-overlap";
-import { addExpense, OUTSIDE_COST } from "@/src/lib/expenses";
+import { saveOutsideCost } from "@/src/lib/expenses";
 
 export function SheetShell({ visible, onClose, title, children, testID }: { visible: boolean; onClose: () => void; title: string; children: React.ReactNode; testID?: string }) {
   const insets = useSafeAreaInsets();
@@ -280,7 +280,9 @@ export function useCustomerChoice(visible: boolean, fixedCustomerId?: string, ro
     return c.id;
   };
 
-  return { recent, matches, exact, customerId, setCustomerId, existingId, isNew, isSelf, query, setQuery, newPhone, setNewPhone, ready, resolve };
+  const name = isNew ? query.trim() : allCustomers.find((c) => c.id === customerId)?.name ?? "";
+
+  return { recent, matches, exact, customerId, setCustomerId, existingId, isNew, isSelf, name, query, setQuery, newPhone, setNewPhone, ready, resolve };
 }
 
 export function CustomerPicker({ choice, label = "नाम", allowSelf, testPrefix }: { choice: ReturnType<typeof useCustomerChoice>; label?: string; allowSelf?: boolean; testPrefix: string }) {
@@ -679,9 +681,8 @@ export function OutsideCostField({ cost, setCost, mode, setMode }: { cost: strin
   );
 }
 
-export function bookOutsideCost(amount: number, mode: PayMode, date: string, about: string) {
-  if (amount <= 0) return;
-  void addExpense({ amount, title: OUTSIDE_COST, mode, date, notes: about, persona: "business" });
+export function bookOutsideCost(ownerId: string, amount: number, mode: PayMode, date: string, about: string) {
+  if (ownerId) saveOutsideCost(ownerId, amount, mode, date, about);
 }
 
 export const settleDescription = (title: string) => `${title} — भुगतान`;

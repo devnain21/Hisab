@@ -13,7 +13,8 @@ import { usePersona } from "@/src/lib/persona";
 import { getPrefs, savePrefs } from "@/src/lib/prefs";
 import { useRouter } from "expo-router";
 import { EditHistory } from "@/src/components/edit-history";
-import { SheetShell, Field, inputStyle, LimitWarning, MoreInfo, Chip, DateField, samePhone, useCustomerChoice, CustomerPicker, useMoneyInput, MoneyFields, useItems, ItemsField, type PayMode, useSplitPay, splitOf, PayModeField, FeeField, settleDescription, bookAdvance, createPaid, confirmOldDate, PrimaryButton, DangerLink, styles } from "./parts";
+import { outsideCostId, saveOutsideCost, useExpenseList } from "@/src/lib/expenses";
+import { SheetShell, Field, inputStyle, LimitWarning, MoreInfo, Chip, DateField, samePhone, useCustomerChoice, CustomerPicker, useMoneyInput, MoneyFields, useItems, ItemsField, type PayMode, useSplitPay, splitOf, PayModeField, FeeField, OutsideCostField, settleDescription, bookAdvance, createPaid, confirmOldDate, PrimaryButton, DangerLink, styles } from "./parts";
 import { CompleteJobSheet } from "./job-sheets";
 
 export function AddCustomerSheet({ visible, onClose, initial, onDelete, role: roleProp }: { visible: boolean; onClose: () => void; initial?: any; onDelete?: () => void; role?: "customer" | "vendor" }) {
@@ -483,6 +484,20 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   const later = entry ? settlementsFor(entry, entries).filter((p) => p.id !== legacyLink?.id && !extras.some((e) => e.id === p.id)) : [];
   const vendorRow = entry ? vendorCostsFor(entry, entries)[0] : undefined;
   const router = useRouter();
+  const expenseList = useExpenseList().data;
+  const customerName = useCustomers().data?.find((c) => c.id === entry?.customerId)?.name ?? "";
+  const costIds = entry ? [outsideCostId(entry.id), ...(job ? [outsideCostId(job.id)] : [])] : [];
+  const outsideRow = (expenseList ?? []).find((x) => costIds.includes(x.id));
+  const [outside, setOutside] = useState("");
+  const [outsideMode, setOutsideMode] = useState<PayMode>("cash");
+
+  // Separate from the form reset: the expense list can arrive after the sheet opens.
+  useEffect(() => {
+    if (!entry) return;
+    setOutside(outsideRow ? String(outsideRow.amount) : "");
+    setOutsideMode(outsideRow?.mode ?? getPrefs().defaultMode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry?.id, outsideRow?.id]);
 
   useEffect(() => {
     if (!entry) return;
@@ -530,6 +545,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       bookAdvance(entry.customerId, taken - amt, date, t, entry.id, payMode);
       // Old two-row cash records: the same-day jama is now carried by `paid`.
       if (legacyLink) store.deleteEntry(legacyLink.id);
+      if (expenseList) saveOutsideCost(entry.id, parseAmount(outside), outsideMode, date, [customerName, t].filter(Boolean).join(" · "), outsideRow);
       if (job) {
         // The job card keeps its own notes (size, copies…); the work row's notes are separate.
         store.updateJob(job.id, { title: t, dueDate: date, estimatedAmount: amt, entryId: entry.id });
@@ -547,6 +563,7 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       <MoneyFields money={money} receivedLabel="उस दिन मिले (₹)" hideTotal />
       {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
       <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
+      <OutsideCostField cost={outside} setCost={setOutside} mode={outsideMode} setMode={setOutsideMode} />
       {vendorRow ? (
         <Pressable hitSlop={{ top: 4, bottom: 4 }} style={styles.feeToVendor} onPress={() => { onClose(); router.push(`/customer/${vendorRow.customerId}`); }} testID="work-open-vendor">
           <MaterialIcon name="truck-outline" size={16} color={colors.brandPrimary} />

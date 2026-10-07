@@ -51,7 +51,7 @@ export default function BulkRemindScreen() {
   const allOn = chosen.length === reachable.length && reachable.length > 0;
 
   const send = (c: Customer, due: number) => {
-    const msg = reminderDoc(c, due, user ?? {}).message;
+    const msg = reminderDoc(c, due, user ?? {}, entries).message;
     void Linking.openURL(`https://wa.me/91${phone10(c.phone)}?text=${encodeURIComponent(msg)}`).catch(() => {});
     setSent((s) => new Set(s).add(c.id));
   };

@@ -4,6 +4,7 @@ import * as Crypto from "expo-crypto";
 import { api } from "./api";
 import { store, withPending } from "./store";
 import { todayISO } from "./format";
+import { queryClient } from "@/src/query-client";
 
 export type ExpenseMode = "cash" | "online";
 
@@ -36,6 +37,30 @@ export const EXPENSE_CATEGORIES = [
 
 /** Money paid out for a customer's job (tehsil, outside help): a shop expense, not part of the work margin. */
 export const OUTSIDE_COST = "बाहर का खर्च";
+
+/** A job's outside cost carries the id of its work row (or of the job card when there is no work row). */
+export const outsideCostId = (ownerId: string) => `oc-${ownerId}`;
+
+const cachedExpenses = () => queryClient.getQueryData<Expense[]>(["expenses"]) ?? [];
+
+export function outsideCostOf(ownerIds: (string | undefined)[]): Expense | undefined {
+  const ids = new Set(ownerIds.filter(Boolean).map((id) => outsideCostId(id as string)));
+  return ids.size ? cachedExpenses().find((x) => ids.has(x.id)) : undefined;
+}
+
+/** Writes, changes or (at 0) removes the outside cost of one piece of work. */
+export function saveOutsideCost(ownerId: string, amount: number, mode: ExpenseMode, date: string, about: string, existing?: Expense) {
+  const fields = { amount, title: OUTSIDE_COST, mode, date, notes: about.trim(), persona: "business" as const };
+  if (existing && amount <= 0) return store.deleteExpense(existing.id);
+  if (amount <= 0) return;
+  if (existing) return store.updateExpense(existing.id, fields);
+  store.createExpense({ id: outsideCostId(ownerId), createdAt: new Date().toISOString(), ...fields });
+}
+
+export function removeOutsideCost(ownerIds: (string | undefined)[]) {
+  const row = outsideCostOf(ownerIds);
+  if (row) store.deleteExpense(row.id);
+}
 
 export const PERSONAL_EXPENSE_CATEGORIES = ["घर का खर्च", "राशन", "बिजली बिल", "पेट्रोल", "किराया", "दवाई", "अन्य"];
 

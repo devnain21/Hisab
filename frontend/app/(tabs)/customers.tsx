@@ -339,7 +339,7 @@ export default function CustomersScreen() {
                   {!vendors && due > 0 ? (
                     <View style={styles.actRow}>
                       <Pressable
-                        onPress={() => setShareDoc(reminderDoc(item.c, due, user ?? {}))}
+                        onPress={() => setShareDoc(reminderDoc(item.c, due, user ?? {}, entries))}
                         hitSlop={4}
                         style={[styles.actBtn, { backgroundColor: semantic.pendingSoft }]}
                         accessibilityRole="button"

@@ -5,7 +5,7 @@ import { File, Paths } from "expo-file-system";
 import { itemsOf, type Customer, type Entry, type AepsTxn, type Job } from "@/src/lib/data";
 import type { Ledger, WorkStatus } from "@/src/lib/records";
 import { formatDate, formatDateShort, formatINR, formatPhone, localDay, roundMoney, todayISO } from "@/src/lib/format";
-import { ADVANCE, buildLedger, jobStart } from "@/src/lib/records";
+import { ADVANCE, buildLedger, jobStart, refundIds } from "@/src/lib/records";
 import type { ShopProfile } from "@/src/context/AuthContext";
 import { AEPS_META, aepsBill, customerCharge, defaultVia, maskAccount, statusLabel, viaBill } from "@/src/lib/aeps";
 import { accountName } from "@/src/lib/persona";
@@ -118,6 +118,26 @@ function bookedOn(entry: Entry, ctx: { jobs?: Job[]; entries?: Entry[] }): strin
 }
 
 /**
+ * Shop-wide running number for the month: B-2610-012 is the 12th bill of Oct 2026, R- a receipt. Counted from
+ * every row of that kind, so it needs all entries; without them the row's own short id is used.
+ */
+function docNo(entry: Entry, all?: Entry[]): string {
+  const short = entry.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase();
+  if (!all?.some((e) => e.id === entry.id)) return short;
+  const kind = (e: Entry) => (e.type === "work" ? "B" : e.type === "payment" ? "R" : e.type === "given" ? "V" : "");
+  const k = kind(entry);
+  if (!k) return short;
+  const month = entry.date.slice(0, 7);
+  const before = (a: Entry, b: Entry) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+  const n = all.filter((e) => kind(e) === k && e.date.slice(0, 7) === month && before(e, entry) <= 0).length;
+  return `${k}-${month.slice(2, 4)}${month.slice(5, 7)}-${String(n).padStart(3, "0")}`;
+}
+
+const sumOf = (rows: Entry[]) => roundMoney(rows.reduce((s, e) => s + e.amount, 0));
+/** Same day, earlier typed: rows that came before `e` on the khata. */
+const earlier = (x: Entry, e: Entry) => x.date < e.date || (x.date === e.date && x.createdAt < e.createdAt);
+
+/**
  * Receipt for one ledger row. `balance` is the customer's whole-account balance
  * (positive = they owe us) so dues from other entries are shown too.
  * `ctx` lets a payment be worded as an एडवांस when it came before its work (or the job is still open).
@@ -141,6 +161,9 @@ export function receiptDoc(
   let itemBalance = 0;
   let heading = entry.type === "work" ? "बिल" : "रसीद";
   const personal = customer.persona === "personal";
+  // Paid out of the customer's own jama (a job's advance given back, or jama they asked for): a refund.
+  const refund =
+    given && isCustomer && !personal && !entry.linkId && (!!entry.refId || refundIds((ctx.entries ?? []).filter((e) => e.customerId === entry.customerId)).has(entry.id));
   const rows: CardRow[] = [personRow(customer, personal ? "नाम" : isCustomer ? "Customer Name" : "नाम")];
   let titleHi = heading;
   let titleEn = "RECEIPT";
@@ -162,6 +185,8 @@ export function receiptDoc(
   let early = false;
   /** Open job's advance: by when the work will be ready. */
   let readyBy = "";
+  /** Advance of a job called off or given back. */
+  let cancelled: { title: string; sub: string } | null = null;
 
   if (entry.type === "payment") {
     const job = entry.linkId ? ctx.jobs?.find((j) => j.id === entry.linkId && j.status !== "done") : undefined;
@@ -173,19 +198,21 @@ export function receiptDoc(
     if (job) {
       // Advance on a job not done yet: show it against the job's estimate.
       const est = job.estimatedAmount > 0 ? job.estimatedAmount : 0;
-      const before = (ctx.entries ?? []).filter((e) => e.type === "payment" && e.linkId === job.id && e.id !== entry.id && (e.date < entry.date || (e.date === entry.date && e.createdAt < entry.createdAt))).reduce((s, e) => s + e.amount, 0);
+      const before = sumOf((ctx.entries ?? []).filter((e) => e.type === "payment" && e.linkId === job.id && e.id !== entry.id && earlier(e, entry)));
+      const backBefore = sumOf((ctx.entries ?? []).filter((e) => e.type === "given" && e.refId === job.id && earlier(e, entry)));
       items = [{ title: job.title, amount: est }];
       heading = "एडवांस रसीद";
       if (est > 0) lines.push({ label: "कुल", value: formatINR(est) });
       if (before > 0) lines.push({ label: "पहले एडवांस", value: formatINR(before), tone: "ok" });
+      if (backBefore > 0) lines.push({ label: "लौटाया", value: formatINR(backBefore) });
       lines.push({ label, value: formatINR(entry.amount), tone: "ok" });
-      itemDue = est > 0 ? Math.max(0, roundMoney(est - before - entry.amount)) : 0;
+      itemDue = est > 0 ? Math.max(0, roundMoney(est - before + backBefore - entry.amount)) : 0;
       if (itemDue > 0) lines.push({ label: TERMS.docDueShort, value: formatINR(itemDue), tone: "due" });
       itemBalance = itemDue;
       dates = { booked: jobStart(job, ctx.entries ?? []), done: null };
       rows.push(itemsRow(items, "कार्य विवरण", ""), ...dateRows());
       if (est > 0) rows.push({ icon: "rupee", tint: DUE, label: "तय राशि", value: formatINR(est) });
-      if (before > 0) rows.push({ icon: "paid", tint: OK, label: "पहले एडवांस", value: formatINR(before), tone: "ok" });
+      if (before > 0) rows.push({ icon: "paid", tint: OK, label: "पहले एडवांस", value: formatINR(before), tone: "ok", sub: backBefore > 0 ? `${formatINR(backBefore)} लौटाया` : "" });
       rows.push({ icon: "paid", tint: OK, label: "एडवांस राशि", value: formatINR(entry.amount), tone: "ok" }, { icon: "card", tint: BLUE, label: "Payment Mode", value: payMode(entry.mode) });
       if (est > 0) rows.push({ icon: "scale", tint: AMBER, label: "बकाया", value: formatINR(itemDue), tone: itemDue > 0 ? "due" : "ok" });
       titleHi = "एडवांस रसीद";
@@ -206,9 +233,28 @@ export function receiptDoc(
       titleHi = early ? "एडवांस रसीद" : "भुगतान रसीद";
       titleEn = early ? "ADVANCE RECEIPT" : "PAYMENT RECEIPT";
     }
+    // An advance whose job was called off, or given back in part: what went back and what stays as jama.
+    const jobId = !job && !work ? entry.linkId : undefined;
+    const backRows = jobId ? (ctx.entries ?? []).filter((e) => e.type === "given" && e.refId === jobId) : [];
+    if (backRows.length) {
+      const jobCard = ctx.jobs?.find((j) => j.id === jobId);
+      const taken = sumOf((ctx.entries ?? []).filter((e) => e.type === "payment" && e.linkId === jobId));
+      const back = sumOf(backRows);
+      const kept = jobCard ? 0 : Math.max(0, roundMoney(taken - back));
+      const lastBack = backRows.reduce((d, e) => (e.date > d ? e.date : d), "");
+      lines.push({ label: `लौटाया (${formatDate(lastBack)})`, value: formatINR(back) });
+      if (kept > 0) lines.push({ label: "खाते में जमा", value: formatINR(kept), tone: "ok" });
+      rows.push({ icon: "scale", tint: AMBER, label: "लौटाया", value: formatINR(back), sub: formatDate(lastBack) });
+      if (kept > 0) rows.push({ icon: "paid", tint: OK, label: "खाते में जमा", value: formatINR(kept), tone: "ok" });
+      cancelled = { title: jobCard ? "एडवांस लौटाया गया" : "काम रद्द — एडवांस लौटाया", sub: kept > 0 ? `बचे ${formatINR(kept)} आपके खाते में जमा हैं` : "" };
+    }
     // An advance whose work is now finished is stamped by that work: paid in full, or still pending.
     const workLeft = early && work ? buildLedger((ctx.entries ?? []).filter((e) => e.customerId === work.customerId)).work.get(work.id)?.remaining ?? 0 : 0;
-    seal = early && work ? (workLeft > 0 ? { text: "PENDING", color: AMBER } : { text: "PAID", color: OK }) : early ? { text: "ADVANCE", color: INFO } : { text: "RECEIVED", color: OK };
+    seal = cancelled
+      ? { text: ctx.jobs?.some((j) => j.id === jobId) ? "REFUNDED" : "CANCELLED", color: DUE }
+      : early && work
+        ? workLeft > 0 ? { text: "PENDING", color: AMBER } : { text: "PAID", color: OK }
+        : early ? { text: "ADVANCE", color: INFO } : { text: "RECEIVED", color: OK };
   } else if (entry.type === "work") {
     itemDue = status?.remaining ?? Math.max(0, entry.amount - (entry.paid ?? 0));
     const parts = workParts(entry, status);
@@ -227,6 +273,35 @@ export function receiptDoc(
     titleHi = personal ? "बिल" : itemDue > 0 ? "ग्राहक बिल" : "ग्राहक भुगतान रसीद";
     titleEn = personal ? "BILL" : itemDue > 0 ? "CUSTOMER BILL" : "CUSTOMER PAYMENT RECEIPT";
     seal = itemDue > 0 ? { text: "PENDING", color: AMBER } : { text: "PAID", color: OK };
+  } else if (refund) {
+    // Money handed back to a customer out of what they had with us: a refund slip, not a loan.
+    const jobCard = entry.refId ? ctx.jobs?.find((j) => j.id === entry.refId) : undefined;
+    const what = jobCard?.title || entry.notes.replace(/ का एडवांस$/, "").trim();
+    const taken = entry.refId ? sumOf((ctx.entries ?? []).filter((e) => e.type === "payment" && e.linkId === entry.refId)) : 0;
+    const backAll = entry.refId ? sumOf((ctx.entries ?? []).filter((e) => e.type === "given" && e.refId === entry.refId)) : 0;
+    const kept = entry.refId && !jobCard ? Math.max(0, roundMoney(taken - backAll)) : 0;
+    const jobState = !entry.refId ? "" : !jobCard ? "रद्द" : jobCard.status === "done" ? "पूरा हुआ" : "चालू है";
+    items = [{ title: what || (entry.refId ? "एडवांस" : "जमा राशि"), amount: entry.amount }];
+    heading = "वापसी रसीद";
+    if (taken > 0 && jobCard?.status !== "done") lines.push({ label: "लिया एडवांस", value: formatINR(taken) });
+    lines.push({ label: `लौटाया (${payMode(entry.mode)})`, value: formatINR(entry.amount) });
+    if (kept > 0) lines.push({ label: "खाते में जमा", value: formatINR(kept), tone: "ok" });
+    rows.push(
+      { icon: "doc", tint: OK, label: entry.refId ? "किस काम का" : "विवरण", value: items[0].title, sub: jobState ? `काम: ${jobState}` : entry.notes.trim() },
+      ...(taken > 0 && jobCard?.status !== "done" ? [{ icon: "paid" as IconKey, tint: OK, label: "लिया एडवांस", value: formatINR(taken) }] : []),
+      { icon: "rupee", tint: DUE, label: "लौटाई राशि", value: formatINR(entry.amount), tone: "due" },
+      { icon: "card", tint: BLUE, label: "Payment Mode", value: payMode(entry.mode) },
+      { icon: "cal", tint: BLUE, label: "लौटाने की तारीख", value: formatDate(entry.date) },
+      ...(kept > 0 ? [{ icon: "scale" as IconKey, tint: OK, label: "खाते में जमा", value: formatINR(kept), tone: "ok" as Tone }] : []),
+    );
+    titleHi = entry.refId ? "एडवांस वापसी रसीद" : "जमा वापसी रसीद";
+    titleEn = "REFUND RECEIPT";
+    seal = { text: "REFUNDED", color: INFO };
+    cancelled = {
+      title: `${formatINR(entry.amount)} वापस किए गए`,
+      sub: [jobState === "रद्द" ? "काम रद्द किया गया" : jobState ? `काम ${jobState}` : "", kept > 0 ? `बचे ${formatINR(kept)} खाते में जमा` : ""].filter(Boolean).join(" · "),
+    };
+    itemBalance = -kept;
   } else {
     const received = status?.received ?? (purchase ? entry.paid ?? 0 : 0);
     itemDue = status?.remaining ?? Math.max(0, entry.amount - received);
@@ -240,7 +315,8 @@ export function receiptDoc(
   // The whole-account box only adds something when other rows change the picture.
   const account = (entry.type === "payment" && !itemBalance) || balance !== itemBalance ? accountLine(balance, isCustomer) : undefined;
 
-  const no = entry.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase();
+  const no = docNo(entry, ctx.entries);
+  const noLabel = entry.type === "work" ? "बिल नंबर" : "रसीद संख्या";
   const title = heading === "एडवांस रसीद" ? items[0].title : entry.description || fallback;
   const many = items.length > 1;
   const upiDue = purchase || given ? 0 : itemDue > 0 ? itemDue : balance > 0 ? balance : 0;
@@ -253,10 +329,12 @@ export function receiptDoc(
     }
     if (dates) return [...dateLines(), `💰 एडवांस : ${formatDate(entry.date)}`];
     if (entry.type === "payment") return [`✅ ${early ? "एडवांस" : "भुगतान"} : ${formatDate(entry.date)}`];
+    if (refund) return [`↩️ लौटाया : ${formatDate(entry.date)}`];
     return [`📅 ${formatDate(entry.date)}`];
   };
   const message = [
     `*${shop.shop_name}*`,
+    `🧾 ${titleHi} · ${noLabel}: ${no}`,
     ...slipDates(),
     "",
     `*${customer.name}*`,
@@ -265,6 +343,7 @@ export function receiptDoc(
     ...lines.map(lineText),
     ...(itemDue <= 0 && entry.type === "work" ? ["पूरा भुगतान ✓"] : []),
     ...(readyBy ? ["", `⏳ ${readyBy}`] : []),
+    ...(cancelled ? ["", `*${cancelled.title}*`, ...(cancelled.sub ? [cancelled.sub] : [])] : []),
     ...(account ? ["", `*${account.label}: ${account.value}*`] : []),
     "",
     ...(isCustomer && !purchase && !given ? shareFooter(shop, upiDue, customer.name) : ["धन्यवाद 🙏"]),
@@ -273,7 +352,9 @@ export function receiptDoc(
   if (account) rows.push({ icon: "scale", tint: AMBER, label: account.label, value: account.value, tone: account.tone });
   const prefs = getPrefs();
   const facing = isCustomer && !personal && !purchase && !given;
-  const banner = !facing
+  const banner = cancelled && isCustomer && !personal
+    ? { color: refund ? INFO : DUE, bg: refund ? "#E8F1FD" : "#FDECEC", icon: "check" as IconKey, title: cancelled.title, sub: cancelled.sub || "धन्यवाद 🙏" }
+    : !facing
     ? undefined
     : advanceBanner ??
       (upiDue > 0
@@ -288,7 +369,18 @@ export function receiptDoc(
         : OK_BANNER(seal.text === "ADVANCE" ? "एडवांस प्राप्त हुआ" : "भुगतान सफलतापूर्वक प्राप्त हो गया है।", prefs.paidNote.trim() || PAID_NOTE_DEFAULT));
   const html = cardPage(
     shop,
-    { titleHi, titleEn, noLabel: "रसीद संख्या", no, date: dates ? "" : formatDate(entry.date), rows, stamp: seal, banner, note: personal ? "" : prefs.receiptNote.trim() },
+    {
+      titleHi,
+      titleEn,
+      noLabel,
+      no,
+      date: dates ? "" : formatDate(entry.date),
+      rows,
+      stamp: seal,
+      banner,
+      note: personal ? "" : prefs.receiptNote.trim(),
+      receiverSign: refund ? "प्राप्तकर्ता के हस्ताक्षर" : undefined,
+    },
     personal,
   );
 
@@ -301,7 +393,7 @@ export function receiptDoc(
     account,
     message,
     html,
-    fileName: docFileName(customer.name, entry.type === "work" ? "Bill" : heading === "एडवांस रसीद" ? "Advance" : "Receipt", entry.date),
+    fileName: docFileName(customer.name, entry.type === "work" ? "Bill" : refund ? "Refund" : heading === "एडवांस रसीद" ? "Advance" : "Receipt", entry.date),
   };
 }
 
@@ -420,6 +512,39 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
   };
 }
 
+const DAY_MS = 86_400_000;
+const daysSince = (iso: string) => Math.max(0, Math.round((Date.parse(todayISO()) - Date.parse(iso)) / DAY_MS));
+/** Over a month old: printed in red. */
+const OLD_DUE_DAYS = 30;
+
+type OpenDue = { date: string; text: string; left: number; days: number };
+
+/** Rows of this customer still unpaid (work, money given), oldest first, with how long they have been due. */
+function openDues(entries: Entry[], ledger: Ledger = buildLedger(entries)): OpenDue[] {
+  return entries
+    .filter((e) => e.type !== "payment" && e.type !== "purchase" && (ledger.work.get(e.id)?.remaining ?? 0) > 0)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt))
+    .map((e) => ({ date: e.date, text: e.description || (e.type === "given" ? "पैसे दिए" : "काम"), left: ledger.work.get(e.id)!.remaining, days: daysSince(e.date) }));
+}
+
+const sumLeft = (dues: OpenDue[]) => roundMoney(dues.reduce((s, d) => s + d.left, 0));
+const dueLine = (d: OpenDue) => `• ${formatDateShort(d.date)} ${d.text} — ${formatINR(d.left)}${d.days > 0 ? ` (${d.days} दिन)` : ""}`;
+
+function duesTable(dues: OpenDue[]): string {
+  if (!dues.length) return "";
+  return `
+  <div style="margin-top:14px;font-weight:700;color:#333">बकाया एंट्री</div>
+  <table class="ledger" style="margin-top:4px">
+    <tr><th>तारीख</th><th>विवरण</th><th class="amt">कितने दिन</th><th class="amt">बाकी</th></tr>
+    ${dues
+      .map((d) => {
+        const old = d.days > OLD_DUE_DAYS;
+        return `<tr><td class="nowrap">${esc(formatDateShort(d.date))}</td><td>${esc(d.text)}</td><td class="amt" style="color:${old ? DUE : "#555"};font-weight:${old ? 700 : 400}">${d.days} दिन</td><td class="amt" style="color:${DUE}">${esc(formatINR(d.left))}</td></tr>`;
+      })
+      .join("")}
+  </table>`;
+}
+
 /** Full account statement: every entry with a running balance, plus the items still unpaid. */
 export function statementDoc(
   entries: Entry[],
@@ -455,7 +580,9 @@ export function statementDoc(
   const closing = running;
   const balance = sorted.reduce((s, e) => { const l = legs(e); return s + l.d - l.c; }, 0);
   const account = accountLine(balance, isCustomer);
-  const open = sorted.filter((e) => e.type !== "payment" && e.type !== "purchase" && (ledger.work.get(e.id)?.remaining ?? 0) > 0);
+  const open = openDues(sorted, ledger);
+  const lastPay = [...sorted].reverse().find((e) => e.type === "payment" || (e.type === "work" && (e.paid ?? 0) > 0));
+  const lastPaid = lastPay ? { date: lastPay.date, amount: lastPay.type === "payment" ? lastPay.amount : lastPay.paid ?? 0 } : null;
   const owed = sorted.filter((e) => e.type === "purchase" && (ledger.work.get(e.id)?.remaining ?? 0) > 0);
   const today = todayISO();
   const shown = sorted.filter(inRange);
@@ -473,6 +600,7 @@ export function statementDoc(
     { label: `${debitLabel} (${rows.length} एंट्री)`, value: formatINR(debit) },
     { label: creditLabel, value: formatINR(credit), tone: "ok" as Tone },
     ...(range && range.to < today ? [{ label: `${formatDate(range.to)} तक`, value: signed(closing) }] : []),
+    ...(lastPaid && isCustomer ? [{ label: "आखिरी भुगतान", value: `${formatINR(lastPaid.amount)} · ${formatDate(lastPaid.date)}` }] : []),
   ];
 
   const message = [
@@ -483,9 +611,7 @@ export function statementDoc(
     "",
     ...lines.map(lineText),
     `*${account.label}: ${account.value}*`,
-    ...(open.length
-      ? ["", "बकाया एंट्री:", ...open.map((e) => `• ${formatDateShort(e.date)} ${e.description || "पैसे दिए"} — ${formatINR(ledger.work.get(e.id)!.remaining)}`)]
-      : []),
+    ...(open.length ? ["", "बकाया एंट्री:", ...open.map(dueLine)] : []),
     ...(owed.length
       ? ["", "जिनके पैसे आपको मिलने हैं:", ...owed.map((e) => `• ${formatDateShort(e.date)} ${e.description || "सामान / सेवा"} — ${formatINR(ledger.work.get(e.id)!.remaining)}`)]
       : []),
@@ -509,6 +635,8 @@ export function statementDoc(
     <tr class="total"><td colspan="2">कुल</td><td class="amt">${esc(formatINR(debit))}</td><td class="amt" style="color:${OK}">${esc(formatINR(credit))}</td><td class="amt">${balCell(closing)}</td></tr>
   </table>
   ${accountBox(account)}
+  ${lastPaid && isCustomer ? `<div class="meta" style="margin-top:6px">आखिरी भुगतान: ${esc(formatINR(lastPaid.amount))} · ${esc(formatDate(lastPaid.date))}</div>` : ""}
+  ${balance > 0 ? duesTable(open) : ""}
   ${upiQrHtml(shop, balance, customer.name)}`;
 
   return {
@@ -529,13 +657,23 @@ export function fillReminder(template: string, name: string, amount: number, sho
   return template.replaceAll("{नाम}", name).replaceAll("{रकम}", formatINR(amount)).replaceAll("{दुकान}", shopName);
 }
 
+/** `entries`: the customer's own rows; when given, the slip lists what is still unpaid and since when. */
 export function reminderDoc(
   customer: Customer,
   balance: number,
   shopIn: Partial<ShopProfile>,
+  entries?: Entry[],
 ): ShareDoc {
   const shop = fullShop(shopIn, customer);
   const upiUrl = shop.shop_upi ? upiLink(shop.shop_upi, shop.shop_name, balance, `Hisab ${customer.name}`) : "";
+  const own = entries?.filter((e) => e.customerId === customer.id) ?? [];
+  // A long list reads like a ledger; the oldest few say enough, the rest is one line.
+  const allDues = own.length ? openDues(own) : [];
+  const dues = allDues.slice(0, 6);
+  const more = allDues.slice(6);
+  const dueText = dues.length
+    ? ["", "बाकी एंट्री:", ...dues.map(dueLine), ...(more.length ? [`• और ${more.length} एंट्री — ${formatINR(sumLeft(more))}`] : [])]
+    : [];
 
   const lines: Line[] = [
     { label: `कुल ${TERMS.docDue}`, value: formatINR(balance), tone: "due" },
@@ -551,9 +689,11 @@ export function reminderDoc(
           "",
           `*${shop.shop_name}* की तरफ से आपका हिसाब विवरण:`,
           `💰 कुल ${TERMS.docDue}: *${formatINR(balance)}*`,
+          ...dueText,
           "",
           `कृपया सुविधा अनुसार इसका भुगतान कर दें।`,
         ]),
+    ...(custom ? dueText : []),
     ...(shop.shop_upi ? ["", `📱 ऑनलाइन भुगतान के लिए UPI ID:\n*${shop.shop_upi}*`, `🔗 तुरंत पेमेंट लिंक:\n${upiUrl}`] : []),
     "",
     `धन्यवाद 🙏`,
@@ -567,6 +707,7 @@ export function reminderDoc(
     <div style="font-size:26px;font-weight:800;color:${DUE};margin:6px 0;">${esc(formatINR(balance))}</div>
     <div style="font-size:12px;color:#555;">कृपया सुविधा अनुसार भुगतान करने का कष्ट करें।</div>
   </div>
+  ${duesTable(allDues)}
   ${upiQrHtml(shop, balance, customer.name)}
   `;
 
@@ -703,6 +844,8 @@ type Card = {
   /** Vendor voucher: banner and owner's signature side by side, no thank-you line. */
   vendor?: boolean;
   note?: string;
+  /** Money handed over: a line for the person who took it, in place of the thank-you. */
+  receiverSign?: string;
 };
 
 const cardRow = (r: CardRow) => `
@@ -782,7 +925,9 @@ function cardPage(shop: ShopProfile, card: Card, personal: boolean): string {
     : `${card.banner ? bannerHtml(card.banner) : ""}
       ${card.note ? `<div class="cnote">${esc(card.note)}</div>` : ""}
       <div class="cfoot">
-        <div class="thanks"><div class="ty">Thank You!</div>${tagline ? `<div class="tl">${esc(tagline)}</div>` : ""}</div>
+        ${card.receiverSign
+          ? `<div class="csign"><div class="signSpace"></div><div class="signLine">${esc(card.receiverSign)}</div></div>`
+          : `<div class="thanks"><div class="ty">Thank You!</div>${tagline ? `<div class="tl">${esc(tagline)}</div>` : ""}</div>`}
         ${personal ? "" : `<div class="csign">${signArt}<div class="signLine">अधिकृत हस्ताक्षर</div></div>`}
       </div>`;
   return `<!DOCTYPE html><html lang="hi"><head><meta charset="utf-8"/>

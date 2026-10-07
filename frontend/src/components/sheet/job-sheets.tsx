@@ -104,8 +104,8 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
         if (!entryId && !self && customerId && money.receivedNum > 0) {
           createPaid({ customerId, type: "payment", date: day, description: ADVANCE, notes: `${t} के साथ` }, money.receivedNum, payMode, splitOf(split, money.receivedNum));
         }
-        if (!self) bookOutsideCost(parseAmount(outside), outsideMode, day, t);
-        store.createJob({ customerId, title: t, dueDate: day, status: "done", estimatedAmount: amt, notes: remark.trim(), entryId });
+        const card = store.createJob({ customerId, title: t, dueDate: day, status: "done", estimatedAmount: amt, notes: remark.trim(), entryId });
+        if (!self) bookOutsideCost(entryId || card.id, parseAmount(outside), outsideMode, day, [choice.name, t].filter(Boolean).join(" · "));
         if (remark.trim()) {
           await store.createJob({ customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
         }
@@ -292,7 +292,7 @@ export function CompleteJobSheet({ job, onClose, refund: refundFirst = false }: 
         keepRow: !!vendorRow,
       });
       if (vendorRow) closeJobVendorOrder(vendorRow, entryId, workDate);
-      bookOutsideCost(parseAmount(outside), outsideMode, workDate, cleanTitle);
+      bookOutsideCost(entryId || job.id, parseAmount(outside), outsideMode, workDate, [customerName, cleanTitle].filter(Boolean).join(" · "));
       if (entryId) {
         moveJobAdvances(job, entries, entryId);
         if (!sameDay && got > 0) {

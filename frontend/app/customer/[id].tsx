@@ -9,7 +9,7 @@ import { computeBalance, isRepayment, isVendor, itemsOf, useAeps, useCustomers, 
 import { AEPS_META, STATUS_META, aepsBill, aepsDue, defaultVia, statusLabel, viaBill } from "@/src/lib/aeps";
 import { formatDate, formatINR, formatPhone, monthRange, todayISO } from "@/src/lib/format";
 import { store } from "@/src/lib/store";
-import { buildLedger, jobAdvanceLeft, vendorByJob, type WorkState, type WorkStatus } from "@/src/lib/records";
+import { buildLedger, jobAdvanceLeft, refundIds, vendorByJob, type WorkState, type WorkStatus } from "@/src/lib/records";
 import { AddEntrySheet, AddJobSheet, AddCustomerSheet, Chip, CompleteJobSheet, EditRecordSheet, SettleSheet, SheetShell } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
 import { Amount, Button, IconButton, IconLabel, type IconName } from "@/src/components/ui";
@@ -46,6 +46,7 @@ export default function CustomerDetail() {
   const entries = useMemo(() => (entriesQ.data ?? []).filter((e) => e.customerId === id), [entriesQ.data, id]);
   const jobs = useMemo(() => (jobsQ.data ?? []).filter((j) => j.customerId === id), [jobsQ.data, id]);
   const ledger = useMemo(() => buildLedger(entries), [entries]);
+  const refunds = useMemo(() => (customersQ.data?.find((c) => c.id === id)?.persona === "personal" ? new Set<string>() : refundIds(entries)), [entries, customersQ.data, id]);
   const jobVendor = useMemo(() => vendorByJob(entriesQ.data ?? []), [entriesQ.data]);
   const vendorName = (vid: string) => (customersQ.data ?? []).find((c) => c.id === vid)?.name ?? "—";
   const phone10 = (customer?.phone ?? "").replace(/\D/g, "").slice(-10);
@@ -156,7 +157,7 @@ export default function CustomerDetail() {
   };
   const openStatement = () => setStmt("all");
   const stmtDoc = stmt ? statementDoc(entries, ledger, customer, isCustomer, user ?? {}, stmtRange(stmt)) : null;
-  const openReminder = () => setShareDoc(reminderDoc(customer, due, user ?? {}));
+  const openReminder = () => setShareDoc(reminderDoc(customer, due, user ?? {}, entries));
 
   type Action = { key: string; label: string; icon: IconName; color?: string; run: () => void };
   const actWork: Action = { key: "work", label: "काम लिखें", icon: "plus", run: () => setJobSheet("now") };
@@ -238,7 +239,7 @@ export default function CustomerDetail() {
         renderItem={({ item: e, index: i }) => (
           <Animated.View entering={FadeInDown.delay(Math.min(i, 8) * 40).duration(250)}>
             {e.type !== "payment" ? (
-              <WorkCard entry={e} status={ledger.work.get(e.id)!} vendor={vendor} onPress={() => setEditing(e)} onSettle={() => setSettling(e)} onReceipt={() => openReceipt(e)} />
+              <WorkCard entry={e} status={ledger.work.get(e.id)!} vendor={vendor} refund={refunds.has(e.id)} onPress={() => setEditing(e)} onSettle={() => setSettling(e)} onReceipt={() => openReceipt(e)} />
             ) : (
               <JamaCard entry={e} onPress={() => setEditing(e)} onReceipt={() => openReceipt(e)} />
             )}
@@ -517,6 +518,8 @@ const GIVEN_UI: Record<WorkState, { label: string; icon: string; fg: string; bg:
   partial: { label: "कुछ बाकी", icon: "progress-clock", fg: colors.warning, bg: "#FEF3E2" },
   settled: { label: "वापस मिले", icon: "check-decagram", fg: colors.success, bg: colors.successSoft },
 };
+/** Customer's own jama / job advance handed back: done the moment it is given, nothing to collect. */
+const REFUND_UI = { label: "जमा से लौटाए", icon: "cash-refund", fg: colors.info, bg: colors.infoSoft };
 
 // Goods / service taken on credit: the open part is money we owe them.
 const PURCHASE_UI: Record<WorkState, { label: string; icon: string; fg: string; bg: string }> = {
@@ -579,14 +582,14 @@ function ReceiptButton({ entryId, onPress }: { entryId: string; onPress: () => v
   );
 }
 
-function WorkCard({ entry, status, vendor, onPress, onSettle, onReceipt }: { entry: Entry; status: WorkStatus; vendor?: boolean; onPress: () => void; onSettle: () => void; onReceipt: () => void }) {
+function WorkCard({ entry, status, vendor, refund, onPress, onSettle, onReceipt }: { entry: Entry; status: WorkStatus; vendor?: boolean; refund?: boolean; onPress: () => void; onSettle: () => void; onReceipt: () => void }) {
   const given = entry.type === "given";
   const purchase = entry.type === "purchase";
   const order = vendor && purchase;
   const delivered = entry.status !== "ordered";
   const late = order && !delivered && !!entry.dueDate && entry.dueDate < todayISO();
-  const ui = (purchase ? PURCHASE_UI : given ? GIVEN_UI : STATE_UI)[status.state];
-  const open = status.state === "pending" || status.state === "partial";
+  const ui = refund ? REFUND_UI : (purchase ? PURCHASE_UI : given ? GIVEN_UI : STATE_UI)[status.state];
+  const open = !refund && (status.state === "pending" || status.state === "partial");
   const laterPaid = status.received - status.paidAtBooking;
   const lines = entry.items && entry.items.length > 1 ? itemsOf(entry) : [];
   const word = purchase
@@ -647,7 +650,7 @@ function WorkCard({ entry, status, vendor, onPress, onSettle, onReceipt }: { ent
         </View>
       ) : null}
 
-      {status.state !== "cash" ? (
+      {status.state !== "cash" && !refund ? (
         <View style={styles.moneyLine}>
           <Text style={styles.moneyText}>कुल {formatINR(entry.amount)}</Text>
           <Text style={styles.moneyText}>

@@ -3,9 +3,10 @@
 // recordWork used to name them.
 import { useEffect, useRef } from "react";
 import { store } from "@/src/lib/store";
-import { isDebt, isRepayment, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
+import { entryDelta, isDebt, isRepayment, useEntries, useJobs, type Entry, type Job } from "@/src/lib/data";
 import { localDay, roundMoney, todayISO } from "@/src/lib/format";
 import { noteRelink, trashGroup } from "@/src/lib/trash";
+import { removeOutsideCost } from "@/src/lib/expenses";
 
 const isLegacyPairFor = (work: Entry, e: Entry) =>
   work.type === "work" &&
@@ -154,6 +155,7 @@ export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]
     store.deleteEntry(work.id);
     dropOrKeep([...linked.values()], work.date, owned);
     vendorCostsFor(work, entries).forEach((v) => removeVendorCost(v, entries));
+    removeOutsideCost([work.id, job?.id]);
     if (job) store.deleteJob(job.id);
     remindersFor(work, jobs).forEach((j) => store.deleteJob(j.id));
   });
@@ -169,6 +171,7 @@ export function removeJobWithAdvances(job: Job, entries: Entry[]) {
   trashGroup(() => {
     dropOrKeep(advancesForJob(job, entries), jobStart(job, entries));
     vendorOrdersForJob(job, entries).forEach((v) => removeVendorCost(v, entries));
+    removeOutsideCost([job.id, job.entryId]);
     store.deleteJob(job.id);
   });
 }
@@ -178,6 +181,22 @@ export const ADVANCE_BACK = "एडवांस वापस";
 /** Advance given back to the customer for this job (a plain "पैसे दिए" row whose refId is the job). */
 export function refundsForJob(job: Job, entries: Entry[]): Entry[] {
   return entries.filter((e) => e.type === "given" && e.refId === job.id);
+}
+
+/**
+ * "पैसे दिए" rows that handed back the customer's own money (a job's advance, or jama they had with us):
+ * refunds, not loans. Repayments to a vendor (linkId) never count.
+ */
+export function refundIds(entries: Entry[]): Set<string> {
+  const out = new Set<string>();
+  const bal = new Map<string, number>();
+  const rows = [...entries].sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
+  for (const e of rows) {
+    const before = bal.get(e.customerId) ?? 0;
+    if (e.type === "given" && !e.linkId && (!!e.refId || -before >= e.amount - 0.005)) out.add(e.id);
+    bal.set(e.customerId, roundMoney(before + entryDelta(e)));
+  }
+  return out;
 }
 
 /** Advance of this job still with us: taken minus given back. */
@@ -194,6 +213,7 @@ export function jobAdvanceLeft(job: Job, entries: Entry[]): number {
 export function cancelJob(job: Job, entries: Entry[]) {
   trashGroup(() => {
     vendorOrdersForJob(job, entries).forEach((v) => removeVendorCost(v, entries));
+    removeOutsideCost([job.id]);
     store.deleteJob(job.id);
   });
 }

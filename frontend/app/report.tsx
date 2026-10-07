@@ -164,7 +164,7 @@ export default function ReportScreen() {
         { label: `काम / बिक्री (${now.billedCount})`, value: now.billed, sign: "+", kind: "work" },
         { label: "कमीशन", value: now.commission, sign: "+", kind: "commission" },
         { label: "खर्च", value: now.expense, sign: "−", kind: "expense" },
-        { label: "पोर्टल फीस", value: now.fee, sign: "−", kind: "fee" },
+        { label: "बाहर का खर्च", value: now.fee, sign: "−", kind: "fee" },
         ...(now.vendorCost > 0 ? [{ label: "Vendor लागत", value: now.vendorCost, sign: "−" as const, kind: "vendor" as const }] : []),
       ];
   const openMetric = (kind: MetricKind) => router.push({ pathname: "/entries" as never, params: { kind, from, to } });

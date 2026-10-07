@@ -63,7 +63,6 @@ export default function CustomerDetail() {
   const [more, setMore] = useState(false);
   const [remindSheet, setRemindSheet] = useState(false);
   const [ledgerSheet, setLedgerSheet] = useState(false);
-  const [orderSheet, setOrderSheet] = useState(false);
   const [payPick, setPayPick] = useState(false);
 
   useEffect(() => {
@@ -160,7 +159,6 @@ export default function CustomerDetail() {
   const actGot: Action = { key: "got", label: "पैसे मिले", icon: "arrow-bottom-left", color: semantic.received, run: () => setEntrySheet("payment") };
   const actGiven: Action = { key: "given", label: "पैसे दिए", icon: "arrow-top-right", color: semantic.due, run: () => setEntrySheet("given") };
   const actReturn: Action = { key: "return", label: isCustomer ? "जमा लौटाएँ" : "पैसे चुकाएँ", icon: "cash-refund", run: () => setEntrySheet("given") };
-  const actOrder: Action = { key: "order", label: "Vendor ऑर्डर", icon: "truck-outline", run: () => setOrderSheet(true) };
   const actPay: Action = {
     key: "pay",
     label: "भुगतान करें",
@@ -168,10 +166,12 @@ export default function CustomerDetail() {
     color: semantic.due,
     run: () => (openOrders.length === 1 ? setSettling(openOrders[0]) : openOrders.length > 1 ? setPayPick(true) : setEntrySheet("given")),
   };
-  const primary = vendor ? (openOrders.length > 0 ? actPay : actOrder) : due > 0 ? actGot : due < 0 ? actReturn : isCustomer ? actWork : actGiven;
-  const secondary = vendor ? (primary === actPay ? actOrder : actPay) : isCustomer ? (primary === actWork ? actGot : actWork) : primary === actGot ? actGiven : actGot;
+  // Vendors from before are only settled here: pay what is left, or note money they gave back.
+  const actRefund: Action = { key: "refund", label: "पैसे वापस मिले", icon: "arrow-bottom-left", color: semantic.received, run: () => setEntrySheet("payment") };
+  const primary = vendor ? actPay : due > 0 ? actGot : due < 0 ? actReturn : isCustomer ? actWork : actGiven;
+  const secondary = vendor ? actRefund : isCustomer ? (primary === actWork ? actGot : actWork) : primary === actGot ? actGiven : actGot;
   const moreActions: Action[] = [];
-  if (vendor) moreActions.push(actOrder, actPay, { key: "advance", label: "एडवांस", icon: "arrow-top-right", color: semantic.due, run: () => setEntrySheet("given") }, { key: "refund", label: "पैसे वापस मिले", icon: "arrow-bottom-left", color: semantic.received, run: () => setEntrySheet("payment") });
+  if (vendor) moreActions.push(actPay, actRefund);
   else {
     if (isCustomer) moreActions.push(actWork);
     moreActions.push(actGot, actGiven);
@@ -379,7 +379,7 @@ export default function CustomerDetail() {
           testID="cust-primary-btn"
         />
         <Button
-          label={secondary === actOrder ? "ऑर्डर" : secondary === actPay ? "भुगतान" : secondary === actWork ? "काम" : secondary === actGot ? "मिले" : "दिए"}
+          label={secondary === actRefund ? "वापसी" : secondary === actPay ? "भुगतान" : secondary === actWork ? "काम" : secondary === actGot ? "मिले" : "दिए"}
           icon={secondary.icon}
           variant="secondary"
           onPress={secondary.run}
@@ -420,7 +420,6 @@ export default function CustomerDetail() {
           ))}
         </View>
       </SheetShell>
-      <AddEntrySheet visible={orderSheet} type="purchase" vendor onClose={() => setOrderSheet(false)} customerId={customer.id} />
       <AddEntrySheet visible={entrySheet !== null} type={entrySheet ?? "work"} onClose={() => setEntrySheet(null)} customerId={customer.id} />
       <EditRecordSheet entry={editing} job={editingJob} onClose={() => { setEditing(null); setEditingJob(null); }} />
       <AddJobSheet visible={jobSheet !== null} initialMode={jobSheet ?? "now"} onClose={() => setJobSheet(null)} customerId={customer.id} />
@@ -579,7 +578,7 @@ function WorkCard({ entry, status, vendor, onPress, onSettle, onReceipt }: { ent
           ) : null}
           {entry.fee && entry.fee > 0 ? (
             <Text style={{ fontSize: 12, color: colors.muted, marginTop: 2 }}>
-              पोर्टल फीस: {formatINR(entry.fee)} ({entry.feeMode === "cash" ? "नकद" : "बैंक"}) · बचत: {formatINR(entry.amount - entry.fee)}
+              बाहर का खर्च: {formatINR(entry.fee)} ({entry.feeMode === "cash" ? "नकद" : "बैंक"}) · बचत: {formatINR(entry.amount - entry.fee)}
             </Text>
           ) : null}
         </View>

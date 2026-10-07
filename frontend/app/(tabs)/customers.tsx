@@ -35,10 +35,12 @@ export default function CustomersScreen() {
   const { labels, isPersonal } = usePersona();
   const params = useLocalSearchParams<{ filter?: Filter; t?: string; book?: "vendor" | "customer" }>();
   const [book, setBook] = useState<"customer" | "vendor">("customer");
-  const vendors = !isPersonal && book === "vendor";
   const customersQ = useCustomers();
   const entriesQ = useEntries();
   const allCustomers = useMemo(() => customersQ.data ?? [], [customersQ.data]);
+  // Vendors are no longer added; the list only stays for ones saved earlier.
+  const vendorCount = useMemo(() => (isPersonal ? 0 : allCustomers.filter((c) => c.persona !== "personal" && isVendor(c)).length), [allCustomers, isPersonal]);
+  const vendors = !isPersonal && book === "vendor" && vendorCount > 0;
   const entries = useMemo(() => entriesQ.data ?? [], [entriesQ.data]);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("due");
@@ -56,7 +58,6 @@ export default function CustomersScreen() {
     () => allCustomers.filter((c) => (isPersonal ? c.persona === "personal" : c.persona !== "personal" && isVendor(c) === vendors)),
     [allCustomers, isPersonal, vendors]
   );
-  const vendorCount = useMemo(() => (isPersonal ? 0 : allCustomers.filter((c) => c.persona !== "personal" && isVendor(c)).length), [allCustomers, isPersonal]);
   const customerCount = useMemo(() => (isPersonal ? 0 : allCustomers.filter((c) => c.persona !== "personal" && !isVendor(c)).length), [allCustomers, isPersonal]);
 
   // Shop and Personal are different books: a search or filter from one means nothing in the other.
@@ -223,7 +224,7 @@ export default function CustomersScreen() {
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
         <Text style={styles.h1}>{listName}</Text>
-        {!isPersonal ? (
+        {!isPersonal && vendorCount > 0 ? (
           <View style={styles.bookSeg}>
             {(["customer", "vendor"] as const).map((b) => {
               const on = book === b;
@@ -277,8 +278,8 @@ export default function CustomersScreen() {
                       ? customers.length === 0 ? "अभी कोई Vendor नहीं" : filter === "owe" ? "किसी Vendor को देने नहीं हैं" : filter === "due" ? "किसी Vendor को एडवांस नहीं दिया" : "इस सूची में कोई नहीं"
                       : customers.length === 0 ? (isPersonal ? "अभी कोई नहीं" : "अभी कोई ग्राहक नहीं") : filter === "due" ? "किसी से पैसे नहीं मिलने हैं" : filter === "owe" ? (isPersonal ? "किसी को देने नहीं हैं" : "किसी का एडवांस नहीं") : "इस सूची में कोई नहीं"
                 }
-                message={!q && customers.length === 0 ? (vendors ? "कारीगर, सप्लायर या जिनसे बाहर काम करवाते हैं — उन्हें यहाँ जोड़ें" : "एंट्री लिखते ही यहाँ दिखेंगे, या अभी जोड़ें") : undefined}
-                action={!q && customers.length === 0 ? { label: vendors ? "नया Vendor" : labels.newCustomer, onPress: () => setAdding(true), testID: "customers-empty-add" } : undefined}
+                message={!q && customers.length === 0 && !vendors ? "एंट्री लिखते ही यहाँ दिखेंगे, या अभी जोड़ें" : undefined}
+                action={!q && customers.length === 0 && !vendors ? { label: labels.newCustomer, onPress: () => setAdding(true), testID: "customers-empty-add" } : undefined}
               />
             </View>
           }
@@ -372,12 +373,12 @@ export default function CustomersScreen() {
         style={[styles.fab, { bottom: insets.bottom + 16 }]}
         onPress={() => setAdding(true)}
         accessibilityRole="button"
-        accessibilityLabel={vendors ? "नया Vendor" : labels.newCustomer}
+        accessibilityLabel={labels.newCustomer}
         testID="add-customer-fab"
       >
-        <MaterialIcon name={vendors ? "truck-plus-outline" : "account-plus"} size={26} color={colors.onBrandPrimary} />
+        <MaterialIcon name="account-plus" size={26} color={colors.onBrandPrimary} />
       </Pressable>
-      <AddCustomerSheet visible={adding} onClose={() => setAdding(false)} role={vendors ? "vendor" : "customer"} />
+      <AddCustomerSheet visible={adding} onClose={() => setAdding(false)} role="customer" />
       <AddEntrySheet visible={paying !== null} type="payment" onClose={() => setPaying(null)} customerId={paying ?? undefined} />
       <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
     </View>

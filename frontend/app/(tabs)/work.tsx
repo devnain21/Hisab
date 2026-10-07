@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, FlatList, ScrollView, ActivityIndicator, TextInput } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, semantic, elevation } from "@/src/theme";
-import { isPersonalTask, isVendor, useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
+import { isPersonalTask, useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
 import { formatDate, formatDateShort, formatINR, roundMoney, todayISO } from "@/src/lib/format";
 import { advancesForJob, buildAllLedgers, workForJobs, type WorkStatus } from "@/src/lib/records";
 import { store } from "@/src/lib/store";
@@ -60,7 +60,6 @@ export default function WorkScreen() {
 function ShopWork() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ filter?: Filter; t?: string }>();
-  const router = useRouter();
   const customersQ = useCustomers();
   const jobsQ = useJobs();
   const entriesQ = useEntries();
@@ -119,31 +118,22 @@ function ShopWork() {
     });
   }, [jobs, entries, nameById]);
 
-  // Vendor work lives on the vendor's own orders: still with them, and what is left to pay them.
-  const vendorOrders = useMemo(() => {
-    const vendorIds = new Set(customers.filter((c) => isVendor(c)).map((c) => c.id));
-    const given = new Map<string, number>();
-    for (const e of entries) if (e.type === "given" && e.linkId) given.set(e.linkId, (given.get(e.linkId) ?? 0) + e.amount);
-    const open = entries.filter((e) => e.type === "purchase" && e.status === "ordered" && vendorIds.has(e.customerId));
-    const due = open.reduce((s, e) => s + Math.max(0, e.amount - (e.paid ?? 0) - (given.get(e.id) ?? 0)), 0);
-    return { count: open.length, due: roundMoney(due) };
-  }, [customers, entries]);
-
   const stats = useMemo(() => {
     const open = infos.filter((i) => i.job.status !== "done");
     const doneToday = infos.filter((i) => i.job.status === "done" && i.job.dueDate === today);
+    const unpaid = infos.filter((i) => matches(i, "unpaid", today));
     return {
       open: open.length,
       value: roundMoney(open.reduce((s, i) => s + (i.job.estimatedAmount || 0), 0)),
       advance: roundMoney(open.reduce((s, i) => s + i.advance, 0)),
       today: open.filter((i) => i.job.dueDate === today).length,
       late: open.filter((i) => i.job.dueDate < today).length,
-      vendor: vendorOrders.count,
-      vendorDue: vendorOrders.due,
+      unpaid: unpaid.length,
+      unpaidSum: roundMoney(unpaid.reduce((s, i) => s + (i.pay?.remaining ?? 0), 0)),
       doneToday: doneToday.length,
       doneTodaySum: roundMoney(doneToday.reduce((s, i) => s + (i.work?.amount ?? 0), 0)),
     };
-  }, [infos, today, vendorOrders]);
+  }, [infos, today]);
 
   const rows = useMemo((): Row[] => {
     const needle = q.trim().toLowerCase();
@@ -194,7 +184,7 @@ function ShopWork() {
         <View style={styles.tiles}>
           <Tile icon="calendar-today" label="आज देने" value={String(stats.today)} active={filter === "today"} onPress={() => setFilter(filter === "today" ? "open" : "today")} testID="work-tile-today" />
           <Tile icon="alert-circle-outline" label="देर से" value={String(stats.late)} warn={stats.late > 0} active={filter === "late"} onPress={() => setFilter(filter === "late" ? "open" : "late")} testID="work-tile-late" />
-          <Tile icon="truck-outline" label="Vendor के पास" value={String(stats.vendor)} sub={stats.vendorDue > 0 ? `देने ${money(stats.vendorDue)}` : ""} onPress={() => router.push({ pathname: "/(tabs)/customers", params: { filter: "owe", book: "vendor", t: String(Date.now()) } })} testID="work-tile-vendor" />
+          <Tile icon="cash-clock" label="पैसे बाकी" value={String(stats.unpaid)} sub={stats.unpaidSum > 0 ? money(stats.unpaidSum) : ""} warn={stats.unpaid > 0} active={filter === "unpaid"} onPress={() => setFilter(filter === "unpaid" ? "open" : "unpaid")} testID="work-tile-unpaid" />
           <Tile icon="check-circle-outline" label="आज पूरे" value={String(stats.doneToday)} sub={stats.doneTodaySum > 0 ? money(stats.doneTodaySum) : ""} active={filter === "doneToday"} onPress={() => setFilter(filter === "doneToday" ? "open" : "doneToday")} testID="work-tile-done-today" />
         </View>
       </View>

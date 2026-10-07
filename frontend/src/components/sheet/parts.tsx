@@ -651,15 +651,16 @@ export function FeeField({ fee, setFee, feeMode, setFeeMode, amount }: { fee: st
   const cashFrom = usePersona().isPersonal ? "कैश से" : "गल्ले से";
   return (
     <>
-      <Field label="सरकारी फीस (₹)">
+      <Field label="बाहर का खर्च (₹)">
         <TextInput style={inputStyle} value={fee} onChangeText={setFee} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-fee" />
+        {n <= 0 ? <Text style={styles.hint}>सरकारी फीस, तहसील या किसी और को दिए पैसे</Text> : null}
         {n > 0 && amount > 0 ? (
           <Text style={[styles.hint, { color: amount - n >= 0 ? colors.brandPrimary : colors.error, fontWeight: "700" }]}>
             बचत {formatINR(amount - n)}
           </Text>
         ) : null}
       </Field>
-      {n > 0 ? <PayModeField label="फीस कहाँ से दी" value={feeMode} onChange={setFeeMode} cashLabel={cashFrom} onlineLabel="बैंक से" /> : null}
+      {n > 0 ? <PayModeField label="कहाँ से दिए" value={feeMode} onChange={setFeeMode} cashLabel={cashFrom} onlineLabel="बैंक से" /> : null}
     </>
   );
 }

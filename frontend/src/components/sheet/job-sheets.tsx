@@ -168,7 +168,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       {mode === "now" ? (
         <>
           <DateField label="तारीख" value={date} onChange={setDate} money testID="input-job-date" />
-          <MoreInfo open={!!remark || !!govtFee} hint={self ? "रिमार्क" : "सरकारी फीस, रिमार्क"} testID="job-more-info">
+          <MoreInfo open={!!remark || !!govtFee} hint={self ? "रिमार्क" : "बाहर का खर्च, रिमार्क"} testID="job-more-info">
             {self ? null : <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />}
             <Field label="आगे का रिमार्क">
               <TextInput style={[inputStyle, { minHeight: 64 }]} value={remark} onChangeText={setRemark} multiline placeholder="जैसे कल प्रिंट देने हैं, बाकी पैसे शनिवार को" placeholderTextColor={colors.muted} testID="input-job-remark" />

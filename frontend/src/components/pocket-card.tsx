@@ -23,7 +23,7 @@ export const OUT_ROWS: Row[] = [
   { key: "given", label: (p) => (p === "business" ? "ग्राहकों को" : "लोगों को") },
   { key: "purchase", label: () => "सामान / सेवा" },
   { key: "expense", label: () => "खर्च" },
-  { key: "fee", label: () => "पोर्टल फीस" },
+  { key: "fee", label: () => "बाहर का खर्च" },
   { key: "moveOut", label: () => "निकाले / ट्रांसफर" },
 ];
 

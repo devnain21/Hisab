@@ -315,7 +315,7 @@ export default function DayScreen() {
               <Pressable style={styles.workFeeRow} onPress={() => router.push({ pathname: "/entries" as never, params: { kind: "fee", from: date } })} testID="day-work-fees">
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                   <MaterialIcon name="receipt" size={14} color={colors.error} />
-                  <Text style={styles.feeLabel}>फीस</Text>
+                  <Text style={styles.feeLabel}>बाहर का खर्च</Text>
                 </View>
                 <Text style={styles.feeValue}>-{formatINR(workFees)}</Text>
               </Pressable>
@@ -679,7 +679,7 @@ export default function DayScreen() {
                     })()}
                     {e.fee && e.fee > 0 ? (
                       <Text style={styles.feeInfoText}>
-                        फीस {formatINR(e.fee)} ({e.feeMode === "cash" ? "गल्ला" : "बैंक"}) · फीस के बाद {formatINR(e.amount - e.fee)}
+                        बाहर का खर्च {formatINR(e.fee)} ({e.feeMode === "cash" ? "गल्ला" : "बैंक"}) · बचत {formatINR(e.amount - e.fee)}
                       </Text>
                     ) : null}
                   </View>

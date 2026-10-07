@@ -73,7 +73,7 @@ export function AddCustomerSheet({ visible, onClose, initial, onDelete, role: ro
 
   return (
     <SheetShell visible={visible} onClose={onClose} title={initial ? "विवरण बदलें" : targetPersona === "personal" ? "नया व्यक्ति" : asVendor ? "नया Vendor" : "नया ग्राहक"} testID="sheet-customer">
-      {targetPersona !== "personal" ? (
+      {targetPersona !== "personal" && !!initial && isVendor(initial) ? (
         <View style={styles.segment}>
           {(["customer", "vendor"] as const).map((r) => (
             <Pressable key={r} onPress={() => setRole(r)} style={[styles.segmentBtn, role === r && { backgroundColor: colors.brandPrimary }]} testID={`cust-role-${r}`}>

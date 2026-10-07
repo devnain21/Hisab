@@ -56,8 +56,6 @@ function HomeBody() {
   const [editEntry, setEditEntry] = useState<Entry | null>(null);
   const [editExpense, setEditExpense] = useState<Expense | null>(null);
   const [editMove, setEditMove] = useState<Move | null>(null);
-  const [vendorMenu, setVendorMenu] = useState(false);
-  const [vendorOrder, setVendorOrder] = useState(false);
   const [settling, setSettling] = useState<Entry | null>(null);
   const [completing, setCompleting] = useState<Job | null>(null);
   const { user } = useAuth();
@@ -167,18 +165,6 @@ function HomeBody() {
       overdue: open.filter((j) => j.dueDate < today).length,
     };
   }, [customers, entries, jobs, today, isPersonal]);
-
-  // Vendor orders: still to arrive (by promised date), and any with money still to pay.
-  const vendorOrders = useMemo(() => {
-    if (isPersonal) return { pending: [], unpaid: [], late: 0, remaining: new Map<string, number>() };
-    const ids = new Set(customers.filter(isVendor).map((c) => c.id));
-    const orders = entries.filter((e) => e.type === "purchase" && ids.has(e.customerId));
-    const ledger = buildAllLedgers(orders.length ? entries.filter((e) => ids.has(e.customerId)) : []);
-    const remaining = new Map(orders.map((o) => [o.id, ledger.get(o.id)?.remaining ?? 0]));
-    const pending = orders.filter((o) => o.status === "ordered").sort((a, b) => (a.dueDate || "9").localeCompare(b.dueDate || "9"));
-    const unpaid = orders.filter((o) => (remaining.get(o.id) ?? 0) > 0).sort((a, b) => (a.dueDate || a.date).localeCompare(b.dueDate || b.date));
-    return { pending, unpaid, late: pending.filter((o) => !!o.dueDate && o.dueDate < today).length, remaining };
-  }, [customers, entries, isPersonal, today]);
 
   const persona = isPersonal ? "personal" : "business";
   const pockets = useMemo(() => computeFlows(book, persona, (d) => d <= today), [book, persona, today]);
@@ -477,12 +463,16 @@ function HomeBody() {
                   <Text style={[styles.duesValue, { color: stats.totalDue > 0 ? semantic.due : colors.muted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(stats.totalDue)}</Text>
                   <Text style={styles.duesSub} numberOfLines={1}>{stats.dueCustomers} ग्राहक</Text>
                 </Pressable>
-                <View style={styles.walletDivider} />
-                <Pressable style={styles.duesCell} onPress={() => go("/(tabs)/customers", { filter: "owe", book: "vendor" })} accessibilityRole="button" testID="stat-vendor-payable">
-                  <Text style={styles.duesLabel} numberOfLines={1}>देने हैं</Text>
-                  <Text style={[styles.duesValue, { color: stats.vendorPayable > 0 ? semantic.due : colors.muted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(stats.vendorPayable)}</Text>
-                  <Text style={styles.duesSub} numberOfLines={1}>{stats.vendorCount} Vendor</Text>
-                </Pressable>
+                {stats.vendorPayable > 0 ? (
+                  <>
+                    <View style={styles.walletDivider} />
+                    <Pressable style={styles.duesCell} onPress={() => go("/(tabs)/customers", { filter: "owe", book: "vendor" })} accessibilityRole="button" testID="stat-vendor-payable">
+                      <Text style={styles.duesLabel} numberOfLines={1}>देने हैं</Text>
+                      <Text style={[styles.duesValue, { color: semantic.due }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{money(stats.vendorPayable)}</Text>
+                      <Text style={styles.duesSub} numberOfLines={1}>{stats.vendorCount} Vendor</Text>
+                    </Pressable>
+                  </>
+                ) : null}
               </View>
             ) : null}
 
@@ -490,13 +480,6 @@ function HomeBody() {
               {isPersonal && stats.totalDue > 0 ? (
                 <Pressable hitSlop={{ top: 4, bottom: 4 }} style={styles.chip} onPress={() => go("/(tabs)/customers", { filter: "due" })} testID="stat-total-get">
                   <Text style={styles.chipText} numberOfLines={1}>{TERMS.get} {money(stats.totalDue)} · {stats.dueCustomers}</Text>
-                  <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
-                </Pressable>
-              ) : null}
-              {vendorOrders.late > 0 ? (
-                <Pressable hitSlop={{ top: 4, bottom: 4 }} style={[styles.chip, { borderColor: semantic.pending }]} onPress={() => setVendorMenu(true)} testID="home-vendor-late">
-                  <MaterialIcon name="truck-alert-outline" size={14} color={semantic.pending} />
-                  <Text style={[styles.chipText, { color: semantic.pending }]} numberOfLines={1}>{vendorOrders.late} Vendor डिलीवरी देर से</Text>
                   <MaterialIcon name="chevron-right" size={16} color={colors.muted} />
                 </Pressable>
               ) : null}
@@ -694,10 +677,6 @@ function HomeBody() {
             <MaterialIcon name="coffee-outline" size={20} color={semantic.pending} />
             <Text style={[styles.miniActionText, { color: semantic.pending }]} numberOfLines={1}>खर्च</Text>
           </Pressable>
-          <Pressable style={styles.miniAction} onPress={() => setVendorMenu(true)} accessibilityRole="button" accessibilityLabel="Vendor" testID="quick-vendor">
-            <MaterialIcon name="truck-outline" size={20} color={colors.brandPrimary} />
-            <Text style={styles.miniActionText} numberOfLines={1}>Vendor</Text>
-          </Pressable>
         </View>
         )
       )}
@@ -715,41 +694,6 @@ function HomeBody() {
       <Lazy when={!!editExpense}><AddExpenseSheet visible={!!editExpense} initial={editExpense} onClose={() => setEditExpense(null)} /></Lazy>
       {isPersonal ? null : (
         <>
-          <SheetShell visible={vendorMenu} onClose={() => setVendorMenu(false)} title="Vendor" testID="sheet-vendor-menu">
-            <Pressable style={styles.vendorNew} onPress={() => { setVendorMenu(false); setTimeout(() => setVendorOrder(true), 300); }} accessibilityRole="button" testID="vendor-new-order">
-              <MaterialIcon name="truck-plus-outline" size={22} color={colors.onBrandPrimary} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.vendorNewTitle}>नया Vendor ऑर्डर</Text>
-              </View>
-              <MaterialIcon name="chevron-right" size={20} color={colors.onBrandPrimary} />
-            </Pressable>
-            <Text style={styles.vendorHead}>Vendor को भुगतान{vendorOrders.unpaid.length ? ` (${vendorOrders.unpaid.length})` : ""}</Text>
-            {vendorOrders.unpaid.length === 0 ? (
-              <Text style={styles.vendorEmpty}>किसी Vendor का भुगतान बाकी नहीं</Text>
-            ) : (
-              vendorOrders.unpaid.slice(0, 12).map((o) => {
-                const late = o.status === "ordered" && !!o.dueDate && o.dueDate < today;
-                return (
-                  <Pressable key={o.id} style={styles.vendorRow} onPress={() => { setVendorMenu(false); setTimeout(() => setSettling(o), 300); }} testID={`vendor-pay-${o.id}`}>
-                    <View style={[styles.vendorIcon, late && { backgroundColor: semantic.pendingSoft }]}>
-                      <MaterialIcon name={o.status === "ordered" ? "truck-fast-outline" : "package-variant-closed-check"} size={18} color={late ? semantic.pending : colors.info} />
-                    </View>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.rowTitle} numberOfLines={1}>{nameOf(o.customerId)}</Text>
-                      <Text style={styles.rowSub} numberOfLines={1}>
-                        {o.description || "Vendor ऑर्डर"}{o.status === "ordered" && o.dueDate ? ` · कब तक ${o.dueDate === today ? "आज" : formatDateShort(o.dueDate)}` : o.status === "delivered" ? " · डिलीवर" : ""}
-                      </Text>
-                    </View>
-                    <Text style={[styles.resultDue, { color: semantic.due }]}>{money(vendorOrders.remaining.get(o.id) ?? 0)}</Text>
-                  </Pressable>
-                );
-              })
-            )}
-            <Pressable style={styles.vendorAll} onPress={() => { setVendorMenu(false); go("/(tabs)/customers", { filter: "all", book: "vendor" }); }} testID="vendor-list">
-              <Text style={styles.link}>सभी Vendor देखें</Text>
-              <MaterialIcon name="chevron-right" size={16} color={colors.brandPrimary} />
-            </Pressable>
-          </SheetShell>
           <SheetShell visible={workSheet} onClose={() => setWorkSheet(false)} title="आज का काम" testID="sheet-today-work">
             <Pressable style={styles.breakRow} onPress={() => { setWorkSheet(false); setTimeout(() => openMetric("work"), 250); }} accessibilityRole="button" testID="today-work-gross">
               <View style={{ flex: 1, minWidth: 0 }}>
@@ -773,8 +717,8 @@ function HomeBody() {
             })}
             {(
               [
-                { key: "fees", label: "पोर्टल / सरकारी फीस", sub: "", value: todayWork.fees, sign: "−", to: () => openMetric("fee") },
-                { key: "vendor", label: "Vendor लागत", sub: "", value: todayWork.vendor, sign: "−", to: () => openMetric("workVendor") },
+                { key: "fees", label: "बाहर का खर्च", sub: "", value: todayWork.fees, sign: "−", to: () => openMetric("fee") },
+                ...(todayWork.vendor > 0 ? [{ key: "vendor", label: "पुरानी Vendor लागत", sub: "", value: todayWork.vendor, sign: "−", to: () => openMetric("workVendor") }] : []),
                 ...(counter.on || todayWork.commission > 0
                   ? [{ key: "aeps", label: "AEPS / सेवा कमीशन", sub: "जमा-निकासी की रकम नहीं जुड़ती", value: todayWork.commission, sign: "+", to: () => openMetric("commission") }]
                   : []),
@@ -797,7 +741,6 @@ function HomeBody() {
               <MaterialIcon name="chevron-right" size={18} color={colors.muted} />
             </Pressable>
           </SheetShell>
-          <Lazy when={vendorOrder}><AddEntrySheet visible={vendorOrder} type="purchase" vendor onClose={() => setVendorOrder(false)} /></Lazy>
           <Lazy when={!!settling}><SettleSheet work={settling} onClose={() => setSettling(null)} /></Lazy>
         </>
       )}

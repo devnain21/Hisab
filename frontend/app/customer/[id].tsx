@@ -9,7 +9,7 @@ import { computeBalance, isRepayment, isVendor, itemsOf, useAeps, useCustomers, 
 import { AEPS_META, STATUS_META, aepsBill, aepsDue, defaultVia, statusLabel, viaBill } from "@/src/lib/aeps";
 import { formatDate, formatINR, formatPhone, monthRange, todayISO } from "@/src/lib/format";
 import { store } from "@/src/lib/store";
-import { buildLedger, vendorByJob, type WorkState, type WorkStatus } from "@/src/lib/records";
+import { buildLedger, jobAdvanceLeft, vendorByJob, type WorkState, type WorkStatus } from "@/src/lib/records";
 import { AddEntrySheet, AddJobSheet, AddCustomerSheet, Chip, CompleteJobSheet, EditRecordSheet, SettleSheet, SheetShell } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
 import { Amount, Button, IconButton, IconLabel, type IconName } from "@/src/components/ui";
@@ -64,6 +64,8 @@ export default function CustomerDetail() {
   const [remindSheet, setRemindSheet] = useState(false);
   const [ledgerSheet, setLedgerSheet] = useState(false);
   const [payPick, setPayPick] = useState(false);
+  const [returnPick, setReturnPick] = useState(false);
+  const [refundMode, setRefundMode] = useState(false);
 
   useEffect(() => {
     if (id) void addRecentCustomer(id);
@@ -115,6 +117,8 @@ export default function CustomerDetail() {
   const balanceLabel = due === 0 ? "हिसाब" : vendor ? (due < 0 ? "देने हैं" : "एडवांस दिया") : balanceTerm(due, !isCustomer);
   const openOrders = vendor ? rows.filter((e) => e.type === "purchase" && (ledger.work.get(e.id)?.remaining ?? 0) > 0) : [];
   const openJobs = jobs.filter((j) => j.status !== "done");
+  // Open jobs still holding an advance: giving money back is usually for one of them.
+  const advanceJobs = isCustomer && !vendor ? openJobs.map((j) => ({ job: j, left: jobAdvanceLeft(j, entries) })).filter((a) => a.left > 0) : [];
   const showMoreFilters = rows.length > 8;
 
   if (!customer && customersQ.isLoading) {
@@ -158,7 +162,12 @@ export default function CustomerDetail() {
   const actWork: Action = { key: "work", label: "काम लिखें", icon: "plus", run: () => setJobSheet("now") };
   const actGot: Action = { key: "got", label: "पैसे मिले", icon: "arrow-bottom-left", color: semantic.received, run: () => setEntrySheet("payment") };
   const actGiven: Action = { key: "given", label: "पैसे दिए", icon: "arrow-top-right", color: semantic.due, run: () => setEntrySheet("given") };
-  const actReturn: Action = { key: "return", label: isCustomer ? "जमा लौटाएँ" : "पैसे चुकाएँ", icon: "cash-refund", run: () => setEntrySheet("given") };
+  const actReturn: Action = {
+    key: "return",
+    label: isCustomer ? "जमा लौटाएँ" : "पैसे चुकाएँ",
+    icon: "cash-refund",
+    run: () => (advanceJobs.length ? setReturnPick(true) : setEntrySheet("given")),
+  };
   const actPay: Action = {
     key: "pay",
     label: "भुगतान करें",
@@ -430,7 +439,35 @@ export default function CustomerDetail() {
         initial={customer}
         onDelete={() => { store.deleteCustomer(customer.id); router.back(); }}
       />
-      <CompleteJobSheet job={completing} onClose={() => setCompleting(null)} />
+      <SheetShell visible={returnPick} onClose={() => setReturnPick(false)} title="किसका पैसा लौटाना है?">
+        <View style={{ gap: spacing.xs }}>
+          {advanceJobs.map(({ job: j, left }) => (
+            <Pressable
+              key={j.id}
+              style={styles.moreRow}
+              onPress={() => { setReturnPick(false); setRefundMode(true); setTimeout(() => setCompleting(j), 300); }}
+              testID={`return-job-${j.id}`}
+            >
+              <View style={[styles.iconBadge, { backgroundColor: semantic.dueSoft }]}>
+                <MaterialIcon name="briefcase-outline" size={18} color={semantic.due} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.moreText} numberOfLines={1}>{j.title}</Text>
+                <Text style={styles.sub}>इस काम का एडवांस · लौटाएँ या काम रद्द करें</Text>
+              </View>
+              <Text style={[styles.amount, { color: semantic.due }]}>{formatINR(left)}</Text>
+            </Pressable>
+          ))}
+          <Pressable style={styles.moreRow} onPress={() => { setReturnPick(false); setTimeout(() => setEntrySheet("given"), 300); }} testID="return-other">
+            <View style={[styles.iconBadge, { backgroundColor: colors.brandTertiary }]}>
+              <MaterialIcon name="cash-refund" size={18} color={colors.onSurface} />
+            </View>
+            <Text style={[styles.moreText, { flex: 1 }]}>दूसरा जमा लौटाएँ</Text>
+            <MaterialIcon name="chevron-right" size={20} color={colors.muted} />
+          </Pressable>
+        </View>
+      </SheetShell>
+      <CompleteJobSheet job={completing} refund={refundMode} onClose={() => { setCompleting(null); setRefundMode(false); }} />
       <RemindDateSheet customer={customer} visible={remindSheet} onClose={() => setRemindSheet(false)} />
       <LedgerLinkSheet customer={customer} due={due} shopName={accountName(user ? { ...user, persona: customer.persona === "personal" ? "personal" : "business" } : null)} visible={ledgerSheet} onClose={() => setLedgerSheet(false)} />
       <ReceiptSheet doc={shareDoc} onClose={() => setShareDoc(null)} />
@@ -578,7 +615,7 @@ function WorkCard({ entry, status, vendor, onPress, onSettle, onReceipt }: { ent
           ) : null}
           {entry.fee && entry.fee > 0 ? (
             <Text style={{ fontSize: 12, color: colors.muted, marginTop: 2 }}>
-              बाहर का खर्च: {formatINR(entry.fee)} ({entry.feeMode === "cash" ? "नकद" : "बैंक"}) · बचत: {formatINR(entry.amount - entry.fee)}
+              फीस: {formatINR(entry.fee)} ({entry.feeMode === "cash" ? "नकद" : "बैंक"}) · बचत: {formatINR(entry.amount - entry.fee)}
             </Text>
           ) : null}
         </View>

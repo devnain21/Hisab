@@ -145,7 +145,9 @@ export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]
     const job = jobForWork(work, jobs);
     const linked = new Map<string, Entry>();
     const legacy = legacyAdvancesForWork(work, entries);
-    [...settlementsFor(work, entries), ...legacy, ...(job ? advancesForJob(job, entries) : [])].forEach((p) => linked.set(p.id, p));
+    // Advance rows still on the job are the part given back; they stay with their refund.
+    const onJob = job && !refundsForJob(job, entries).length ? advancesForJob(job, entries) : [];
+    [...settlementsFor(work, entries), ...legacy, ...onJob].forEach((p) => linked.set(p.id, p));
     // An old note-only advance written with this work: surely its own when no other work of the customer has that name.
     const onlyOne = entries.filter((w) => w.type === "work" && w.customerId === work.customerId && w.description === work.description).length === 1;
     const owned = new Set(legacy.filter((p) => onlyOne && p.date === work.date).map((p) => p.id));
@@ -162,11 +164,57 @@ export function removeEntryWithLinks(entry: Entry, entries: Entry[], jobs: Job[]
  * came in) goes; an advance taken on a later day was its own visit and stays on the khata as the customer's advance.
  */
 export function removeJobWithAdvances(job: Job, entries: Entry[]) {
+  // Money already given back for it really came in: those advances stay so the refund has its other half.
+  if (refundsForJob(job, entries).length) return cancelJob(job, entries);
   trashGroup(() => {
     dropOrKeep(advancesForJob(job, entries), jobStart(job, entries));
     vendorOrdersForJob(job, entries).forEach((v) => removeVendorCost(v, entries));
     store.deleteJob(job.id);
   });
+}
+
+export const ADVANCE_BACK = "एडवांस वापस";
+
+/** Advance given back to the customer for this job (a plain "पैसे दिए" row whose refId is the job). */
+export function refundsForJob(job: Job, entries: Entry[]): Entry[] {
+  return entries.filter((e) => e.type === "given" && e.refId === job.id);
+}
+
+/** Advance of this job still with us: taken minus given back. */
+export function jobAdvanceLeft(job: Job, entries: Entry[]): number {
+  const taken = advancesForJob(job, entries).reduce((s, p) => s + p.amount, 0);
+  const back = refundsForJob(job, entries).reduce((s, p) => s + p.amount, 0);
+  return Math.max(0, roundMoney(taken - back));
+}
+
+/**
+ * Job called off: the card goes, the money stays on the days it moved. Advances and refunds keep pointing at
+ * the old job and cancel out on the khata; whatever was not given back stays as the customer's jama.
+ */
+export function cancelJob(job: Job, entries: Entry[]) {
+  trashGroup(() => {
+    vendorOrdersForJob(job, entries).forEach((v) => removeVendorCost(v, entries));
+    store.deleteJob(job.id);
+  });
+}
+
+/**
+ * The finished job's advances move onto its work row, except the part already given back: that stays with the
+ * job, against its refund. A row given back in part is split in two (same day, same mode, same money).
+ */
+export function moveJobAdvances(job: Job, entries: Entry[], workId: string) {
+  let back = refundsForJob(job, entries).reduce((s, p) => s + p.amount, 0);
+  for (const p of [...advancesForJob(job, entries)].sort(byTime).reverse()) {
+    if (back <= 0.005) {
+      store.updateEntry(p.id, { linkId: workId });
+    } else if (back >= p.amount - 0.005) {
+      back = roundMoney(back - p.amount);
+    } else {
+      store.updateEntry(p.id, { amount: roundMoney(p.amount - back), linkId: workId });
+      store.createEntry({ customerId: p.customerId, type: "payment", date: p.date, description: p.description, amount: roundMoney(back), mode: p.mode, notes: p.notes, linkId: job.id, createdAt: p.createdAt });
+      back = 0;
+    }
+  }
 }
 
 /** Day the job came in: when it was written, or its first advance if that is older (written in later). */

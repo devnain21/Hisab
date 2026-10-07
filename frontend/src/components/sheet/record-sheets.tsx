@@ -3,7 +3,7 @@ import { View, Text, TextInput } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { store } from "@/src/lib/store";
 import { computeBalance, isVendor, itemsOf, useAeps, useCustomers, useEntries, useJobs, type Entry, type EntryType, type Job } from "@/src/lib/data";
-import { ADVANCE, advancesForJob, buildLedger, jobForWork, jobStart, linkedPayment, olderAdvances, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, vendorCostsFor, vendorOrdersForJob, workForJob, workForPayment } from "@/src/lib/records";
+import { ADVANCE, advancesForJob, buildLedger, jobForWork, jobStart, linkedPayment, olderAdvances, refundsForJob, removeEntryWithLinks, removeJobWithAdvances, settlementsFor, vendorCostsFor, vendorOrdersForJob, workForJob, workForPayment } from "@/src/lib/records";
 import { confirmAction } from "@/src/lib/confirm";
 import { colors, spacing, radius } from "@/src/theme";
 import { cleanAmountInput, dateOnSave, formatDate, formatINR, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
@@ -587,11 +587,19 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
 
 export function confirmRemoveJob(job: Job, entries: Entry[], hasVendor: boolean, onDone: () => void) {
   const all = advancesForJob(job, entries).reduce((s, e) => s + e.amount, 0);
-  const kept = olderAdvances(job, entries).reduce((s, e) => s + e.amount, 0);
-  const gone = all - kept;
+  const back = refundsForJob(job, entries).reduce((s, e) => s + e.amount, 0);
   const lines = [job.title];
-  if (gone > 0) lines.push(`काम लेते समय लिया एडवांस ${formatINR(gone)} भी हटेगा।`);
-  if (kept > 0) lines.push(`बाद में लिया एडवांस ${formatINR(kept)} खाते में जमा रहेगा (लौटाएँ तो "पैसे दिए" लिखें)।`);
+  if (back > 0) {
+    const left = roundMoney(all - back);
+    lines.push(`एडवांस ${formatINR(all)} में से ${formatINR(back)} लौटा दिया गया है; वह हिसाब वैसा ही रहेगा।`);
+    if (left > 0) lines.push(`बचे ${formatINR(left)} खाते में जमा रहेंगे।`);
+  } else {
+    const kept = olderAdvances(job, entries).reduce((s, e) => s + e.amount, 0);
+    const gone = all - kept;
+    if (gone > 0) lines.push(`काम लेते समय लिया एडवांस ${formatINR(gone)} भी हटेगा।`);
+    if (kept > 0) lines.push(`बाद में लिया एडवांस ${formatINR(kept)} खाते में जमा रहेगा।`);
+    if (all > 0) lines.push(`ग्राहक को पैसे लौटाए हैं तो हटाने की जगह "एडवांस लौटाएँ / काम रद्द" चुनें।`);
+  }
   if (hasVendor) lines.push("Vendor को दिया काम भी हटेगा; उन्हें पिछले दिनों दिया एडवांस उन पर बकाया रहेगा।");
   confirmAction("काम हटाएँ?", lines.join("\n"), "हटा दें", () => {
     removeJobWithAdvances(job, entries);

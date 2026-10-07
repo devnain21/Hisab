@@ -17,7 +17,7 @@ export function describeTxn(t: WalletTxn, persona: Persona, pocket: Pocket, name
     const e = s.entry;
     const what =
       t.key === "fee"
-        ? "बाहर का खर्च"
+        ? "फीस"
         : t.key === "work"
           ? "काम"
           : t.key === "received"

@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, semantic, elevation } from "@/src/theme";
 import { isPersonalTask, useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
 import { formatDate, formatDateShort, formatINR, roundMoney, todayISO } from "@/src/lib/format";
-import { advancesForJob, buildAllLedgers, workForJobs, type WorkStatus } from "@/src/lib/records";
+import { jobAdvanceLeft, buildAllLedgers, workForJobs, type WorkStatus } from "@/src/lib/records";
 import { store } from "@/src/lib/store";
 import { AddEntrySheet, AddJobSheet, CompleteJobSheet, EditRecordSheet, SettleSheet } from "@/src/components/sheets";
 import { Pressable } from "@/src/components/tap";
@@ -111,7 +111,7 @@ function ShopWork() {
         : undefined;
     return jobs.map((job): JobInfo => {
       if (job.status !== "done") {
-        return { job, vendor: vendorOf(orderByRef.get(job.id)), advance: roundMoney(advancesForJob(job, entries).reduce((s, p) => s + p.amount, 0)) };
+        return { job, vendor: vendorOf(orderByRef.get(job.id)), advance: jobAdvanceLeft(job, entries) };
       }
       const work = workOf.get(job.id);
       return { job, work, pay: work ? ledger.get(work.id) : undefined, vendor: vendorOf(work ? orderByRef.get(work.id) : undefined), advance: 0 };

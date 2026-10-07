@@ -18,7 +18,7 @@ import type { Expense } from "@/src/lib/expenses";
 
 const TITLES: Record<MetricKind, string> = {
   work: "आए काम",
-  fee: "बाहर का खर्च",
+  fee: "फीस",
   vendor: "Vendor लागत",
   workVendor: "Vendor लागत",
   commission: "AEPS / सेवा कमीशन",

@@ -56,7 +56,7 @@ export function buildDayCloseMessage(data: DaySummaryData): string {
     `💼 *आज की कुल बिक्री / काम:* ${formatINR(data.workTotal)}`,
   ];
 
-  if (data.workFees > 0) lines.push(`  • बाहर का खर्च कटा: -${formatINR(data.workFees)}`);
+  if (data.workFees > 0) lines.push(`  • फीस कटी: -${formatINR(data.workFees)}`);
   if (data.workVendor > 0) lines.push(`  • Vendor लागत: -${formatINR(data.workVendor)}`);
   if (data.workFees > 0 || data.workVendor > 0) lines.push(`  • काम का मार्जिन: ${formatINR(data.workProfit)}`);
 
@@ -130,7 +130,7 @@ export function buildDayCloseMessage(data: DaySummaryData): string {
   lines.push(
     `--------------------------------`,
     `🎯 *आज गल्ले में बदलाव:* ${data.expectedCash - data.openingCash < 0 ? "−" : "+"}${formatINR(Math.abs(data.expectedCash - data.openingCash))}`,
-    `✨ *आज की कमाई (काम + कमीशन − खर्च − बाहर का खर्च):* ${formatINR(realNetProfit)}`,
+    `✨ *आज की कमाई (काम + कमीशन − खर्च − फीस):* ${formatINR(realNetProfit)}`,
     `--------------------------------`,
     `🙏 हिसाब पूरा हुआ · शुभ रात्रि!`,
   );

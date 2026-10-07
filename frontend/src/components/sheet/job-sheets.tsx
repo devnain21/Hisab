@@ -3,12 +3,12 @@ import { View, Text, TextInput } from "react-native";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import { store } from "@/src/lib/store";
 import { advanceOf, useCustomers, useEntries, type Job } from "@/src/lib/data";
-import { ADVANCE, advancesForJob, jobStart, vendorOrdersForJob } from "@/src/lib/records";
+import { ADVANCE, ADVANCE_BACK, cancelJob, jobAdvanceLeft, jobStart, moveJobAdvances, vendorOrdersForJob } from "@/src/lib/records";
 import { colors, spacing } from "@/src/theme";
 import { dateOnSave, formatDate, formatINR, parseAmount, roundMoney, todayISO } from "@/src/lib/format";
 import { Pressable } from "@/src/components/tap";
 import { getPrefs } from "@/src/lib/prefs";
-import { SheetShell, Field, inputStyle, LimitWarning, MoreInfo, Chip, DateField, useCustomerChoice, CustomerPicker, useMoneyInput, MoneyFields, useItems, ItemsField, type PayMode, useSplitPay, splitOf, PayModeField, FeeField, settleDescription, createPaid, PrimaryButton, styles } from "./parts";
+import { SheetShell, Field, inputStyle, LimitWarning, MoreInfo, Chip, DateField, useCustomerChoice, CustomerPicker, useMoneyInput, MoneyFields, useItems, ItemsField, type PayMode, useSplitPay, splitOf, PayModeField, FeeField, OutsideCostField, bookOutsideCost, settleDescription, createPaid, PrimaryButton, styles } from "./parts";
 import { recordWork, closeJobVendorOrder } from "./work-vendor";
 import { confirmRemoveJob } from "./record-sheets";
 
@@ -23,6 +23,8 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
   const [payMode, setPayMode] = useState<"cash" | "online">("cash");
   const [govtFee, setGovtFee] = useState("");
   const [feeMode, setFeeMode] = useState<"online" | "cash">("online");
+  const [outside, setOutside] = useState("");
+  const [outsideMode, setOutsideMode] = useState<PayMode>("cash");
   const [date, setDate] = useState(todayISO());
   const [remark, setRemark] = useState("");
   const [remarkDate, setRemarkDate] = useState(todayISO(1));
@@ -44,6 +46,8 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       setPayMode(getPrefs().defaultMode);
       setGovtFee("");
       setFeeMode("online");
+      setOutside("");
+      setOutsideMode(getPrefs().defaultMode);
       setDate(initialMode === "now" ? todayISO() : todayISO(1));
       setRemark("");
       setRemarkDate(todayISO(1));
@@ -100,6 +104,7 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
         if (!entryId && !self && customerId && money.receivedNum > 0) {
           createPaid({ customerId, type: "payment", date: day, description: ADVANCE, notes: `${t} के साथ` }, money.receivedNum, payMode, splitOf(split, money.receivedNum));
         }
+        if (!self) bookOutsideCost(parseAmount(outside), outsideMode, day, t);
         store.createJob({ customerId, title: t, dueDate: day, status: "done", estimatedAmount: amt, notes: remark.trim(), entryId });
         if (remark.trim()) {
           await store.createJob({ customerId, title: remark.trim(), dueDate: remarkDate, status: "pending", estimatedAmount: 0, notes: `पिछला काम: ${t}` });
@@ -168,8 +173,9 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
       {mode === "now" ? (
         <>
           <DateField label="तारीख" value={date} onChange={setDate} money testID="input-job-date" />
-          <MoreInfo open={!!remark || !!govtFee} hint={self ? "रिमार्क" : "बाहर का खर्च, रिमार्क"} testID="job-more-info">
+          <MoreInfo open={!!remark || !!govtFee || !!outside} hint={self ? "रिमार्क" : "फीस, बाहर का खर्च, रिमार्क"} testID="job-more-info">
             {self ? null : <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />}
+            {self ? null : <OutsideCostField cost={outside} setCost={setOutside} mode={outsideMode} setMode={setOutsideMode} />}
             <Field label="आगे का रिमार्क">
               <TextInput style={[inputStyle, { minHeight: 64 }]} value={remark} onChangeText={setRemark} multiline placeholder="जैसे कल प्रिंट देने हैं, बाकी पैसे शनिवार को" placeholderTextColor={colors.muted} testID="input-job-remark" />
             </Field>
@@ -198,11 +204,17 @@ export function AddJobSheet({ visible, onClose, customerId: fixedCustomerId, ini
  * (amount, money taken, govt fee). Vendors are handled on their own page. Title, notes and removal sit under
  * "विवरण बदलें".
  */
-export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: () => void }) {
+export function CompleteJobSheet({ job, onClose, refund: refundFirst = false }: { job: Job | null; onClose: () => void; refund?: boolean }) {
   const entries = useEntries().data ?? [];
   const customers = useCustomers().data ?? [];
-  const jobAdvances = job ? advancesForJob(job, entries) : [];
-  const jobAdvance = jobAdvances.reduce((s, p) => s + p.amount, 0);
+  const jobAdvance = job ? jobAdvanceLeft(job, entries) : 0;
+  const [refunding, setRefunding] = useState(false);
+  const [backAmt, setBackAmt] = useState("");
+  const [backMode, setBackMode] = useState<PayMode>("cash");
+  const [backDay, setBackDay] = useState(todayISO());
+  const [cancelToo, setCancelToo] = useState(true);
+  const [outside, setOutside] = useState("");
+  const [outsideMode, setOutsideMode] = useState<PayMode>("cash");
   const advance = job?.customerId ? advanceOf(entries, job.customerId) : 0;
   const money = useMoneyInput(true);
   const [payMode, setPayMode] = useState<PayMode>("cash");
@@ -239,6 +251,13 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
       setNotes(job.notes);
       setStatus(job.status === "done" ? "pending" : job.status);
       setDetails(false);
+      setRefunding(refundFirst && jobAdvance > 0);
+      setBackAmt(jobAdvance > 0 ? String(jobAdvance) : "");
+      setBackMode(getPrefs().defaultMode);
+      setBackDay(todayISO());
+      setCancelToo(true);
+      setOutside("");
+      setOutsideMode(getPrefs().defaultMode);
     }
     // Only re-initialise when a different job is opened, not when a sync refreshes it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -273,8 +292,9 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
         keepRow: !!vendorRow,
       });
       if (vendorRow) closeJobVendorOrder(vendorRow, entryId, workDate);
+      bookOutsideCost(parseAmount(outside), outsideMode, workDate, cleanTitle);
       if (entryId) {
-        jobAdvances.forEach((p) => store.updateEntry(p.id, { linkId: entryId }));
+        moveJobAdvances(job, entries, entryId);
         if (!sameDay && got > 0) {
           createPaid({ customerId: job.customerId, type: "payment", date: cashDate, description: settleDescription(cleanTitle), notes: "", linkId: entryId }, got, payMode, parts);
         }
@@ -282,6 +302,19 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
         createPaid({ customerId: job.customerId, type: "payment", date: cashDate, description: ADVANCE, notes: `${cleanTitle} के लिए` }, got, payMode, parts);
       }
       store.updateJob(job.id, { title: cleanTitle, notes: notes.trim(), status: "done", dueDate: workDate, estimatedAmount: amt, entryId });
+      onClose();
+    } finally { setSaving(false); }
+  };
+
+  const backNum = parseAmount(backAmt);
+  const backDate = dateOnSave(backDay, openedOn);
+  const canRefund = backNum > 0 && backNum <= jobAdvance + 0.005 && backDate >= start;
+  const giveBack = async () => {
+    if (!job || !canRefund) return;
+    setSaving(true);
+    try {
+      store.createEntry({ customerId: job.customerId, type: "given", date: backDate, description: ADVANCE_BACK, amount: backNum, mode: backMode, notes: `${cleanTitle} का एडवांस`, refId: job.id });
+      if (cancelToo) cancelJob(job, [...entries]);
       onClose();
     } finally { setSaving(false); }
   };
@@ -297,7 +330,7 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
   };
 
   return (
-    <SheetShell visible={!!job} onClose={onClose} title="काम पूरा करें" testID="sheet-complete-job">
+    <SheetShell visible={!!job} onClose={onClose} title={refunding ? "एडवांस लौटाएँ" : "काम पूरा करें"} testID="sheet-complete-job">
       {job ? (
         <View style={styles.jobHead}>
           <View style={{ flex: 1 }}>
@@ -337,26 +370,73 @@ export function CompleteJobSheet({ job, onClose }: { job: Job | null; onClose: (
         </View>
       ) : null}
 
-      {vendorRow ? (
-        <Text style={[styles.hint, { marginTop: 0, marginBottom: spacing.md }]}>{orderName} की लागत उनके Vendor खाते में ही रहेगी</Text>
+      {job?.customerId && jobAdvance > 0 && !details ? (
+        <View style={styles.chipRow}>
+          <Chip label="काम पूरा करें" active={!refunding} onPress={() => setRefunding(false)} testID="mode-complete" />
+          <Chip label="एडवांस लौटाएँ / काम रद्द" active={refunding} onPress={() => setRefunding(true)} tone={colors.warning} testID="mode-refund" />
+        </View>
       ) : null}
-      {job?.customerId ? (
+
+      {refunding && job ? (
         <>
-          <MoneyFields money={money} advance={advance} receivedLabel="आज मिले (₹)" freeAllowed />
-          {got > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={got} /> : null}
-          <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
+          <Field label="कितना लौटाया (₹)">
+            <TextInput
+              style={inputStyle}
+              value={backAmt}
+              onChangeText={(v) => { setBackAmt(v); setCancelToo(parseAmount(v) >= jobAdvance - 0.005); }}
+              keyboardType="numeric"
+              placeholder="0"
+              placeholderTextColor={colors.muted}
+              testID="input-refund-amount"
+            />
+            <Text style={[styles.hint, backNum > jobAdvance + 0.005 && { color: colors.error }]}>
+              {backNum > jobAdvance + 0.005 ? `एडवांस सिर्फ़ ${formatINR(jobAdvance)} है` : `इस काम का एडवांस ${formatINR(jobAdvance)}`}
+            </Text>
+          </Field>
+          {backNum > 0 ? <PayModeField label="कहाँ से दिए" value={backMode} onChange={setBackMode} cashLabel="गल्ले से" onlineLabel="बैंक से" /> : null}
+          <DateField label="कब लौटाया" value={backDay} onChange={setBackDay} min={start} money testID="input-refund-date" />
+          <Field label="काम का क्या हुआ">
+            <View style={styles.chipRow}>
+              <Chip label="काम रद्द करें" active={cancelToo} onPress={() => setCancelToo(true)} tone={colors.error} testID="refund-cancel-job" />
+              <Chip label="काम चालू रहेगा" active={!cancelToo} onPress={() => setCancelToo(false)} testID="refund-keep-job" />
+            </View>
+            {cancelToo && backNum > 0 && backNum < jobAdvance - 0.005 ? (
+              <Text style={styles.hint}>बचे {formatINR(roundMoney(jobAdvance - backNum))} ग्राहक के खाते में जमा रहेंगे</Text>
+            ) : null}
+          </Field>
+          <PrimaryButton
+            label={cancelToo ? "लौटाया — काम रद्द" : "लौटाया"}
+            onPress={() => void giveBack()}
+            disabled={!canRefund}
+            saving={saving}
+            testID="save-refund-btn"
+          />
         </>
-      ) : null}
-      <DateField label="काम कब पूरा हुआ" value={workDay} onChange={(d) => { setWorkDate(d); setCashDate(d); }} min={job?.customerId ? start : undefined} testID="input-complete-date" />
-      {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDay} onChange={setCashDate} min={start} money testID="input-complete-cash-date" /> : null}
-      {job?.customerId ? <LimitWarning customerId={job.customerId} extra={roundMoney(amt - got)} /> : null}
-      <PrimaryButton
-        label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"}
-        onPress={() => void complete()}
-        disabled={!canFinish}
-        saving={saving}
-        testID="save-complete-btn"
-      />
+      ) : (
+        <>
+          {vendorRow ? (
+            <Text style={[styles.hint, { marginTop: 0, marginBottom: spacing.md }]}>{orderName} की लागत उनके Vendor खाते में ही रहेगी</Text>
+          ) : null}
+          {job?.customerId ? (
+            <>
+              <MoneyFields money={money} advance={advance} receivedLabel="आज मिले (₹)" freeAllowed />
+              {got > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} split={split} total={got} /> : null}
+              <FeeField fee={fee} setFee={setFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
+              <OutsideCostField cost={outside} setCost={setOutside} mode={outsideMode} setMode={setOutsideMode} />
+            </>
+          ) : null}
+          <DateField label="काम कब पूरा हुआ" value={workDay} onChange={(d) => { setWorkDate(d); setCashDate(d); }} min={job?.customerId ? start : undefined} testID="input-complete-date" />
+          {job?.customerId && got > 0 ? <DateField label="पैसे कब मिले" value={cashDay} onChange={setCashDate} min={start} money testID="input-complete-cash-date" /> : null}
+          {job?.customerId ? <LimitWarning customerId={job.customerId} extra={roundMoney(amt - got)} /> : null}
+          <PrimaryButton
+            label={job?.customerId && amt <= 0 ? "मुफ़्त — पूरा हुआ" : "पूरा हुआ"}
+            onPress={() => void complete()}
+            disabled={!canFinish}
+            saving={saving}
+            testID="save-complete-btn"
+          />
+        </>
+      )}
     </SheetShell>
   );
 }

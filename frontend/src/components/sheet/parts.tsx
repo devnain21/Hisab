@@ -12,6 +12,7 @@ import { Pressable, useOnce } from "@/src/components/tap";
 import { useContactPicker } from "@/src/components/contact-picker-modal";
 import { usePersona } from "@/src/lib/persona";
 import { useKeyboardOverlap } from "@/src/lib/keyboard-overlap";
+import { addExpense, OUTSIDE_COST } from "@/src/lib/expenses";
 
 export function SheetShell({ visible, onClose, title, children, testID }: { visible: boolean; onClose: () => void; title: string; children: React.ReactNode; testID?: string }) {
   const insets = useSafeAreaInsets();
@@ -651,9 +652,9 @@ export function FeeField({ fee, setFee, feeMode, setFeeMode, amount }: { fee: st
   const cashFrom = usePersona().isPersonal ? "कैश से" : "गल्ले से";
   return (
     <>
-      <Field label="बाहर का खर्च (₹)">
+      <Field label="फीस (₹)">
         <TextInput style={inputStyle} value={fee} onChangeText={setFee} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-fee" />
-        {n <= 0 ? <Text style={styles.hint}>सरकारी फीस, तहसील या किसी और को दिए पैसे</Text> : null}
+        {n <= 0 ? <Text style={styles.hint}>सरकारी / पोर्टल फीस</Text> : null}
         {n > 0 && amount > 0 ? (
           <Text style={[styles.hint, { color: amount - n >= 0 ? colors.brandPrimary : colors.error, fontWeight: "700" }]}>
             बचत {formatINR(amount - n)}
@@ -663,6 +664,24 @@ export function FeeField({ fee, setFee, feeMode, setFeeMode, amount }: { fee: st
       {n > 0 ? <PayModeField label="कहाँ से दिए" value={feeMode} onChange={setFeeMode} cashLabel={cashFrom} onlineLabel="बैंक से" /> : null}
     </>
   );
+}
+
+/** Money paid out for this job besides the fee; saved as a shop expense, so it stays out of the work margin. */
+export function OutsideCostField({ cost, setCost, mode, setMode }: { cost: string; setCost: (v: string) => void; mode: PayMode; setMode: (m: PayMode) => void }) {
+  return (
+    <>
+      <Field label="बाहर का खर्च (₹)">
+        <TextInput style={inputStyle} value={cost} onChangeText={setCost} placeholder="0" placeholderTextColor={colors.muted} keyboardType="numeric" testID="input-outside-cost" />
+        <Text style={styles.hint}>खर्च में जुड़ेगा, आज के काम में नहीं</Text>
+      </Field>
+      {parseAmount(cost) > 0 ? <PayModeField label="कहाँ से दिए" value={mode} onChange={setMode} cashLabel="गल्ले से" onlineLabel="बैंक से" /> : null}
+    </>
+  );
+}
+
+export function bookOutsideCost(amount: number, mode: PayMode, date: string, about: string) {
+  if (amount <= 0) return;
+  void addExpense({ amount, title: OUTSIDE_COST, mode, date, notes: about, persona: "business" });
 }
 
 export const settleDescription = (title: string) => `${title} — भुगतान`;

@@ -12,8 +12,8 @@ type Change = { at: string; changes: Record<string, [unknown, unknown]> };
 const LABELS: Record<string, string> = {
   amount: "रकम",
   paid: "मिले",
-  fee: "बाहर का खर्च",
-  feeMode: "खर्च का तरीका",
+  fee: "फीस",
+  feeMode: "फीस का तरीका",
   description: "विवरण",
   notes: "नोट",
   note: "नोट",

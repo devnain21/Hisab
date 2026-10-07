@@ -717,7 +717,7 @@ function HomeBody() {
             })}
             {(
               [
-                { key: "fees", label: "बाहर का खर्च", sub: "", value: todayWork.fees, sign: "−", to: () => openMetric("fee") },
+                { key: "fees", label: "फीस", sub: "", value: todayWork.fees, sign: "−", to: () => openMetric("fee") },
                 ...(todayWork.vendor > 0 ? [{ key: "vendor", label: "पुरानी Vendor लागत", sub: "", value: todayWork.vendor, sign: "−", to: () => openMetric("workVendor") }] : []),
                 ...(counter.on || todayWork.commission > 0
                   ? [{ key: "aeps", label: "AEPS / सेवा कमीशन", sub: "जमा-निकासी की रकम नहीं जुड़ती", value: todayWork.commission, sign: "+", to: () => openMetric("commission") }]

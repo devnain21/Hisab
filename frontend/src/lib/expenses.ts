@@ -30,8 +30,12 @@ export const EXPENSE_CATEGORIES = [
   "बिजली बिल",
   "पेट्रोल / किराया",
   "सफ़ाई",
+  "बाहर का खर्च",
   "अन्य",
 ];
+
+/** Money paid out for a customer's job (tehsil, outside help): a shop expense, not part of the work margin. */
+export const OUTSIDE_COST = "बाहर का खर्च";
 
 export const PERSONAL_EXPENSE_CATEGORIES = ["घर का खर्च", "राशन", "बिजली बिल", "पेट्रोल", "किराया", "दवाई", "अन्य"];
 

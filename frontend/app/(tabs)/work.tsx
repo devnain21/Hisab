@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, FlatList, ScrollView, ActivityIndicator, TextInput } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import MaterialIcon from "@react-native-vector-icons/material-design-icons";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, semantic, elevation } from "@/src/theme";
-import { isPersonalTask, useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
+import { isPersonalTask, isVendor, useCustomers, useJobs, useEntries, type Entry, type Job } from "@/src/lib/data";
 import { formatDate, formatDateShort, formatINR, roundMoney, todayISO } from "@/src/lib/format";
 import { advancesForJob, buildAllLedgers, workForJobs, type WorkStatus } from "@/src/lib/records";
 import { store } from "@/src/lib/store";
@@ -15,12 +15,11 @@ import { DataLoadError, SlowServerHint } from "@/src/components/slow-server-hint
 import { usePersona } from "@/src/lib/persona";
 import { HIDDEN, usePrefs } from "@/src/lib/prefs";
 
-type Filter = "open" | "vendor" | "done" | "all" | "today" | "late" | "unpaid" | "doneToday";
-const FILTERS: Filter[] = ["open", "vendor", "done", "all", "today", "late", "unpaid", "doneToday"];
+type Filter = "open" | "done" | "all" | "today" | "late" | "unpaid" | "doneToday";
+const FILTERS: Filter[] = ["open", "done", "all", "today", "late", "unpaid", "doneToday"];
 /** The segmented control; today / late / unpaid are reached from the summary tiles. */
 const TABS: { key: Filter; label: string }[] = [
   { key: "open", label: "बाकी" },
-  { key: "vendor", label: "Vendor पर" },
   { key: "done", label: "पूरे" },
   { key: "all", label: "सभी" },
 ];
@@ -45,7 +44,6 @@ const daysFrom = (a: string, b: string) => Math.round((Date.parse(`${b}T12:00:00
 function matches(i: JobInfo, f: Filter, today: string) {
   const open = i.job.status !== "done";
   if (f === "open") return open;
-  if (f === "vendor") return open && !!i.vendor;
   if (f === "done") return !open;
   if (f === "today") return open && i.job.dueDate === today;
   if (f === "late") return open && i.job.dueDate < today;
@@ -62,6 +60,7 @@ export default function WorkScreen() {
 function ShopWork() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ filter?: Filter; t?: string }>();
+  const router = useRouter();
   const customersQ = useCustomers();
   const jobsQ = useJobs();
   const entriesQ = useEntries();
@@ -120,6 +119,16 @@ function ShopWork() {
     });
   }, [jobs, entries, nameById]);
 
+  // Vendor work lives on the vendor's own orders: still with them, and what is left to pay them.
+  const vendorOrders = useMemo(() => {
+    const vendorIds = new Set(customers.filter((c) => isVendor(c)).map((c) => c.id));
+    const given = new Map<string, number>();
+    for (const e of entries) if (e.type === "given" && e.linkId) given.set(e.linkId, (given.get(e.linkId) ?? 0) + e.amount);
+    const open = entries.filter((e) => e.type === "purchase" && e.status === "ordered" && vendorIds.has(e.customerId));
+    const due = open.reduce((s, e) => s + Math.max(0, e.amount - (e.paid ?? 0) - (given.get(e.id) ?? 0)), 0);
+    return { count: open.length, due: roundMoney(due) };
+  }, [customers, entries]);
+
   const stats = useMemo(() => {
     const open = infos.filter((i) => i.job.status !== "done");
     const doneToday = infos.filter((i) => i.job.status === "done" && i.job.dueDate === today);
@@ -129,12 +138,12 @@ function ShopWork() {
       advance: roundMoney(open.reduce((s, i) => s + i.advance, 0)),
       today: open.filter((i) => i.job.dueDate === today).length,
       late: open.filter((i) => i.job.dueDate < today).length,
-      vendor: open.filter((i) => !!i.vendor).length,
-      vendorDue: roundMoney(open.reduce((s, i) => s + (i.vendor ? Math.max(0, i.vendor.cost - i.vendor.given) : 0), 0)),
+      vendor: vendorOrders.count,
+      vendorDue: vendorOrders.due,
       doneToday: doneToday.length,
       doneTodaySum: roundMoney(doneToday.reduce((s, i) => s + (i.work?.amount ?? 0), 0)),
     };
-  }, [infos, today]);
+  }, [infos, today, vendorOrders]);
 
   const rows = useMemo((): Row[] => {
     const needle = q.trim().toLowerCase();
@@ -185,7 +194,7 @@ function ShopWork() {
         <View style={styles.tiles}>
           <Tile icon="calendar-today" label="आज देने" value={String(stats.today)} active={filter === "today"} onPress={() => setFilter(filter === "today" ? "open" : "today")} testID="work-tile-today" />
           <Tile icon="alert-circle-outline" label="देर से" value={String(stats.late)} warn={stats.late > 0} active={filter === "late"} onPress={() => setFilter(filter === "late" ? "open" : "late")} testID="work-tile-late" />
-          <Tile icon="truck-outline" label="Vendor के पास" value={String(stats.vendor)} sub={stats.vendorDue > 0 ? `देने ${money(stats.vendorDue)}` : ""} active={filter === "vendor"} onPress={() => setFilter(filter === "vendor" ? "open" : "vendor")} testID="work-tile-vendor" />
+          <Tile icon="truck-outline" label="Vendor के पास" value={String(stats.vendor)} sub={stats.vendorDue > 0 ? `देने ${money(stats.vendorDue)}` : ""} onPress={() => router.push({ pathname: "/(tabs)/customers", params: { filter: "owe", book: "vendor", t: String(Date.now()) } })} testID="work-tile-vendor" />
           <Tile icon="check-circle-outline" label="आज पूरे" value={String(stats.doneToday)} sub={stats.doneTodaySum > 0 ? money(stats.doneTodaySum) : ""} active={filter === "doneToday"} onPress={() => setFilter(filter === "doneToday" ? "open" : "doneToday")} testID="work-tile-done-today" />
         </View>
       </View>
@@ -238,7 +247,7 @@ function ShopWork() {
           ListEmptyComponent={
             <View style={styles.empty}>
               <View style={styles.emptyIcon}><MaterialIcon name="briefcase-check-outline" size={30} color={colors.brandPrimary} /></View>
-              <Text style={styles.emptyTitle}>{q ? "कोई नहीं मिला" : filter === "open" ? "सारे काम पूरे" : filter === "vendor" ? "कोई काम Vendor के पास नहीं" : "यहाँ कोई काम नहीं"}</Text>
+              <Text style={styles.emptyTitle}>{q ? "कोई नहीं मिला" : filter === "open" ? "सारे काम पूरे" : "यहाँ कोई काम नहीं"}</Text>
               {!q && filter === "open" ? <Text style={styles.emptySub}>नीचे + दबाकर नया काम लिखें</Text> : null}
             </View>
           }

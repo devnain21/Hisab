@@ -148,10 +148,16 @@ export function receiptDoc(
   let advanceBanner: Banner | undefined;
   /** Work and job advances: when the job was given, and when it was finished (null = still in progress). */
   let dates: { booked: string; done: string | null } | null = null;
-  // "1 अक्टूबर 2026 – 6 अक्टूबर 2026": the day it was given, then the day it was finished.
-  const dateText = () =>
-    !dates ? "" : dates.done === dates.booked ? formatDate(dates.booked) : `${formatDate(dates.booked)} – ${dates.done ? formatDate(dates.done) : "प्रगति पर"}`;
-  const dateRows = (): CardRow[] => (dates ? [{ icon: "cal", tint: DUE, label: "तारीख", value: dateText() }] : []);
+  // The day the work was given, and the day it was finished (or still in progress).
+  const doneText = () => (dates?.done ? formatDate(dates.done) : "प्रगति पर");
+  const dateRows = (): CardRow[] =>
+    dates
+      ? [
+          { icon: "cal", tint: DUE, label: "बुकिंग तारीख", value: formatDate(dates.booked) },
+          { icon: dates.done ? "check" : "clock", tint: dates.done ? OK : AMBER, label: "पूरा होने की तारीख", value: doneText() },
+        ]
+      : [];
+  const dateLines = (): string[] => (dates ? [`📅 बुकिंग : ${formatDate(dates.booked)}`, `${dates.done ? "✅" : "⏳"} पूरा : ${doneText()}`] : []);
   /** Payment that came before its work: an एडवांस everywhere on the slip, not "भुगतान". */
   let early = false;
   /** Open job's advance: by when the work will be ready. */
@@ -243,9 +249,9 @@ export function receiptDoc(
   const slipDates = (): string[] => {
     if (entry.type === "work") {
       const paidOn = itemDue <= 0 && entry.amount > 0 ? status?.settledOn || entry.date : "";
-      return [`📅 तारीख : ${dateText()}`, ...(paidOn ? [`✅ भुगतान : ${formatDate(paidOn)}`] : [])];
+      return [...dateLines(), ...(paidOn ? [`💰 भुगतान : ${formatDate(paidOn)}`] : [])];
     }
-    if (dates) return [`📅 तारीख : ${dateText()}`, `✅ एडवांस : ${formatDate(entry.date)}`];
+    if (dates) return [...dateLines(), `💰 एडवांस : ${formatDate(entry.date)}`];
     if (entry.type === "payment") return [`✅ ${early ? "एडवांस" : "भुगतान"} : ${formatDate(entry.date)}`];
     return [`📅 ${formatDate(entry.date)}`];
   };
@@ -314,6 +320,7 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
   // An outsourced job (refId) is paid for work already done; an order paid up front is an advance.
   const job = !!entry.refId;
   const assigned = entry.assignedOn && entry.assignedOn <= entry.date ? entry.assignedOn : entry.date;
+  const finished = job ? entry.doneOn || entry.date : delivered ? entry.doneOn ?? "" : "";
   const heading = job ? "VOUCHER" : "WORK ORDER";
   const jobRef = job ? `JOB-${entry.refId!.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase()}` : "";
   const state = left <= 0 ? "पूरा भुगतान" : job || delivered ? "भुगतान बाकी" : late ? "तारीख निकल गई" : "ऑर्डर दिया";
@@ -345,9 +352,9 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
   const message = [
     ...messageHead(shop),
     `*${heading}* · ${no}${jobRef ? ` · ${jobRef}` : ""}`,
-    job && assigned !== entry.date
-      ? `📅 सौंपा: ${formatDate(assigned)} · पूरा: ${formatDate(entry.date)}`
-      : `📅 ${job ? "काम" : "तारीख"}: ${formatDate(assigned)}${entry.dueDate ? ` · कब तक: *${formatDate(entry.dueDate)}*` : ""}`,
+    finished && finished !== assigned
+      ? `📅 सौंपा: ${formatDate(assigned)} · पूरा: ${formatDate(finished)}`
+      : `📅 ${job ? "काम" : "तारीख"}: ${formatDate(assigned)}${entry.dueDate && !finished ? ` · कब तक: *${formatDate(entry.dueDate)}*` : ""}`,
     `Vendor: ${vendor.name}`,
     "",
     ...items.map((it, i) => `${many ? `${i + 1}. ` : ""}${it.title} — ${formatINR(it.amount)}`),
@@ -362,7 +369,7 @@ export function workOrderDoc(entry: Entry, status: WorkStatus | undefined, vendo
     { ...itemsRow(items, "कार्य विवरण", entry.notes), ...(jobRef ? { sub: [jobRef, entry.notes.trim()].filter(Boolean).join(" · ") } : {}) },
     { icon: "cal", tint: DUE, label: "Work Assign Date", value: formatDate(assigned) },
   ];
-  if (job) rows.push({ icon: "cal", tint: BLUE, label: "कार्य पूर्ण तिथि", value: formatDate(entry.date) });
+  if (finished) rows.push({ icon: "cal", tint: BLUE, label: "कार्य पूर्ण तिथि", value: formatDate(finished) });
   else if (!delivered && entry.dueDate) rows.push({ icon: "cal", tint: BLUE, label: "कब तक", value: formatDate(entry.dueDate), tone: late ? "due" : undefined });
   if (pays.length === 1 && fromJama <= 0) {
     rows.push(
@@ -1036,24 +1043,25 @@ export function aepsReceiptDoc(t: AepsTxn, shopIn: Partial<ShopProfile>, kept = 
     "धन्यवाद 🙏",
   ].join("\n");
 
-  const big = bill.flow === "none" ? bill.total : t.amount;
-  const body = `
-  <div style="border:1.5px solid ${m.color};border-radius:10px;overflow:hidden;margin-bottom:14px;">
-    <div style="background:${m.color};color:#FFF;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
-      <div>
-        <div style="font-size:17px;font-weight:800;letter-spacing:0.5px;">${esc(service)}</div>
-        ${via ? `<div style="font-size:11px;opacity:0.9;margin-top:2px;">via ${esc(via)}</div>` : ""}
-      </div>
-      ${big > 0 ? `<div style="font-size:24px;font-weight:800;white-space:nowrap;">${esc(formatINR(big))}</div>` : ""}
-    </div>
-    <table>
-      ${details.map((d) => `<tr><td style="color:#666;width:40%;">${esc(d.label)}</td><td style="font-weight:600;">${esc(d.value)}</td></tr>`).join("")}
-    </table>
-  </div>
-  <table class="sum">${summary.map(sumRow).join("")}</table>
-  <div class="stamp" style="border-color:${stamp.color};color:${stamp.color}">${esc(stamp.text)}</div>`;
-
   const customer: Customer = { id: "", name, phone: t.mobile || "", address: "", notes: "", createdAt: t.createdAt };
+  const rows: CardRow[] = [
+    personRow(customer, "Customer Name"),
+    { icon: "doc", tint: OK, label: "सेवा", value: service, sub: via ? `via ${via}` : "" },
+    ...details.map((d): CardRow => ({ icon: d.label === "तारीख व समय" ? "cal" : "card", tint: BLUE, label: d.label, value: d.value })),
+    ...summary.map((l): CardRow => ({ icon: l.tone === "due" ? "scale" : l.tone === "ok" ? "paid" : "rupee", tint: l.tone === "due" ? AMBER : l.tone === "ok" ? OK : BLUE, label: l.label, value: l.value, tone: l.tone })),
+  ];
+  const banner: Banner = failed
+    ? { color: DUE, bg: "#FDECEC", icon: "alert", title: "लेन-देन फेल", sub: "कोई पैसा नहीं लिया गया" }
+    : t.status === "pending"
+      ? { color: AMBER, bg: "#FFF4E0", icon: "clock", title: statusLabel(t), sub: "स्थिति बदलते ही बता दिया जाएगा" }
+      : bill.due > 0 && bill.flow !== "out"
+        ? { color: DUE, bg: "#FDECEC", icon: "alert", title: `बाकी ${formatINR(bill.due)}`, sub: getPrefs().dueNote.trim() || DUE_NOTE_DEFAULT }
+        : OK_BANNER("लेन-देन सफल रहा", getPrefs().paidNote.trim() || PAID_NOTE_DEFAULT);
+  const html = cardPage(
+    shop,
+    { titleHi: `${service} रसीद`, titleEn: "TRANSACTION RECEIPT", noLabel: "रसीद संख्या", no, date: formatDate(t.date), rows, stamp, banner, note: getPrefs().receiptNote.trim() },
+    false,
+  );
 
   return {
     heading,
@@ -1062,7 +1070,7 @@ export function aepsReceiptDoc(t: AepsTxn, shopIn: Partial<ShopProfile>, kept = 
     phone: t.mobile || "",
     lines: summary,
     message,
-    html: page(shop, heading, `नं. ${esc(no)}<br/>${esc(formatDate(t.date))}`, customer, body, "A5"),
+    html,
     fileName: docFileName(name, "Receipt", t.date),
   };
 }

@@ -62,6 +62,8 @@ export type Entry = {
   refId?: string;
   /** Day a pending job was handed to the vendor (the row's date moves to the day the work was finished). */
   assignedOn?: string;
+  /** Vendor order: day the vendor finished the work ("" = not yet). */
+  doneOn?: string;
   createdAt: string;
 };
 // customerId "" = the shopkeeper's own task (no customer, no money).

@@ -126,29 +126,6 @@ export function removeVendorCost(row: Entry, entries: Entry[]) {
   });
 }
 
-export type VendorRefund = { amount: number; mode: "cash" | "online"; date: string } | null;
-
-/**
- * A pending job taken back from its vendor (done in-house, or handed to someone else). Money already
- * given to them stays on their khata as owed to us; what they returned comes in on the day it came.
- */
-export function releaseVendorOrder(row: Entry, entries: Entry[], refund: VendorRefund) {
-  trashGroup(() => {
-    const given = settlementsFor(row, entries);
-    store.deleteEntry(row.id);
-    let left = refund ? roundMoney(refund.amount) : 0;
-    given.forEach((p) => {
-      noteRelink(p);
-      store.updateEntry(p.id, { linkId: "", notes: `${row.description} · काम वापस लिया` });
-      const back = Math.min(left, p.amount);
-      if (refund && back > 0) {
-        store.createEntry({ customerId: row.customerId, type: "payment", date: refund.date, description: VENDOR_REFUND, amount: back, mode: refund.mode, notes: row.description, linkId: p.id });
-        left = roundMoney(left - back);
-      }
-    });
-  });
-}
-
 export const VENDOR_REFUND = "Vendor से वापसी";
 
 /** Removes a khata entry together with the rows that were booked with it. */

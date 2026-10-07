@@ -14,7 +14,6 @@ import { getPrefs, savePrefs } from "@/src/lib/prefs";
 import { useRouter } from "expo-router";
 import { EditHistory } from "@/src/components/edit-history";
 import { SheetShell, Field, inputStyle, LimitWarning, MoreInfo, Chip, DateField, samePhone, useCustomerChoice, CustomerPicker, useMoneyInput, MoneyFields, useItems, ItemsField, type PayMode, useSplitPay, splitOf, PayModeField, FeeField, settleDescription, bookAdvance, createPaid, confirmOldDate, PrimaryButton, DangerLink, styles } from "./parts";
-import { saveVendorEdit, saveVendorAssign, useVendorJob, VendorOutsource } from "./work-vendor";
 import { CompleteJobSheet } from "./job-sheets";
 
 export function AddCustomerSheet({ visible, onClose, initial, onDelete, role: roleProp }: { visible: boolean; onClose: () => void; initial?: any; onDelete?: () => void; role?: "customer" | "vendor" }) {
@@ -193,6 +192,7 @@ export function AddEntrySheet({
   const [kind, setKind] = useState<EntryType>(type);
   const [dueDate, setDueDate] = useState(todayISO(3));
   const [delivered, setDelivered] = useState(false);
+  const [doneOn, setDoneOn] = useState(todayISO());
   const [terms, setTerms] = useState("");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
@@ -230,6 +230,7 @@ export function AddEntrySheet({
     setNotes(initial?.notes ?? "");
     setDueDate(initial?.dueDate || todayISO(3));
     setDelivered(initial ? initial.status !== "ordered" : false);
+    setDoneOn(initial?.doneOn || initial?.date || todayISO());
     setTerms(initial ? initial.terms ?? "" : getPrefs().vendorTerms);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initial, type]);
@@ -248,7 +249,8 @@ export function AddEntrySheet({
   const repaidLater = isPurchase ? roundMoney(later.reduce((s, p) => s + p.amount, 0)) : 0;
   const overRepaid = isPurchase && amt > 0 && paidNow + repaidLater > amt + 0.005;
   const filled = isPurchase ? items.titled && paidNow <= amt && !overRepaid : !needsDescription || !!description.trim();
-  const valid = (initial ? true : choice.ready) && filled && isFinite(amt) && amt > 0;
+  const doneOk = !vendor || !delivered || doneOn >= date;
+  const valid = (initial ? true : choice.ready) && filled && isFinite(amt) && amt > 0 && doneOk;
   // Personal: lent money, or goods still to be paid for, can carry a "by when" that lands in मेरे काम.
   const canRemind = !initial && isPersonalBook && (kind === "given" || (isPurchase && amt - paidNow > 0));
 
@@ -259,7 +261,7 @@ export function AddEntrySheet({
     setSaving(true);
     try {
       const day = initial ? date : dateOnSave(date, openedOn);
-      const order = vendor ? { dueDate, status: delivered ? ("delivered" as const) : ("ordered" as const), terms: terms.trim() } : {};
+      const order = vendor ? { dueDate, status: delivered ? ("delivered" as const) : ("ordered" as const), doneOn: delivered ? doneOn : "", terms: terms.trim() } : {};
       if (vendor && terms.trim() !== getPrefs().vendorTerms) void savePrefs({ vendorTerms: terms.trim() });
       const body = isPurchase
         ? { type: kind, date: day, description: items.description, amount: amt, paid: paidNow, mode: payMode, notes: notes.trim(), items: items.saved(), ...order }
@@ -301,15 +303,18 @@ export function AddEntrySheet({
       {isPurchase ? (
         <>
           <ItemsField items={items} label={vendor ? "काम / सामान क्या" : "क्या लिया"} placeholder={vendor ? "जैसे फ्रेम 12×18 · 20 पीस" : ui.placeholder} addLabel="और जोड़ें" />
-          <MoneyFields money={money} receivedLabel={vendor ? "एडवांस दिया (₹)" : "अभी कितने दिए (₹)"} hideTotal purchase />
+          <MoneyFields money={money} receivedLabel={vendor ? "कितने चुकाए (₹)" : "अभी कितने दिए (₹)"} hideTotal purchase />
           {vendor ? (
             <>
-              <DateField label="कब तक होगा" value={dueDate} onChange={setDueDate} future testID="input-vendor-due" />
-              {initial ? (
-                <View style={{ marginBottom: spacing.md }}>
-                  <Chip label={delivered ? "डिलीवर हो गया" : "अभी बाकी है"} icon={delivered ? "check-circle" : "progress-clock"} active={delivered} onPress={() => setDelivered(!delivered)} tone={colors.success} testID="vendor-delivered" />
+              <DateField label="कब सौंपा" value={date} onChange={setDate} money createdAt={initial?.createdAt} testID="input-entry-date" />
+              <DateField label="Vendor कब तक देगा" value={dueDate} onChange={setDueDate} future min={date} testID="input-vendor-due" />
+              <Field label="काम की स्थिति">
+                <View style={styles.chipRow}>
+                  <Chip label="चल रहा" icon="progress-clock" active={!delivered} onPress={() => setDelivered(false)} tone={colors.warning} testID="vendor-open" />
+                  <Chip label="पूरा हो गया" icon="check-circle" active={delivered} onPress={() => setDelivered(true)} tone={colors.success} testID="vendor-delivered" />
                 </View>
-              ) : null}
+              </Field>
+              {delivered ? <DateField label="कब पूरा हुआ" value={doneOn} onChange={setDoneOn} min={date} testID="input-vendor-done" /> : null}
             </>
           ) : null}
           {overRepaid ? (
@@ -317,7 +322,13 @@ export function AddEntrySheet({
               कुल {formatINR(paidNow + repaidLater)} चुका चुके हैं — रकम इससे कम नहीं हो सकती। ज़्यादा दिए पैसे नीचे से हटाएँ।
             </Text>
           ) : null}
-          {paidNow > 0 ? <PayModeField label="कैसे दिए" value={payMode} onChange={setPayMode} split={initial ? undefined : split} total={paidNow} /> : null}
+          {paidNow > 0 ? (
+            vendor ? (
+              <PayModeField label="कहाँ से दिए" value={payMode} onChange={setPayMode} cashLabel="गल्ले से" onlineLabel="बैंक से" split={initial ? undefined : split} total={paidNow} />
+            ) : (
+              <PayModeField label="कैसे दिए" value={payMode} onChange={setPayMode} split={initial ? undefined : split} total={paidNow} />
+            )
+          ) : null}
         </>
       ) : (
         <>
@@ -372,7 +383,7 @@ export function AddEntrySheet({
           ))}
         </Field>
       ) : null}
-      <DateField label="तारीख" value={date} onChange={setDate} money createdAt={initial?.createdAt} testID="input-entry-date" />
+      {vendor ? null : <DateField label="तारीख" value={date} onChange={setDate} money createdAt={initial?.createdAt} testID="input-entry-date" />}
       {canRemind ? (
         <View style={{ marginBottom: spacing.md }}>
           <Chip
@@ -472,12 +483,9 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   const later = entry ? settlementsFor(entry, entries).filter((p) => p.id !== legacyLink?.id && !extras.some((e) => e.id === p.id)) : [];
   const vendorRow = entry ? vendorCostsFor(entry, entries)[0] : undefined;
   const router = useRouter();
-  const { isPersonal } = usePersona();
-  const vendorJob = useVendorJob(!!entry);
 
   useEffect(() => {
     if (!entry) return;
-    vendorJob.load(vendorRow, entries);
     items.reset(itemsOf(entry));
     money.reset(String(entry.amount), String(((entry.paid ?? 0) || (legacyLink?.amount ?? 0)) + extraSum));
     setPayMode(rowMode);
@@ -492,7 +500,8 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
   }, [entry?.id]);
 
   const amt = money.totalNum;
-  const valid = items.titled && (amt > 0 || parseAmount(govtFee) > 0 || vendorJob.costNum > 0) && vendorJob.ready;
+  // Older free work can exist only to carry a vendor order's cost.
+  const valid = items.titled && (amt > 0 || parseAmount(govtFee) > 0 || !!vendorRow);
 
   const cashWord = usePersona().labels.cash;
   const save = () => (entry ? confirmOldDate(entry.date, date, entry.createdAt, cashWord, saveNow) : undefined);
@@ -518,7 +527,6 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       extras.forEach((e) => store.deleteEntry(e.id));
       // Money taken on the work day (online part of a split, other-mode advance) moves with the work's date.
       if (date !== entry.date) later.filter((p) => p.date === entry.date && p.linkId === entry.id).forEach((p) => store.updateEntry(p.id, { date }));
-      if (!isPersonal) await saveVendorEdit(vendorJob, vendorRow, entry.id, t, date, entries);
       bookAdvance(entry.customerId, taken - amt, date, t, entry.id, payMode);
       // Old two-row cash records: the same-day jama is now carried by `paid`.
       if (legacyLink) store.deleteEntry(legacyLink.id);
@@ -539,17 +547,6 @@ export function WorkEditSheet({ entry, onClose }: { entry: Entry | null; onClose
       <MoneyFields money={money} receivedLabel="उस दिन मिले (₹)" hideTotal />
       {money.receivedNum > 0 ? <PayModeField label="कैसे मिले" value={payMode} onChange={setPayMode} /> : null}
       <FeeField fee={govtFee} setFee={setGovtFee} feeMode={feeMode} setFeeMode={setFeeMode} amount={amt} />
-      {!isPersonal && parseAmount(govtFee) > 0 && !vendorJob.on ? (
-        <Pressable hitSlop={{ top: 4, bottom: 4 }}
-          style={styles.feeToVendor}
-          onPress={() => { vendorJob.fromFee(govtFee, feeMode); setGovtFee(""); }}
-          testID="fee-to-vendor"
-        >
-          <MaterialIcon name="swap-horizontal" size={16} color={colors.brandPrimary} />
-          <Text style={styles.feeToVendorText}>यह फीस Vendor की थी</Text>
-        </Pressable>
-      ) : null}
-      {!isPersonal ? <VendorOutsource v={vendorJob} amount={amt} fee={parseAmount(govtFee)} workDate={date} /> : null}
       {vendorRow ? (
         <Pressable hitSlop={{ top: 4, bottom: 4 }} style={styles.feeToVendor} onPress={() => { onClose(); router.push(`/customer/${vendorRow.customerId}`); }} testID="work-open-vendor">
           <MaterialIcon name="truck-outline" size={16} color={colors.brandPrimary} />
@@ -611,9 +608,6 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
   const [notes, setNotes] = useState("");
   const [status, setStatus] = useState<Job["status"]>("pending");
   const [saving, setSaving] = useState(false);
-  const { isPersonal } = usePersona();
-  const vendorJob = useVendorJob(!!job);
-  const canVendor = !!job?.customerId && job.status !== "done" && !isPersonal;
   const vendorRow = job ? vendorOrdersForJob(job, entries)[0] : undefined;
   const start = job ? jobStart(job, entries) : todayISO();
 
@@ -626,20 +620,11 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
     setStatus(job.status);
   }, [job]);
 
-  useEffect(() => {
-    if (job) vendorJob.load(vendorRow, entries, true, job.dueDate);
-    // Only when a different job is opened, not on every sync.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job?.id]);
-
-  const vendorOk = !canVendor || (vendorJob.ready && vendorJob.datesOk(start, true));
-
   const save = async () => {
-    if (!job || !title.trim() || !vendorOk) return;
+    if (!job || !title.trim()) return;
     setSaving(true);
     try {
       store.updateJob(job.id, { title: title.trim(), estimatedAmount: parseAmount(amount), dueDate: date, notes: notes.trim(), status });
-      if (canVendor) await saveVendorAssign(vendorJob, vendorRow, job.id, title.trim(), date, entries);
       onClose();
     } finally { setSaving(false); }
   };
@@ -667,11 +652,10 @@ export function EditJobSheet({ job, onClose }: { job: Job | null; onClose: () =>
         </Field>
       ) : null}
       <DateField label={status === "done" ? "तारीख" : job?.customerId ? "कब तक" : "कब करना है"} value={date} onChange={setDate} future={status !== "done"} testID="input-edit-job-date" />
-      {canVendor ? <VendorOutsource v={vendorJob} amount={parseAmount(amount)} fee={0} workDate={date} assign start={start} /> : null}
       <Field label="नोट / रिमार्क">
         <TextInput style={[inputStyle, { minHeight: 56 }]} value={notes} onChangeText={setNotes} multiline placeholderTextColor={colors.muted} testID="input-edit-job-notes" />
       </Field>
-      <PrimaryButton label="बदलाव सेव करें" onPress={() => void save()} disabled={!title.trim() || !vendorOk} saving={saving} testID="save-edit-job-btn" />
+      <PrimaryButton label="बदलाव सेव करें" onPress={() => void save()} disabled={!title.trim()} saving={saving} testID="save-edit-job-btn" />
       <DangerLink label="यह काम हटाएँ" onPress={remove} testID="delete-job-link" />
       {job ? <EditHistory coll="jobs" id={job.id} /> : null}
     </SheetShell>
